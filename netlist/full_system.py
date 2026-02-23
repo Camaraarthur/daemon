@@ -84,7 +84,7 @@ FP_LDO_SOT223  = "Package_TO_SOT_SMD:SOT-223-3_TabPin2"
 # USB hub
 FP_SL2_1A       = "Package_DFN_QFN:QFN-28-1EP_5x5mm_P0.5mm_EP3.35x3.35mm"
 FP_XTAL_12M     = "Crystal:Crystal_SMD_3225-4Pin_3.2x2.5mm"
-FP_USB_A        = "Connector_USB:USB_A_Molex_67897_Horizontal"
+FP_USB_A        = "Connector_USB:USB_A_Plug_Horizontal"
 
 # Stinger switches
 FP_SY6280       = "Package_TO_SOT_SMD:SOT-23-5"
