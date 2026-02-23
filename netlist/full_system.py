@@ -4,9 +4,9 @@ Phase 2 – Full System SKiDL Netlist: Daemon V0
 
 Instantiates and wires every subsystem in the Daemon V0 architecture:
 
-  Subsystem A – IP5306 Power Management
-    · IP5306 (ESOP8): synchronous boost converter + Li-ion charger
-    · 1µH SPM70701R0 boost inductor on the SW node
+  Subsystem A – IP5328P Power Management
+    · IP5328P (QFN-40): high-current boost converter + Li-ion charger + I2C telemetry
+    · 4.7µH high-current boost inductor (Isat > 5A) on the SW node
     · DFT test points TP1–TP4 and 0Ω isolation jumpers J1/J2
       (net names and footprints match dft/ip5306_testpoints.py exactly)
     · LED status resistors on LED1/LED2/LED3 indicator pins
@@ -46,12 +46,12 @@ Instantiates and wires every subsystem in the Daemon V0 architecture:
       GPIO for screen control, joystick ADC, Stinger EN/FLAG, and spare GPIOs
 
 Power topology:
-    Li-ion cell ──► IP5306 BAT ──► SW / inductor ──► VOUT
+    Li-ion cell ──► IP5328P BAT ──► SW / inductor ──► VOUT
     VOUT ──[J2 0Ω]──► 5V_SYS ──► SL2.1A VCC, SY6280×3 IN, Radxa header 5V
     Radxa header 3.3V ──► 3V3_SYS ──► screen VCC, joystick VCC, pull-ups
 
 Custom KiCad symbol library required (add to ./lib/Daemon_V0.kicad_sym):
-    IP5306, SL2.1A, SY6280AAC
+    IP5328P, SL2.1A, SY6280AAC
 
 Usage:
     python -m netlist.full_system
@@ -77,8 +77,9 @@ NETLIST_OUTPUT = "daemon_v0_full_system.net"
 # ── Footprints ────────────────────────────────────────────────────────────────
 
 # Power management
-FP_IP5306       = "Package_SO:ESOP-8_3.9x4.9mm_P1.27mm"
-FP_INDUCTOR_1UH = "Inductor_SMD:L_Bourns_SRR1260"            # SPM70701R0 1µH
+FP_IP5328P     = "Package_DFN_QFN:QFN-40-1EP_6x6mm_P0.5mm_EP4.2x4.2mm"
+FP_INDUCTOR_5A = "Inductor_SMD:L_Bourns_SRR1260"  # same SMD package; Isat > 5A
+FP_LDO_SOT223  = "Package_TO_SOT_SMD:SOT-223-3_TabPin2"
 
 # USB hub
 FP_SL2_1A       = "Package_DFN_QFN:QFN-28-1EP_5x5mm_P0.5mm_EP3.35x3.35mm"
@@ -104,12 +105,25 @@ FP_C0402        = "Capacitor_SMD:C_0402_1005Metric"
 FP_C0805        = "Capacitor_SMD:C_0805_2012Metric"
 # SM-AUD-01: ESD9B5.0ST5G bidirectional TVS (ON Semi, SC-70-3 package)
 FP_TVS_SC70     = "Package_TO_SOT_SMD:SC-70-3"
+# IND-SAF-01: Vishay VCAN26A2 bidirectional TVS (SMB / DO-214AA)
+FP_TVS_SMB      = "Diode_SMD:D_SMB"
+# IND-SAF-01: Littelfuse 60R series resettable PTC fuse (1206)
+FP_PTC_1206     = "Fuse_SMD:Fuse_1206_3216Metric"
 # PDN-JMP-04: 1225 wide-terminal reverse-geometry shunt (≥3.5A rated)
 FP_JUMPER_1225  = "Resistor_SMD:R_1225_3264Metric"
 # SM-PWR-02: heartbeat keepalive components
 FP_TIMER_NE555  = "Package_DIP:DIP-8_W7.62mm"
 FP_BJT_SOT23    = "Package_TO_SOT_SMD:SOT-23"
 FP_C_ELEC_6MM   = "Capacitor_THT:CP_Radial_D6.3mm_P2.50mm"
+
+# Protocol analyzers and bus interfaces (Subsystems H–J)
+FP_CC1101        = "Package_QFN:QFN-20-1EP_4x4mm_P0.5mm_EP2.6x2.6mm"
+FP_MCP2515       = "Package_SO:SOIC-18W_7.5x11.6mm_P1.27mm"
+FP_MCP2551       = "Package_SO:SOIC-8_3.9x4.9mm_P1.27mm"
+FP_ISO1212       = "Package_SO:SOIC-16W_7.5x10.3mm_P1.27mm"
+FP_CONN_1X02_254 = "Connector_PinHeader_2.54mm:PinHeader_1x02_P2.54mm_Vertical"
+FP_CONN_1X03_254 = "Connector_PinHeader_2.54mm:PinHeader_1x03_P2.54mm_Vertical"
+FP_CONN_1X04_254 = "Connector_PinHeader_2.54mm:PinHeader_1x04_P2.54mm_Vertical"
 
 # ── SM-LOG-03: SD_MODE pull-up formula (mirrors netlist/audio_subsystem.py) ──
 # MAX98357A datasheet: R_LARGE (kΩ) = 222.2 × V_DDIO − 100
@@ -120,15 +134,17 @@ SD_MODE_PULLUP_KOHM: int = round(222.2 * VDDIO_V - 100)   # → 633 kΩ
 SD_MODE_PULLUP_VALUE: str = f"{SD_MODE_PULLUP_KOHM}k"      # → "633k"
 
 
-# ── Subsystem A: IP5306 Power Management ─────────────────────────────────────
+# ── Subsystem A: IP5328P Power Management ────────────────────────────────────
 
 
 def _build_power_system(
     gnd: Net,
     vcc_5v: Net,
+    i2c0_sda: Net,   # Radxa pin 27 – IP5328P SDA telemetry
+    i2c0_scl: Net,   # Radxa pin 28 – IP5328P SCL telemetry
 ) -> dict[str, Net]:
     """
-    Instantiate the IP5306 boost converter / Li-ion charger subsystem.
+    Instantiate the IP5328P boost converter / Li-ion charger subsystem.
 
     DFT nodes match dft/ip5306_testpoints.py exactly:
       TP1 → VIN     TP2 → BAT     TP3 → SW     TP4 → VOUT
@@ -146,16 +162,16 @@ def _build_power_system(
 
     # ── IC ────────────────────────────────────────────────────────────────────
     ic = Part(
-        "Daemon_V0", "IP5306",
-        footprint=FP_IP5306,
-        value="IP5306",
+        "Daemon_V0", "IP5328P",
+        footprint=FP_IP5328P,
+        value="IP5328P",
     )
 
     # ── Boost inductor (SW node) ──────────────────────────────────────────────
     L1 = Part(
         "Device", "L",
-        footprint=FP_INDUCTOR_1UH,
-        value="1u",  # 1µH SPM70701R0
+        footprint=FP_INDUCTOR_5A,
+        value="4u7",  # 4.7µH Isat > 5A
     )
 
     # ── Battery connector (JST-PH 2-pin, Li-ion cell) ─────────────────────────
@@ -213,6 +229,8 @@ def _build_power_system(
     ic["LED1"] += led1_net
     ic["LED2"] += led2_net
     ic["LED3"] += led3_net
+    ic["SDA"]  += i2c0_sda        # IP5328P I2C telemetry → Radxa pin 27
+    ic["SCL"]  += i2c0_scl        # IP5328P I2C telemetry → Radxa pin 28
 
     # ── Boost inductor: between SW node and VOUT ──────────────────────────────
     L1[1] += sw
@@ -476,9 +494,13 @@ def _build_stinger_port(
     cin_bypass  = Capacitor(value="100n")
     cout_bulk   = Capacitor_bulk(value="10u")     # matches PySpice SY_COUT model
     cout_bypass = Capacitor(value="100n")
+    # ISET: 17 kΩ sets SY6280 over-current threshold to 400mA
+    # Formula: R_ISET = 6800 / I_OC → 6800 / 0.4 = 17000 Ω
+    iset_res = Resistor(value="17k")
 
     # ── Nets ──────────────────────────────────────────────────────────────────
     vbus_out = Net(f"USB_VBUS_{n}")     # switched VBUS to the USB-A receptacle
+    iset_net = Net(f"STINGER_ISET_{n}")  # ISET current-sense node
 
     # ── SY6280 connections ────────────────────────────────────────────────────
     sw["IN"]   += vcc_5v
@@ -486,6 +508,11 @@ def _build_stinger_port(
     sw["EN"]   += en_net
     sw["FLAG"] += flag_net
     sw["OUT"]  += vbus_out
+    sw["ISET"] += iset_net
+
+    # ── ISET resistor: ISET pin → 17kΩ → GND (limits I_OC to 400mA) ─────────
+    iset_res[1] += iset_net
+    iset_res[2] += gnd
 
     # ── EN pull-up ────────────────────────────────────────────────────────────
     en_pullup[1] += vcc_3v3
@@ -628,9 +655,16 @@ def _build_radxa_header(
     # Stinger port enable / flag GPIOs
     stinger_en:   list[Net],   # len == 3
     stinger_flag: list[Net],   # len == 3
+    # I2C0 bus (IP5328P telemetry – pins 27/28)
+    i2c0_sda:   Net,
+    i2c0_scl:   Net,
     # I2C1 bus (general peripherals)
     i2c1_sda:   Net,
     i2c1_scl:   Net,
+    # SPI chip selects / interrupts for protocol analyzer subsystems (H–J)
+    rf_cs_n:    Net,    # CC1101 SPI chip select     (pin 26)
+    rf_gdo0:    Net,    # CC1101 GDO0 packet interrupt (pin 16)
+    can_cs_n:   Net,    # MCP2515 SPI chip select    (pin 36)
 ) -> None:
     """
     Instantiate the 2×20 Radxa expansion header and name every pin.
@@ -644,17 +678,17 @@ def _build_radxa_header(
     │  9 │ GND                 UART_RX     │ 10 │
     │ 11 │ STINGER_FLAG_1      I2S_BCLK   │ 12 │
     │ 13 │ STINGER_FLAG_2      GND         │ 14 │
-    │ 15 │ STINGER_FLAG_3      GPIO23      │ 16 │
+    │ 15 │ STINGER_FLAG_3      RF_GDO0     │ 16 │
     │ 17 │ 3.3V                SCREEN_DC   │ 18 │
     │ 19 │ SPI0_MOSI           GND         │ 20 │
     │ 21 │ SPI0_MISO           SCREEN_RST  │ 22 │
     │ 23 │ SPI0_SCLK           SCREEN_CS   │ 24 │
-    │ 25 │ GND                 GPIO7       │ 26 │
+    │ 25 │ GND                 RF_CS_N     │ 26 │
     │ 27 │ I2C0_SDA            I2C0_SCL   │ 28 │
     │ 29 │ STINGER_EN_1        GND         │ 30 │
     │ 31 │ STINGER_EN_2        SCREEN_BL   │ 32 │
     │ 33 │ STINGER_EN_3        GND         │ 34 │
-    │ 35 │ ADC_VRY / I2S_LRCLK GPIO16     │ 36 │
+    │ 35 │ ADC_VRY / I2S_LRCLK CAN_CS_N  │ 36 │
     │ 37 │ JOY_SW   (GPIO26)   I2S_DIN    │ 38 │
     │ 39 │ GND                 I2S_DOUT   │ 40 │
     └────┴─────────────────────────────────┴────┘
@@ -668,14 +702,9 @@ def _build_radxa_header(
       internal 10 kΩ OC_N pull-ups in _build_usb_hub provide the required
       logic-high when no fault is present.
     """
-    # Spare GPIO nets (not connected to on-board peripherals; break out for user)
+    # Spare GPIO nets (UART break out for user; I2C0 now passed from assembly)
     uart_tx   = Net("UART_TX")
     uart_rx   = Net("UART_RX")
-    gpio23    = Net("GPIO23")
-    gpio7     = Net("GPIO7")
-    i2c0_sda  = Net("I2C0_SDA")
-    i2c0_scl  = Net("I2C0_SCL")
-    gpio16    = Net("GPIO16")
 
     conn = Part(
         "Connector_Generic", "Conn_02x20_Odd_Even",
@@ -712,17 +741,17 @@ def _build_radxa_header(
     conn[10] += uart_rx
     conn[12] += i2s_bclk          # PCM_CLK / I2S BCLK
     conn[14] += gnd
-    conn[16] += gpio23
+    conn[16] += rf_gdo0           # RF_GDO0 – CC1101 packet interrupt (Subsystem H)
     conn[18] += screen_dc         # SCREEN_DC (GPIO24)
     conn[20] += gnd
     conn[22] += screen_rst        # SCREEN_RST (GPIO25)
     conn[24] += screen_cs         # SPI0_CE0 → screen CS
-    conn[26] += gpio7
+    conn[26] += rf_cs_n           # RF_CS_N – CC1101 SPI chip select (Subsystem H)
     conn[28] += i2c0_scl
     conn[30] += gnd
     conn[32] += screen_bl         # SCREEN_BL (GPIO12 / PWM0)
     conn[34] += gnd
-    conn[36] += gpio16
+    conn[36] += can_cs_n          # CAN_CS_N – MCP2515 SPI chip select (Subsystem I)
     conn[38] += i2s_din           # PCM_DIN / I2S data in (microphone)
     conn[40] += i2s_dout          # PCM_DOUT / I2S data out (amplifier)
 
@@ -817,6 +846,378 @@ def _build_heartbeat_keepalive(gnd: Net, vcc_5v: Net) -> None:
     r_dummy[2] += gnd          # 5V / 82Ω ≈ 61mA > 50mA IP5306 keepalive threshold
 
 
+# ── Subsystem A2: LM1117-3.3 Clean 3.3V Rail (RF/CAN isolation) ──────────────
+
+
+def _build_clean_3v3_rail(gnd: Net, vcc_5v: Net) -> Net:
+    """
+    LDO regulator: 5V_SYS → 3V3_CLEAN.
+
+    Isolates CC1101 and MCP2515 from the Radxa SBC's noisy switching-regulator
+    output (3V3_SYS).  LM1117-3.3 in SOT-223 package; Iout up to 800mA.
+    """
+    Capacitor      = Part("Device", "C", dest=TEMPLATE, footprint=FP_C0402)
+    Capacitor_bulk = Part("Device", "C", dest=TEMPLATE, footprint=FP_C0805)
+
+    ldo = Part(
+        "Regulator_Linear", "LM1117-3.3",
+        footprint=FP_LDO_SOT223,
+        value="LM1117-3.3",
+    )
+
+    cin_bulk    = Capacitor_bulk(value="10u")
+    cin_bypass  = Capacitor(value="100n")
+    cout_bulk   = Capacitor_bulk(value="10u")
+    cout_bypass = Capacitor(value="100n")
+
+    vcc_clean = Net("3V3_CLEAN")
+
+    ldo["IN"]  += vcc_5v
+    ldo["OUT"] += vcc_clean
+    ldo["GND"] += gnd
+
+    cin_bulk[1]    += vcc_5v;    cin_bulk[2]    += gnd
+    cin_bypass[1]  += vcc_5v;    cin_bypass[2]  += gnd
+    cout_bulk[1]   += vcc_clean; cout_bulk[2]   += gnd
+    cout_bypass[1] += vcc_clean; cout_bypass[2] += gnd
+
+    return vcc_clean
+
+
+# ── Subsystem H: CC1101 Sub-GHz RF Transceiver ───────────────────────────────
+
+
+def _build_rf_transceiver(
+    gnd: Net,
+    vcc_clean: Net,
+    spi_sck: Net,
+    spi_mosi: Net,
+    spi_miso: Net,
+    rf_cs_n: Net,
+    rf_gdo0: Net,
+) -> None:
+    """
+    Subsystem H – CC1101 Sub-GHz RF Transceiver (IoT Protocol Analysis)
+
+    Enables monitoring and authorized active interaction with 433/868/915 MHz
+    ISM-band devices (ZigBee, Z-Wave, proprietary RF protocols) over SPI.
+
+    SPI bus  : shared SPI0 (SCK/MOSI/MISO); CS on RF_CS_N (Radxa pin 26)
+    GDO0     : configurable interrupt / packet-received indicator → Radxa pin 16
+    Crystal  : 26 MHz reference oscillator (required by CC1101 internal PLL)
+    RBIAS    : 10 kΩ to GND (sets RF bias current per CC1101 datasheet §10.4)
+    """
+    Resistor  = Part("Device", "R", dest=TEMPLATE, footprint=FP_R0402)
+    Capacitor = Part("Device", "C", dest=TEMPLATE, footprint=FP_C0402)
+
+    # ── CC1101 RF transceiver IC ──────────────────────────────────────────────
+    ic = Part(
+        "RF_Transceiver", "CC1101",
+        footprint=FP_CC1101,
+        value="CC1101",
+    )
+
+    # ── 26 MHz crystal (CC1101 PLL reference; reuse 3225-4Pin SMD footprint) ──
+    xtal = Part(
+        "Device", "Crystal",
+        footprint=FP_XTAL_12M,    # Crystal_SMD_3225-4Pin – same package class
+        value="26MHz",
+    )
+
+    # ── Passives ──────────────────────────────────────────────────────────────
+    cxtal_a, cxtal_b = Capacitor(num_copies=2, value="22p")   # crystal load caps
+    rbias_res         = Resistor(value="10k")                  # RBIAS → GND
+    # VDD decoupling: 100 nF on each VDD supply group
+    cvdd_a, cvdd_b, cvdd_c = Capacitor(num_copies=3, value="100n")
+
+    # ── Internal nets ─────────────────────────────────────────────────────────
+    xi_net    = Net("RF_XI")
+    xo_net    = Net("RF_XO")
+    rbias_net = Net("RF_RBIAS")
+
+    # ── IC connections ────────────────────────────────────────────────────────
+    ic["VDD"]   += vcc_clean
+    ic["GND"]   += gnd
+    ic["SCLK"]  += spi_sck
+    ic["SI"]    += spi_mosi
+    ic["SO"]    += spi_miso
+    ic["CSN"]   += rf_cs_n
+    ic["GDO0"]  += rf_gdo0
+    ic["GDO1"]  += Net("RF_GDO1")    # optional; configurable output / MISO alt
+    ic["GDO2"]  += Net("RF_GDO2")    # optional; leave as named net
+    ic["RF_P"]  += Net("RF_ANT_P")   # → RF matching network → antenna
+    ic["RF_N"]  += Net("RF_ANT_N")   # differential RF port (negative)
+    ic["XI"]    += xi_net
+    ic["XO"]    += xo_net
+    ic["RBIAS"] += rbias_net
+
+    # ── Crystal reference oscillator ──────────────────────────────────────────
+    xtal[1]    += xi_net
+    xtal[2]    += xo_net
+    cxtal_a[1] += xi_net;   cxtal_a[2] += gnd
+    cxtal_b[1] += xo_net;   cxtal_b[2] += gnd
+
+    # ── RBIAS: 10 kΩ sets internal RF bias current ────────────────────────────
+    rbias_res[1] += rbias_net
+    rbias_res[2] += gnd
+
+    # ── VDD decoupling ────────────────────────────────────────────────────────
+    cvdd_a[1] += vcc_clean;  cvdd_a[2] += gnd
+    cvdd_b[1] += vcc_clean;  cvdd_b[2] += gnd
+    cvdd_c[1] += vcc_clean;  cvdd_c[2] += gnd
+
+
+# ── Subsystem I: MCP2515 + MCP2551 CAN Bus Interface ─────────────────────────
+
+
+def _build_can_bus(
+    gnd: Net,
+    vcc_5v: Net,
+    vcc_clean: Net,
+    spi_sck: Net,
+    spi_mosi: Net,
+    spi_miso: Net,
+    can_cs_n: Net,
+    can_int_n: Net,
+) -> None:
+    """
+    Subsystem I – MCP2515 + MCP2551 CAN Bus Interface (OBD-II Diagnostics)
+
+    Enables authorized monitoring and injection on ISO 11898-1 CAN buses for
+    automotive telemetry logging (OBD-II port) and industrial field-bus analysis.
+
+    MCP2515  : SPI CAN 2.0B controller (3.3V, SOIC-18W), 8 MHz crystal.
+    MCP2551  : High-speed CAN transceiver (4.5–5.5V supply required, SOIC-8).
+    CAN_CS_N : SPI chip select (Radxa pin 36); unique from SCREEN_CS (pin 24).
+    CAN_INT_N: active-low interrupt from MCP2515 → auxiliary GPIO header.
+    CAN_H/CAN_L: routed to a 2-pin external screw terminal / OBD-II connector.
+
+    The 120 Ω split termination resistor is DNP by default; populate only when
+    this node is the physical end-point of the CAN cable.
+    """
+    Resistor  = Part("Device", "R", dest=TEMPLATE, footprint=FP_R0402)
+    Capacitor = Part("Device", "C", dest=TEMPLATE, footprint=FP_C0402)
+
+    # ── MCP2515 SPI CAN controller (3.3V) ─────────────────────────────────────
+    ctrl = Part(
+        "Interface_CAN_LIN", "MCP2515",
+        footprint=FP_MCP2515,
+        value="MCP2515",
+    )
+
+    # ── MCP2551 CAN transceiver (5V supply required) ──────────────────────────
+    xcvr = Part(
+        "Interface_CAN_LIN", "MCP2551",
+        footprint=FP_MCP2551,
+        value="MCP2551",
+    )
+
+    # ── 8 MHz crystal for MCP2515 CAN bit-clock reference ─────────────────────
+    xtal = Part(
+        "Device", "Crystal",
+        footprint=FP_XTAL_12M,
+        value="8MHz",
+    )
+
+    # ── External CAN bus connector (2-pin; OBD-II or screw terminal) ──────────
+    can_conn = Part(
+        "Connector_Generic", "Conn_01x02",
+        footprint=FP_CONN_1X02_254,
+    )
+
+    # ── Passives ──────────────────────────────────────────────────────────────
+    cxtal_a, cxtal_b = Capacitor(num_copies=2, value="22p")   # crystal load caps
+    rst_pullup = Resistor(value="10k")     # MCP2515 ~{RESET} pull-up to 3V3
+    cterm      = Resistor(value="120")     # CAN bus termination (DNP if not end node)
+    cvdd_ctrl  = Capacitor(value="100n")   # MCP2515 VDD bypass
+    cvdd_xcvr  = Capacitor(value="100n")   # MCP2551 VDD bypass
+
+    # ── Internal nets ─────────────────────────────────────────────────────────
+    txcan    = Net("CAN_TX")      # MCP2515 TXCAN → MCP2551 TXD
+    rxcan    = Net("CAN_RX")      # MCP2551 RXD → MCP2515 RXCAN
+    can_h    = Net("CAN_H")       # CAN bus high (external connector)
+    can_l    = Net("CAN_L")       # CAN bus low  (external connector)
+    can_rst  = Net("CAN_RESET_N") # MCP2515 active-low reset
+    osc1_net = Net("CAN_OSC1")
+    osc2_net = Net("CAN_OSC2")
+
+    # ── MCP2515 connections ───────────────────────────────────────────────────
+    ctrl["VDD"]      += vcc_clean
+    ctrl["VSS"]      += gnd
+    ctrl["SCK"]      += spi_sck
+    ctrl["SI"]       += spi_mosi
+    ctrl["SO"]       += spi_miso
+    ctrl["~{CS}"]    += can_cs_n
+    ctrl["~{INT}"]   += can_int_n
+    ctrl["TXCAN"]    += txcan
+    ctrl["RXCAN"]    += rxcan
+    ctrl["~{RESET}"] += can_rst
+    ctrl["OSC1"]     += osc1_net
+    ctrl["OSC2"]     += osc2_net
+    # TX strobe inputs unused: tie high (no pending transmit request)
+    ctrl["TX0RTS"]   += vcc_clean
+    ctrl["TX1RTS"]   += vcc_clean
+    ctrl["TX2RTS"]   += vcc_clean
+    # RX buffer-full flag outputs: tie to GND (not connected to host interrupts)
+    ctrl["RX0BF"]    += gnd
+    ctrl["RX1BF"]    += gnd
+    ctrl["CLKOUT"]   += Net("CAN_CLKOUT")   # optional clock out; leave as net
+
+    # ── 8 MHz crystal + load capacitors ───────────────────────────────────────
+    xtal[1]    += osc1_net
+    xtal[2]    += osc2_net
+    cxtal_a[1] += osc1_net;  cxtal_a[2] += gnd
+    cxtal_b[1] += osc2_net;  cxtal_b[2] += gnd
+
+    # ── MCP2515 RESET pull-up ─────────────────────────────────────────────────
+    rst_pullup[1] += vcc_clean
+    rst_pullup[2] += can_rst
+
+    # ── MCP2551 connections (requires 4.5–5.5V) ───────────────────────────────
+    xcvr["VDD"]  += vcc_5v
+    xcvr["VSS"]  += gnd
+    xcvr["TXD"]  += txcan
+    xcvr["RXD"]  += rxcan
+    xcvr["CANH"] += can_h
+    xcvr["CANL"] += can_l
+    xcvr["RS"]   += gnd            # RS=GND: maximum slew rate (high-speed mode)
+    xcvr["VREF"] += Net("CAN_VREF")  # 0.5×VDD reference output; leave as net
+
+    # ── External CAN bus connector ─────────────────────────────────────────────
+    can_conn[1] += can_h
+    can_conn[2] += can_l
+
+    # ── Bus termination (DNP; fit only at physical cable end-points) ──────────
+    cterm[1] += can_h
+    cterm[2] += can_l
+
+    # ── VDD decoupling ────────────────────────────────────────────────────────
+    cvdd_ctrl[1] += vcc_clean;  cvdd_ctrl[2] += gnd
+    cvdd_xcvr[1] += vcc_5v;    cvdd_xcvr[2] += gnd
+
+
+# ── Subsystem J: ISO1212 Industrial 24V Logic Isolation ──────────────────────
+
+
+def _build_industrial_iso(
+    gnd: Net,
+    vcc_3v3: Net,
+    iso_do1: Net,
+    iso_do2: Net,
+) -> None:
+    """
+    Subsystem J – ISO1212 Dual-Channel Industrial 24V Logic Isolator (PLC Integration)
+
+    Provides galvanically isolated digital inputs compatible with IEC 61131-2
+    Type 1/3 field signals (8–35V DC PLC outputs).  The ISO1212 converts
+    high-voltage field logic to 3.3V CMOS for safe Radxa SBC GPIO input.
+
+    Field side : external 8–35V PLC supply (ISO_VCC1) and isolated ground (ISO_GND1)
+    Logic side : VCC2 = 3V3_SYS; OUT1 → ISO_DO1, OUT2 → ISO_DO2
+    Outputs    : ISO_DO1 / ISO_DO2 routed to the 4-pin auxiliary GPIO header
+    Isolation  : ≥2.5 kV (see ISO1212 datasheet for full isolation voltage rating)
+
+    IND-SAF-01: Per-channel transient hardening chain (IEC 61131-2 compliant):
+      Connector IN → [Littelfuse 60R PTC] → A → [Vishay VCAN26A2 TVS → ISO_GND1]
+                                              → [562Ω 1% series] → B
+                                                                  → [1kΩ 1% → ISO_GND1]
+                                                                  → [10nF 100V X7R → ISO_GND1]
+                                                                  → ISO1212 INx
+
+    ISO_GND1 remains strictly isolated from PCB GND throughout the entire path.
+    """
+    Resistor       = Part("Device", "R",        dest=TEMPLATE, footprint=FP_R0402)
+    PtcFuse        = Part("Device", "Polyfuse", dest=TEMPLATE, footprint=FP_PTC_1206)
+    TvsDiode       = Part("Device", "D_TVS",    dest=TEMPLATE, footprint=FP_TVS_SMB)
+    Capacitor      = Part("Device", "C",        dest=TEMPLATE, footprint=FP_C0402)
+    Capacitor_bulk = Part("Device", "C",        dest=TEMPLATE, footprint=FP_C0805)
+
+    # ── ISO1212 dual-channel isolated digital input IC ────────────────────────
+    ic = Part(
+        "Daemon_V0", "ISO1212",
+        footprint=FP_ISO1212,
+        value="ISO1212",
+    )
+
+    # ── Field-side 4-pin connector: GND1 / VCC1 / IN1_RAW / IN2_RAW ──────────
+    field_conn = Part(
+        "Connector_Generic", "Conn_01x04",
+        footprint=FP_CONN_1X04_254,
+    )
+
+    # ── Per-channel protection passives ───────────────────────────────────────
+    # Littelfuse 60R series resettable PTC: protects against sustained fault
+    # currents from 24V PLC outputs (trips at ~60mA, resets on power removal)
+    ptc1, ptc2 = PtcFuse(num_copies=2, value="60R")
+
+    # Vishay VCAN26A2: bidirectional 26V TVS clamps transient overvoltages
+    # (EN 61000-4-5 Level 3 surge) at the PTC output node to field ground
+    tvs1, tvs2 = TvsDiode(num_copies=2, value="VCAN26A2")
+
+    # 562Ω 1% series current-limiting resistors (E96 value)
+    r_ser1, r_ser2 = Resistor(num_copies=2, value="562")
+
+    # 1kΩ 1% threshold resistors: shunt to ISO_GND1 to set IEC 61131-2
+    # switching threshold; also bleeds static charge on open inputs
+    r_thr1, r_thr2 = Resistor(num_copies=2, value="1k")
+
+    # 10nF 100V X7R filter capacitors: suppress HF transients at IC input pin
+    cflt1, cflt2 = Capacitor(num_copies=2, value="10n")
+
+    # ── Field-side supply decoupling (referenced to ISO_GND1, not PCB GND) ────
+    cvcc1_bulk = Capacitor_bulk(value="10u")
+    cvcc1_byp  = Capacitor(value="100n")
+    # Logic-side decoupling
+    cvcc2_byp  = Capacitor(value="100n")
+
+    # ── Internal nets ─────────────────────────────────────────────────────────
+    vcc1     = Net("ISO_VCC1")    # field supply input  (8–35V PLC supply)
+    gnd1     = Net("ISO_GND1")    # field ground (isolated from PCB GND)
+    in1_raw  = Net("ISO_IN1_RAW") # raw connector input ch1 (before PTC)
+    in2_raw  = Net("ISO_IN2_RAW") # raw connector input ch2 (before PTC)
+    in1_ptc  = Net("ISO_IN1_PTCA")  # ch1 node after PTC, before TVS / series R
+    in2_ptc  = Net("ISO_IN2_PTCA")  # ch2 node after PTC
+    in1      = Net("ISO_IN1")     # ch1 protected node → IC IN1
+    in2      = Net("ISO_IN2")     # ch2 protected node → IC IN2
+
+    # ── ISO1212 IC connections ────────────────────────────────────────────────
+    ic["VCC1"] += vcc1
+    ic["GND1"] += gnd1
+    ic["IN1"]  += in1
+    ic["IN2"]  += in2
+    ic["VCC2"] += vcc_3v3
+    ic["GND2"] += gnd
+    ic["OUT1"] += iso_do1
+    ic["OUT2"] += iso_do2
+
+    # ── Field connector: pin 1=GND1, 2=VCC1, 3=IN1_RAW, 4=IN2_RAW ───────────
+    field_conn[1] += gnd1
+    field_conn[2] += vcc1
+    field_conn[3] += in1_raw
+    field_conn[4] += in2_raw
+
+    # ── Channel 1 protection chain ────────────────────────────────────────────
+    ptc1[1]   += in1_raw;  ptc1[2]   += in1_ptc    # series PTC fuse
+    tvs1["A"] += gnd1;     tvs1["K"] += in1_ptc    # TVS clamp to field GND
+    r_ser1[1] += in1_ptc;  r_ser1[2] += in1         # 562Ω current limit
+    r_thr1[1] += in1;      r_thr1[2] += gnd1        # 1kΩ threshold shunt
+    cflt1[1]  += in1;      cflt1[2]  += gnd1        # 10nF HF filter
+
+    # ── Channel 2 protection chain (mirrors channel 1) ────────────────────────
+    ptc2[1]   += in2_raw;  ptc2[2]   += in2_ptc
+    tvs2["A"] += gnd1;     tvs2["K"] += in2_ptc
+    r_ser2[1] += in2_ptc;  r_ser2[2] += in2
+    r_thr2[1] += in2;      r_thr2[2] += gnd1
+    cflt2[1]  += in2;      cflt2[2]  += gnd1
+
+    # ── Field-side decoupling (referenced to ISO_GND1) ────────────────────────
+    cvcc1_bulk[1] += vcc1;  cvcc1_bulk[2] += gnd1
+    cvcc1_byp[1]  += vcc1;  cvcc1_byp[2]  += gnd1
+
+    # ── Logic-side decoupling ─────────────────────────────────────────────────
+    cvcc2_byp[1] += vcc_3v3;  cvcc2_byp[2] += gnd
+
+
 # ── Top-level assembly ────────────────────────────────────────────────────────
 
 
@@ -861,14 +1262,29 @@ def generate_daemon_v0_full_system() -> None:
     stinger_en   = [Net(f"STINGER_EN_{i}")   for i in range(1, 4)]
     stinger_flag = [Net(f"STINGER_FLAG_{i}") for i in range(1, 4)]
 
+    # ── I2C0 bus (Radxa pins 27/28 – IP5328P telemetry) ──────────────────────
+    i2c0_sda = Net("I2C0_SDA")
+    i2c0_scl = Net("I2C0_SCL")
+
     # ── I2C1 bus ──────────────────────────────────────────────────────────────
     i2c1_sda = Net("I2C1_SDA")
     i2c1_scl = Net("I2C1_SCL")
 
+    # ── Protocol analyzer chip selects and interrupt signals ──────────────────
+    rf_cs_n   = Net("RF_CS_N")    # CC1101 SPI chip select  (Radxa pin 26)
+    rf_gdo0   = Net("RF_GDO0")    # CC1101 GDO0 interrupt   (Radxa pin 16)
+    can_cs_n  = Net("CAN_CS_N")   # MCP2515 SPI chip select (Radxa pin 36)
+    can_int_n = Net("CAN_INT_N")  # MCP2515 interrupt → auxiliary header
+    iso_do1   = Net("ISO_DO1")    # ISO1212 channel 1 output → auxiliary header
+    iso_do2   = Net("ISO_DO2")    # ISO1212 channel 2 output → auxiliary header
+
     # ──────────────────────────────────────────────────────────────────────────
-    # A – IP5306 power management
+    # A – IP5328P power management + I2C telemetry
     # ──────────────────────────────────────────────────────────────────────────
-    _build_power_system(gnd, vcc_5v)
+    _build_power_system(gnd, vcc_5v, i2c0_sda, i2c0_scl)
+
+    # ── A2 – LM1117-3.3 clean 3.3V rail for RF/CAN subsystems ─────────────────
+    vcc_clean = _build_clean_3v3_rail(gnd, vcc_5v)
 
     # ──────────────────────────────────────────────────────────────────────────
     # G – NE555 heartbeat / dummy-load (SM-PWR-02)
@@ -929,6 +1345,54 @@ def generate_daemon_v0_full_system() -> None:
     )
 
     # ──────────────────────────────────────────────────────────────────────────
+    # H – CC1101 Sub-GHz RF transceiver (IoT protocol analysis)
+    # ──────────────────────────────────────────────────────────────────────────
+    _build_rf_transceiver(
+        gnd       = gnd,
+        vcc_clean = vcc_clean,
+        spi_sck   = spi_sck,
+        spi_mosi  = spi_mosi,
+        spi_miso  = spi_miso,
+        rf_cs_n   = rf_cs_n,
+        rf_gdo0   = rf_gdo0,
+    )
+
+    # ──────────────────────────────────────────────────────────────────────────
+    # I – MCP2515 + MCP2551 CAN bus interface (OBD-II / industrial diagnostics)
+    # ──────────────────────────────────────────────────────────────────────────
+    _build_can_bus(
+        gnd       = gnd,
+        vcc_5v    = vcc_5v,
+        vcc_clean = vcc_clean,
+        spi_sck   = spi_sck,
+        spi_mosi  = spi_mosi,
+        spi_miso  = spi_miso,
+        can_cs_n  = can_cs_n,
+        can_int_n = can_int_n,
+    )
+
+    # ──────────────────────────────────────────────────────────────────────────
+    # J – ISO1212 industrial 24V logic isolation (PLC integration)
+    # ──────────────────────────────────────────────────────────────────────────
+    _build_industrial_iso(
+        gnd     = gnd,
+        vcc_3v3 = vcc_3v3,
+        iso_do1 = iso_do1,
+        iso_do2 = iso_do2,
+    )
+
+    # Auxiliary 4-pin GPIO header: exposes CAN_INT_N / ISO_DO1 / ISO_DO2 / GND.
+    # These three signals cannot fit on the 40-pin Radxa header (all pins taken).
+    aux_hdr = Part(
+        "Connector_Generic", "Conn_01x04",
+        footprint=FP_CONN_1X04_254,
+    )
+    aux_hdr[1] += can_int_n   # MCP2515 INT (open-drain, active-low)
+    aux_hdr[2] += iso_do1     # ISO1212 OUT1 (3.3V CMOS logic)
+    aux_hdr[3] += iso_do2     # ISO1212 OUT2 (3.3V CMOS logic)
+    aux_hdr[4] += gnd
+
+    # ──────────────────────────────────────────────────────────────────────────
     # F – 40-pin Radxa expansion header
     # ──────────────────────────────────────────────────────────────────────────
     _build_radxa_header(
@@ -951,8 +1415,13 @@ def generate_daemon_v0_full_system() -> None:
         joy_sw       = joy_sw,
         stinger_en   = stinger_en,
         stinger_flag = stinger_flag,
+        i2c0_sda     = i2c0_sda,
+        i2c0_scl     = i2c0_scl,
         i2c1_sda     = i2c1_sda,
         i2c1_scl     = i2c1_scl,
+        rf_cs_n      = rf_cs_n,
+        rf_gdo0      = rf_gdo0,
+        can_cs_n     = can_cs_n,
     )
 
     # ──────────────────────────────────────────────────────────────────────────
