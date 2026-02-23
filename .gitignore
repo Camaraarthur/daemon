@@ -1,0 +1,23 @@
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.coverage
+htmlcov/
+
+# Generated hardware artifacts
+*.net
+*.ses
+*.dsn
+*.dsn.bak
+*.kicad_pcb.bak
+
+# macOS
+.DS_Store
+
+# Editor
+.vscode/
+.idea/

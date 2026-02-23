@@ -1,0 +1,152 @@
+name: Daemon V0 Hardware CI
+
+on:
+  push:
+    branches: [main, "feature/**"]
+  pull_request:
+    branches: [main]
+
+env:
+  PYTHON_VERSION: "3.11"
+
+jobs:
+  # ── Phase 0: lint ─────────────────────────────────────────────────────────
+  lint:
+    name: Lint & format check
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Install dev deps
+        run: pip install -e ".[dev]"
+
+      - name: Ruff lint
+        run: ruff check .
+
+      - name: Ruff format check
+        run: ruff format --check .
+
+  # ── Phase 1: DFT report ───────────────────────────────────────────────────
+  dft:
+    name: "Phase 1 – DFT: IP5306 test-point report"
+    runs-on: ubuntu-24.04
+    needs: lint
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - run: pip install -e ".[dev]"
+
+      - name: Emit DFT report
+        run: python -m dft.ip5306_testpoints
+
+  # ── Phase 2: SKiDL netlist generation ────────────────────────────────────
+  netlist:
+    name: "Phase 2 – SKiDL: audio subsystem netlist"
+    runs-on: ubuntu-24.04
+    needs: dft
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - run: pip install -e ".[dev]"
+
+      - name: Generate netlist
+        run: python -m netlist.audio_subsystem
+
+      - name: Upload netlist artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: daemon_v0_audio_netlist
+          path: daemon_v0_audio.net
+
+  # ── Phase 3: PySpice transient assertions ─────────────────────────────────
+  simulate:
+    name: "Phase 3 – PySpice: power transient assertions"
+    runs-on: ubuntu-24.04
+    needs: netlist
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Install Ngspice backend
+        run: sudo apt-get install -y ngspice
+
+      - run: pip install -e ".[dev]"
+
+      - name: Run transient assertions
+        run: python -m simulation.power_transients
+
+  # ── Phase 4: Layout constraint injection (KiCad) ─────────────────────────
+  layout:
+    name: "Phase 4 – KiCad: differential pair constraints"
+    runs-on: ubuntu-24.04
+    needs: simulate
+    # Only runs when a .kicad_pcb file is present in the repo
+    if: ${{ hashFiles('*.kicad_pcb') != '' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install KiCad (headless, includes pcbnew Python API)
+        run: |
+          sudo add-apt-repository --yes ppa:kicad/kicad-8-releases
+          sudo apt-get update
+          sudo apt-get install -y kicad
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - run: pip install -e ".[dev]"
+
+      - name: Inject differential pair constraints
+        run: |
+          KICAD_PY=$(find /usr/lib -name "pcbnew.so" 2>/dev/null | head -1 | xargs dirname)
+          PYTHONPATH="$KICAD_PY" python -m layout.configure_constraints daemon_v0_layout.kicad_pcb
+
+      - name: Inject FreeRouting DSN pair directives
+        run: python -m layout.freerouting_dsn daemon_v0_layout.dsn
+
+      - name: Upload constrained board
+        uses: actions/upload-artifact@v4
+        with:
+          name: daemon_v0_constrained_board
+          path: |
+            daemon_v0_layout.kicad_pcb
+            daemon_v0_layout.dsn
+
+  # ── Full pipeline gate ────────────────────────────────────────────────────
+  pipeline-gate:
+    name: "Pipeline gate (all phases passed)"
+    runs-on: ubuntu-24.04
+    needs: [lint, dft, netlist, simulate]
+    if: always()
+    steps:
+      - name: Check all required phases
+        run: |
+          if [[ "${{ needs.lint.result }}" != "success" || \
+                "${{ needs.dft.result }}" != "success" || \
+                "${{ needs.netlist.result }}" != "success" || \
+                "${{ needs.simulate.result }}" != "success" ]]; then
+            echo "One or more pipeline phases failed."
+            exit 1
+          fi
+          echo "All Daemon V0 hardware CI phases passed."
