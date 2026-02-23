@@ -84,7 +84,8 @@ FP_LDO_SOT223  = "Package_TO_SOT_SMD:SOT-223-3_TabPin2"
 # USB hub
 FP_SL2_1A       = "Package_DFN_QFN:QFN-28-1EP_5x5mm_P0.5mm_EP3.35x3.35mm"
 FP_XTAL_12M     = "Crystal:Crystal_SMD_3225-4Pin_3.2x2.5mm"
-FP_USB_A        = "Connector_USB:USB_A_Plug_Horizontal"
+FP_USB_A_FEMALE = "Connector_USB:USB_A_Molex_67897_Horizontal"
+FP_USB_A_MALE   = "Connector_USB:USB_A_Plug_Horizontal"
 
 # Stinger switches
 FP_SY6280       = "Package_TO_SOT_SMD:SOT-23-5"
@@ -449,6 +450,7 @@ def _build_stinger_port(
     dm_net: Net,
     en_net: Net,
     flag_net: Net,
+    usb_footprint: str = FP_USB_A_FEMALE,
 ) -> Net:
     """
     Instantiate one Stinger port: SY6280AAC power-distribution switch + USB-A.
@@ -483,7 +485,7 @@ def _build_stinger_port(
     # ── USB Type-A downstream connector ──────────────────────────────────────
     usb_a = Part(
         "Connector_USB", "USB_A",
-        footprint=FP_USB_A,
+        footprint=usb_footprint,
     )
 
     # ── Passives ──────────────────────────────────────────────────────────────
@@ -1366,6 +1368,7 @@ def generate_daemon_v0_full_system() -> None:
     #     Ethernet module; it is left as a named net for the next subsystem file.
     # ──────────────────────────────────────────────────────────────────────────
     for i in range(3):
+        footprint = FP_USB_A_MALE if i == 0 else FP_USB_A_FEMALE
         _build_stinger_port(
             port_num  = i + 1,
             gnd       = gnd,
@@ -1375,6 +1378,7 @@ def generate_daemon_v0_full_system() -> None:
             dm_net    = dn_pairs[i][1],
             en_net    = stinger_en[i],
             flag_net  = stinger_flag[i],
+            usb_footprint = footprint,
         )
         # Wire the SY6280 FLAG back to the hub OC_N line so the SL2.1A can
         # report per-port overcurrent faults to the host over USB.
