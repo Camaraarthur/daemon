@@ -9,11 +9,22 @@ Generates a pure-Python KiCad netlist (.net) for:
   - JST-SH 2-pin connector for the 1W / 8-Ohm internal micro speaker
   - ESP32-WROOM-32 acting as I2S master
 
-The TRRS jack's normally-closed (NC) tip and ring switches route the
-BTL outputs exclusively to the JST-SH speaker connector.  An isolated
-insertion-detect switch pulls the MAX98357A SD pin low on plug insertion,
-forcing the amplifier into micropower shutdown before the external
-ground-referenced load can create a destructive BTL short.
+Protection topology (red-team audit fixes):
+
+  SM-LOG-03 – SD_MODE pull-up is computed dynamically from the MAX98357A
+  datasheet formula rather than using a static 1MΩ resistor.  A 1MΩ resistor
+  at 3.3V VDDIO pushes the SD pin outside the B1 trip-point envelope, forcing
+  the amplifier into left-channel-only or metastable mode.
+    R_LARGE (kΩ) = 222.2 × V_DDIO − 100  →  633 kΩ at 3.3V
+
+  SM-AUD-01 – Two ESD9B5.0ST5G bidirectional TVS diodes are placed directly
+  on the AMP_OUT_P and AMP_OUT_N nets.  Speaker voice-coil inductance
+  (28.9µH–560µH) generates V = L·di/dt flyback spikes during contact bounce
+  (1–10ms); the TVS clamps any spike above the 5V VRWM before it can reach
+  the MAX98357A output pins.  The TRRS insertion-detect signal is further
+  hardware-debounced by a 10kΩ / 100nF RC filter (τ = 1ms) inserted between
+  the raw mechanical contact and the SD_MODE pin, preventing the amplifier
+  from rapidly toggling in/out of shutdown during the bounce window.
 
 Usage:
     python -m netlist.audio_subsystem
@@ -41,13 +52,23 @@ NETLIST_OUTPUT = "daemon_v0_audio.net"
 
 # Footprint strings – these map to KiCad library references and must match
 # the symbol library paths configured in your KiCad environment.
-FP_QFN16 = "Package_DFN_QFN:QFN-16-1EP_3x3mm_P0.5mm_EP1.8x1.8mm"
+FP_QFN16   = "Package_DFN_QFN:QFN-16-1EP_3x3mm_P0.5mm_EP1.8x1.8mm"
 FP_INMP441 = "Sensor_Audio:InvenSense_INMP441_BottomPort"
-FP_TRRS = "Connector_Audio:Jack_3.5mm_SJ2-2531X-SMT"
+FP_TRRS    = "Connector_Audio:Jack_3.5mm_SJ2-2531X-SMT"
 FP_JST_SH2 = "Connector_JST:JST_SH_SM02B-SRSS-TB_1x02-1MP_P1.00mm_Horizontal"
-FP_ESP32 = "RF_Module:ESP32-WROOM-32"
-FP_R0402 = "Resistor_SMD:R_0402_1005Metric"
-FP_C0402 = "Capacitor_SMD:C_0402_1005Metric"
+FP_ESP32   = "RF_Module:ESP32-WROOM-32"
+FP_R0402   = "Resistor_SMD:R_0402_1005Metric"
+FP_C0402   = "Capacitor_SMD:C_0402_1005Metric"
+# SM-AUD-01: ESD9B5.0ST5G bidirectional TVS (ON Semi, SC-70-3 package)
+FP_TVS_SC70 = "Package_TO_SOT_SMD:SC-70-3"
+
+# ── SM-LOG-03: SD_MODE pull-up – computed, never static ──────────────────────
+# MAX98357A datasheet formula: R_LARGE (kΩ) = 222.2 × V_DDIO − 100
+# A 1MΩ resistor at 3.3V VDDIO sits outside the B1 trip-point window and
+# risks trapping the SD pin in a metastable comparator state.
+VDDIO_V: float = 3.3
+SD_MODE_PULLUP_KOHM: int = round(222.2 * VDDIO_V - 100)   # → 633 kΩ
+SD_MODE_PULLUP_VALUE: str = f"{SD_MODE_PULLUP_KOHM}k"      # → "633k"
 
 
 # ── Netlist generation ────────────────────────────────────────────────────────
@@ -109,11 +130,33 @@ def generate_daemon_audio_subsystem() -> None:
     Resistor = Part("Device", "R", dest=TEMPLATE, footprint=FP_R0402)
     Capacitor = Part("Device", "C", dest=TEMPLATE, footprint=FP_C0402)
 
-    # 1MΩ pull-up for the MAX98357A SD pin: sets default L/2+R/2 mix mode.
-    pullup_sd = Resistor(value="1M")
+    # SM-LOG-03: pull-up value derived from R_LARGE = 222.2 × V_DDIO − 100.
+    # At 3.3V VDDIO → 633 kΩ.  A static 1MΩ crosses the B2 trip point.
+    pullup_sd = Resistor(value=SD_MODE_PULLUP_VALUE)
 
     # 10kΩ pull-down for INMP441 L/R pin → selects left-channel output.
     mic_lr_pulldown = Resistor(value="10k")
+
+    # SM-AUD-01: ESD9B5.0ST5G TVS diodes on BTL output nodes.
+    # Bidirectional; VRWM = 5V so they are inactive during normal BTL audio
+    # swings (<4.8V) and clamp only the >5V flyback spikes from the speaker
+    # voice coil during TRRS contact bounce.
+    tvs_btl_p = Part(
+        "Daemon_V0", "ESD9B5.0ST5G",
+        footprint=FP_TVS_SC70,
+        value="ESD9B5.0ST5G",
+    )
+    tvs_btl_n = Part(
+        "Daemon_V0", "ESD9B5.0ST5G",
+        footprint=FP_TVS_SC70,
+        value="ESD9B5.0ST5G",
+    )
+
+    # SM-AUD-01: RC debounce for the TRRS insertion-detect signal.
+    # τ = 10kΩ × 100nF = 1ms – clears the 1–10ms mechanical contact bounce
+    # window before the filtered signal is allowed to assert SD_MODE low.
+    r_detect_debounce = Resistor(value="10k")
+    c_detect_debounce = Capacitor(value="100n")
 
     # Bulk decoupling caps: one per power rail per IC (best practice).
     amp_decap_a, amp_decap_b = Capacitor(num_copies=2, value="0.1uF")
@@ -187,6 +230,14 @@ def generate_daemon_audio_subsystem() -> None:
     amp["OUTP"] += btl_out_p
     amp["OUTN"] += btl_out_n
 
+    # SM-AUD-01: TVS clamps on amplifier output nodes.
+    # Placed here (amplifier side of the TRRS switch) so the IC is protected
+    # from bounce-coupled flyback spikes before they reach the silicon.
+    tvs_btl_p["A"] += btl_out_p
+    tvs_btl_p["K"] += gnd
+    tvs_btl_n["A"] += btl_out_n
+    tvs_btl_n["K"] += gnd
+
     # Route BTL signals into the NC switch input side of the TRRS jack.
     trrs_jack["TipSwitch"] += btl_out_p    # pin 10 on SJ2-2531X-SMT
     trrs_jack["Ring1Switch"] += btl_out_n  # pin 11
@@ -200,21 +251,36 @@ def generate_daemon_audio_subsystem() -> None:
     # ------------------------------------------------------------------
     # Amplifier shutdown via insertion-detect switch
     #
-    # The SD pin is pulled high (1MΩ to 5V) by default, enabling L/2+R/2
-    # channel mix mode.  On plug insertion, the detect switch (pin 12 on
-    # the SJ2-2531X-SMT) closes, sinking the 1MΩ pull-up directly to GND
-    # and asserting the MAX98357A into micropower shutdown (<1µA).
+    # The SD pin is pulled high (633kΩ to 5V, per SM-LOG-03 formula) by
+    # default, setting L/2+R/2 mono mix mode.  On plug insertion, the detect
+    # switch closes and the RC-filtered signal pulls SD_MODE to GND, forcing
+    # the MAX98357A into micropower shutdown (<1µA).
+    #
+    # SM-AUD-01: The raw TRRS detect output is NOT connected directly to
+    # AMP_SD.  A 10kΩ / 100nF RC filter (τ = 1ms) is inserted between the
+    # mechanical contact and the SD_MODE pin.  This eliminates the 1–10ms
+    # contact-bounce chatter that would otherwise rapidly toggle the amplifier
+    # in/out of shutdown while the BTL outputs are shorted to external GND.
     # ------------------------------------------------------------------
     amp_sd = Net("AMP_SD")
     amp["SD"] += amp_sd
 
-    # Default pull-up: 5V → 1MΩ → AMP_SD  (sets L/2+R/2 mix, amplifier active)
+    # Default pull-up: 5V → 633kΩ → AMP_SD  (SM-LOG-03 computed value)
     pullup_sd[1] += vcc_5v
     pullup_sd[2] += amp_sd
 
-    # Detect switch: AMP_SD → switch → GND  (forces shutdown on plug insertion)
-    trrs_jack["Detect"] += amp_sd   # detect switch active terminal (pin 12)
-    trrs_jack["Sleeve"] += gnd      # sleeve / common GND on the jack body
+    # Debounced detect path:
+    #   TRRS Detect (raw) → 10kΩ → AMP_SD
+    #                                 └── 100nF → GND
+    # The RC charges slowly through the 10kΩ, preventing rapid SD toggling.
+    detect_raw = Net("TRRS_DETECT_RAW")
+    trrs_jack["Detect"] += detect_raw       # raw mechanical contact (pin 12)
+    r_detect_debounce[1] += detect_raw
+    r_detect_debounce[2] += amp_sd          # filtered output joins AMP_SD net
+    c_detect_debounce[1] += amp_sd          # bypass cap forms the RC filter
+    c_detect_debounce[2] += gnd
+
+    trrs_jack["Sleeve"] += gnd              # sleeve / common GND on jack body
 
     # ------------------------------------------------------------------
     # Electrical Rules Check + netlist export

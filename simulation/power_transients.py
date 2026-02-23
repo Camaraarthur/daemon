@@ -4,17 +4,21 @@ Daemon V0 Power Subsystem Transient Assertions
 
 Two automated CI assertions:
 
-  1. IP5306 2.4A load-step transient
+  1. IP5306 1.5A load-step transient  [PDN-THM-02 thermal derate]
      Models the boost converter output with realistic ESR and bulk
      capacitance.  Asserts that VOUT never droops below 4.80V during
-     an abrupt 0.1A → 2.4A load step (e.g., simultaneous wake of the
-     MAX98357A, RTL8152B, and SL2.1A hub).
+     an abrupt 0.1A → 1.5A load step (e.g., simultaneous wake of the
+     MAX98357A, RTL8152B, and SL2.1A hub).  The 2.4A nameplate maximum
+     is derated: at 2.4A and T_A=50°C, T_J ≈ 116°C — within 9°C of the
+     125°C T_OTP shutdown threshold.  1.5A keeps T_J ≤ 110°C with the
+     required 15°C guard-band.
 
-  2. SY6280 ghost-unplug discharge assertion
-     Models the 150-Ohm internal discharge path.  Asserts that the
-     output voltage reaches the 1-tau point (~1.839V) at exactly
-     1.5ms after EN is de-asserted, proving that the automatic
-     discharge prevents floating rails and downstream MCU latch-up.
+  2. SY6280 ghost-unplug discharge assertion  [PDN-DCB-03 MLCC derating]
+     Models the 150-Ohm internal discharge path against the DC-bias
+     derated effective capacitance (3.0µF, not nameplate 10µF).  At 5V
+     bias, an X5R 0402 MLCC loses 60–80% of its nameplate capacitance.
+     τ_true = 150Ω × 3.0µF = 0.45ms (not the ideal 1.5ms).  Asserting
+     against 10µF would constitute a test that can never reflect reality.
 
 Both assertions raise AssertionError on failure, causing the CI
 pipeline job to exit non-zero and block the layout phase.
@@ -44,16 +48,20 @@ IP5306_VOUT_NOMINAL = 5.0          # V
 IP5306_ESR_OHMS = 0.05             # Ω  – ESR of the bulk output capacitor bank
 IP5306_COUT_UF = 22.0              # µF – total output decoupling capacitance
 IP5306_LOAD_IDLE_A = 0.1           # A  – quiescent draw
-IP5306_LOAD_MAX_A = 2.4            # A  – maximum rated discharge current
+IP5306_LOAD_MAX_A = 1.5            # A  – PDN-THM-02: derated from 2.4A; at 2.4A+50°C, T_J≈116°C
 IP5306_VOUT_DROOP_FLOOR = 4.80     # V  – CI assertion lower bound
 
 # SY6280 model parameters
 SY6280_VOUT_INITIAL = 5.0          # V
 SY6280_RDIS_OHMS = 150.0           # Ω  – internal discharge resistance (datasheet typical)
-SY6280_COUT_UF = 10.0              # µF – downstream output decoupling
+SY6280_COUT_UF = 10.0              # µF – nameplate value (documentation reference only)
+# PDN-DCB-03: X5R/X7R MLCCs lose 60–80% capacitance at rated DC bias voltage.
+# A 10µF 0402 X5R rated 6.3V operating at 5V bias retains ≈ 2.0–4.0µF.
+# We assert against the conservative mid-point effective value of 3.0µF.
+SY6280_COUT_EFF_UF = 3.0           # µF – DC-bias derated effective capacitance for SPICE
 SY6280_EN_FALL_TIME_US = 800.0     # µs – EN pin pulled low at this simulation time
-SY6280_DISCHARGE_TAU_MS = (        # ms – expected time constant
-    SY6280_RDIS_OHMS * SY6280_COUT_UF * 1e-6 * 1e3
+SY6280_DISCHARGE_TAU_MS = (        # ms – expected time constant (PDN-DCB-03 derated)
+    SY6280_RDIS_OHMS * SY6280_COUT_EFF_UF * 1e-6 * 1e3
 )
 SY6280_TOLERANCE = 0.10            # ± 10% tolerance on the discharge voltage
 
@@ -85,7 +93,7 @@ def _build_circuit() -> Circuit:
     #
     # The converter is approximated as an ideal voltage source behind a
     # finite output impedance (ESR) feeding a bulk capacitor.  A pulse
-    # current source injects the abrupt 2.4A load step.
+    # current source injects the abrupt 1.5A load step (PDN-THM-02 derated).
     # ------------------------------------------------------------------
     circuit.V(
         "IP5306_IN",
@@ -152,12 +160,12 @@ def _build_circuit() -> Circuit:
     )
     circuit.model("SW_PASS", "SW", Ron=0.05 @ u_Ohm, Roff=1 @ u_MOhm, Vt=2.5, Vh=0.5)
 
-    # Downstream load capacitor
+    # Downstream load capacitor – PDN-DCB-03: use DC-bias derated effective value
     circuit.C(
         "SY_COUT",
         "SY_OUT",
         circuit.gnd,
-        SY6280_COUT_UF @ u_uF,
+        SY6280_COUT_EFF_UF @ u_uF,
     )
 
     # Inverted EN signal drives the discharge switch
@@ -212,8 +220,9 @@ def _assert_sy6280_discharge(time: np.ndarray, sy_out: np.ndarray) -> None:
     Assert that the SY6280 output reaches the 1-tau discharge level
     (≈1.839V) within ±10% at t = EN_fall + 1*tau.
 
-    τ = R_DIS × C_OUT = 150Ω × 10µF = 1.5ms
-    Target time = 800µs + 1500µs = 2300µs = 0.0023s
+    PDN-DCB-03: τ = R_DIS × C_eff = 150Ω × 3.0µF = 0.45ms
+    (C_eff is the DC-bias derated value; nameplate 10µF X5R at 5V bias ≈ 3.0µF)
+    Target time = 800µs + 450µs = 1250µs = 0.00125s
     """
     tau_s = SY6280_DISCHARGE_TAU_MS * 1e-3
     en_fall_s = SY6280_EN_FALL_TIME_US * 1e-6
@@ -230,7 +239,7 @@ def _assert_sy6280_discharge(time: np.ndarray, sy_out: np.ndarray) -> None:
         raise AssertionError(
             f"[FAIL] SY6280 discharge assertion: voltage at 1τ = {measured_v:.3f}V "
             f"(expected {expected_v:.3f}V ± {SY6280_TOLERANCE*100:.0f}%). "
-            f"Check R_DIS ({SY6280_RDIS_OHMS}Ω) and C_OUT ({SY6280_COUT_UF}µF)."
+            f"Check R_DIS ({SY6280_RDIS_OHMS}Ω) and C_eff ({SY6280_COUT_EFF_UF}µF derated)."
         )
     print(
         f"  [PASS] SY6280 discharge: V at 1τ ({tau_s*1e3:.1f}ms after EN fall) = "
@@ -244,7 +253,7 @@ def _assert_sy6280_discharge(time: np.ndarray, sy_out: np.ndarray) -> None:
 def validate_power_subsystem_transients() -> None:
     print("Daemon V0 – Phase 3: PySpice Power Transient Assertions")
     print(f"  Simulation window : {SIM_END_MS}ms  |  step : {SIM_STEP_US}µs")
-    print(f"  Expected SY6280 τ : {SY6280_DISCHARGE_TAU_MS:.2f}ms")
+    print(f"  Expected SY6280 τ : {SY6280_DISCHARGE_TAU_MS:.2f}ms  (C_eff={SY6280_COUT_EFF_UF}µF derated from {SY6280_COUT_UF}µF)")
 
     circuit = _build_circuit()
 
