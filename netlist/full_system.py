@@ -589,6 +589,8 @@ def _build_joystick(
     joy_vrx: Net,
     joy_vry: Net,
     joy_sw: Net,
+    i2c1_sda: Net,
+    i2c1_scl: Net,
 ) -> None:
     """
     Instantiate the 5-pin connector for the analog thumbstick module.
@@ -611,12 +613,35 @@ def _build_joystick(
     sw_pullup = Resistor(value="10k")
     vcc_bypass = Capacitor(value="100n")
 
+    # ── TI ADS1015 I2C ADC ────────────────────────────────────────────────────
+    adc = Part(
+        "Analog_ADC", "ADS1015IDGS",
+        footprint="Package_SO:VSSOP-10_3x3mm_P0.5mm",
+        value="ADS1015",
+    )
+    adc_bypass = Capacitor(value="100n")
+
     # ── Connector wiring ─────────────────────────────────────────────────────
     conn[1] += gnd
     conn[2] += vcc_3v3
     conn[3] += joy_vrx
     conn[4] += joy_vry
     conn[5] += joy_sw
+
+    # ── ADC wiring ───────────────────────────────────────────────────────────
+    adc["VDD"] += vcc_3v3
+    adc["GND"] += gnd
+    adc["SDA"] += i2c1_sda
+    adc["SCL"] += i2c1_scl
+    adc["ADDR"] += gnd         # I2C Address = 0x48
+    adc["AIN0"] += joy_vrx
+    adc["AIN1"] += joy_vry
+    adc["AIN2"] += gnd         # Unused
+    adc["AIN3"] += gnd         # Unused
+    adc["ALERT/RDY"] += Net("ADC_ALERT")
+
+    adc_bypass[1] += vcc_3v3
+    adc_bypass[2] += gnd
 
     # ── SW pull-up ───────────────────────────────────────────────────────────
     sw_pullup[1] += vcc_3v3
@@ -715,7 +740,7 @@ def _build_radxa_header(
     conn[1]  += vcc_3v3
     conn[3]  += i2c1_sda
     conn[5]  += i2c1_scl
-    conn[7]  += joy_vrx           # ADC_VRX – joystick X axis
+    conn[7]  += Net("GPIO4")      # Free GPIO
     conn[9]  += gnd
     conn[11] += stinger_flag[0]   # STINGER_FLAG_1 (SY6280 port 1 FLAG)
     conn[13] += stinger_flag[1]   # STINGER_FLAG_2
@@ -729,7 +754,7 @@ def _build_radxa_header(
     conn[29] += stinger_en[0]     # STINGER_EN_1 → SY6280 port 1 EN
     conn[31] += stinger_en[1]     # STINGER_EN_2
     conn[33] += stinger_en[2]     # STINGER_EN_3
-    conn[35] += joy_vry           # ADC_VRY – joystick Y (shared with I2S_LRCLK)
+    conn[35] += i2s_lrclk         # I2S3_LRCK_M0 exclusively
     conn[37] += joy_sw            # JOY_SW (GPIO26)
     conn[39] += gnd
 
@@ -950,6 +975,42 @@ def _build_rf_transceiver(
     ic["XI"]    += xi_net
     ic["XO"]    += xo_net
     ic["RBIAS"] += rbias_net
+
+    # ── RF Balun & Matching Network (915 MHz) ─────────────────────────────────
+    Inductor = Part("Device", "L", dest=TEMPLATE, footprint="Inductor_SMD:L_0402_1005Metric")
+    sma_conn = Part("Connector", "Conn_Coaxial", footprint="Connector_Coaxial:SMA_Molex_73251-1153_EdgeMount_Horizontal")
+
+    l121 = Inductor(value="12n")   # Series Match P
+    l131 = Inductor(value="12n")   # Series Match N
+    l122 = Inductor(value="18n")   # Shunt to GND
+    l123 = Inductor(value="12n")   # Series Filter
+    c121 = Capacitor(value="1.0p") # Differential Shunt
+    c122 = Capacitor(value="1.5p") # Balun Merge
+    c124 = Capacitor(value="100p") # DC Block
+
+    rf_p_match = Net("RF_P_MATCH")
+    rf_n_match = Net("RF_N_MATCH")
+    rf_balun   = Net("RF_BALUN")
+    rf_out     = Net("RF_OUT")
+
+    # Series elements
+    l121[1] += ic["RF_P"].net; l121[2] += rf_p_match
+    l131[1] += ic["RF_N"].net; l131[2] += rf_n_match
+
+    # Differential shunt
+    c121[1] += rf_p_match; c121[2] += rf_n_match
+
+    # Merge / Shunt
+    c122[1] += rf_n_match; c122[2] += rf_balun
+    l122[1] += rf_n_match; l122[2] += gnd
+
+    # Filter & Block
+    l123[1] += rf_p_match; l123[2] += rf_balun
+    c124[1] += rf_balun;   c124[2] += rf_out
+
+    # Output to SMA
+    sma_conn["In"] += rf_out
+    sma_conn["Ext"] += gnd
 
     # ── Crystal reference oscillator ──────────────────────────────────────────
     xtal[1]    += xi_net
@@ -1342,6 +1403,8 @@ def generate_daemon_v0_full_system() -> None:
         joy_vrx = joy_vrx,
         joy_vry = joy_vry,
         joy_sw  = joy_sw,
+        i2c1_sda= i2c1_sda,
+        i2c1_scl= i2c1_scl,
     )
 
     # ──────────────────────────────────────────────────────────────────────────

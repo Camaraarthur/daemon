@@ -34,7 +34,7 @@ pin-mux is not modelled (see §6 Advisory A-1).
 ║  1 ║  3V3_SYS   (power out from Radxa)     ║  5V_SYS    (IP5306 VOUT via J2)        ║  2 ║
 ║  3 ║  I2C1_SDA  (general I2C bus)          ║  5V_SYS    (second 5V supply pin)      ║  4 ║
 ║  5 ║  I2C1_SCL  (general I2C bus)          ║  GND                                   ║  6 ║
-║  7 ║  JOY_VRX   (ADC – joystick X axis)    ║  UART_TX   (spare)                     ║  8 ║
+║  7 ║  GPIO4     (spare)                    ║  UART_TX   (spare)                     ║  8 ║
 ║  9 ║  GND                                  ║  UART_RX   (spare)                     ║ 10 ║
 ║ 11 ║  STINGER_FLAG_1  (SY6280 port 1 FLAG) ║  I2S_BCLK  (audio bit clock)           ║ 12 ║
 ║ 13 ║  STINGER_FLAG_2  (SY6280 port 2 FLAG) ║  GND                                   ║ 14 ║
@@ -48,7 +48,7 @@ pin-mux is not modelled (see §6 Advisory A-1).
 ║ 29 ║  STINGER_EN_1 → SY6280 port 1 EN      ║  GND                                   ║ 30 ║
 ║ 31 ║  STINGER_EN_2 → SY6280 port 2 EN      ║  SCREEN_BL → ST7789V2 backlight PWM    ║ 32 ║
 ║ 33 ║  STINGER_EN_3 → SY6280 port 3 EN      ║  GND                                   ║ 34 ║
-║ 35 ║  JOY_VRY   (ADC – joystick Y axis)    ║  CAN_CS_N  → MCP2515 chip select       ║ 36 ║
+║ 35 ║  I2S_LRCLK (I2S exclusively)          ║  CAN_CS_N  → MCP2515 chip select       ║ 36 ║
 ║ 37 ║  JOY_SW    (GPIO – joystick button)   ║  I2S_DATA_IN  ← INMP441 mic output     ║ 38 ║
 ║ 39 ║  GND                                  ║  I2S_DATA_OUT → MAX98357A amp input     ║ 40 ║
 ╚════╩═══════════════════════════════════════╩════════════════════════════════════════╩════╝
@@ -60,11 +60,11 @@ pin-mux is not modelled (see §6 Advisory A-1).
 |-----|----------|----------|-------------|
 | 1 | 3V3_SYS | Power | Radxa 3.3V output; feeds all 3.3V on-board devices |
 | 2 | 5V_SYS | Power | IP5306 VOUT (via J2); feeds SY6280 IN, USB hub VBUS |
-| 3 | I2C1_SDA | I2C1 data | Broken out; no on-board I2C slaves in this netlist |
+| 3 | I2C1_SDA | I2C1 data | ADS1015 ADC for Joystick |
 | 4 | 5V_SYS | Power | Second 5V supply pin |
-| 5 | I2C1_SCL | I2C1 clock | Broken out; no on-board I2C slaves in this netlist |
+| 5 | I2C1_SCL | I2C1 clock | ADS1015 ADC for Joystick |
 | 6 | GND | Ground | — |
-| 7 | JOY_VRX | Analog in | Joystick X axis → Radxa ADC |
+| 7 | GPIO4 | GPIO | Free GPIO / previously ADC_VRX |
 | 8 | UART_TX | UART | Spare; no on-board connection |
 | 9 | GND | Ground | — |
 | 10 | UART_RX | UART | Spare; no on-board connection |
@@ -92,7 +92,7 @@ pin-mux is not modelled (see §6 Advisory A-1).
 | 32 | SCREEN_BL | PWM output | ST7789V2 backlight (GPIO12 / PWM0) |
 | 33 | STINGER_EN_3 | GPIO output | SY6280 port 3 EN |
 | 34 | GND | Ground | — |
-| 35 | JOY_VRY | Analog in | Joystick Y axis → Radxa ADC (⚠ mux: see §6 A-1) |
+| 35 | I2S_LRCLK | I2S clock | I2S3_LRCK_M0 exclusively |
 | 36 | CAN_CS_N | SPI CS | MCP2515 chip select (active-low) |
 | 37 | JOY_SW | GPIO input | Joystick button (10kΩ pull-up to 3V3; active-low) |
 | 38 | I2S_DATA_IN | I2S data | INMP441 microphone serial data output → Radxa |
@@ -527,19 +527,9 @@ outside the ISO 11898-1 specification (120Ω ±5%).
 
 ---
 
-### ⚠ ADVISORY A-3: CC1101 Antenna Nets Left Floating
+### ✓ RESOLVED A-3: CC1101 Antenna Nets
 
-**Location:** `_build_rf_transceiver()`, `full_system.py`:
-```python
-ic["RF_P"] += Net("RF_ANT_P")   # → RF matching network → antenna
-ic["RF_N"] += Net("RF_ANT_N")   # differential RF port (negative)
-```
-
-`RF_ANT_P` and `RF_ANT_N` are named nets with no downstream connections in
-the current netlist. A PI-network impedance matching circuit and antenna
-connector (or PCB trace antenna) must be added before fabrication. Failure to
-provide a 50Ω matched load will degrade RF performance and may stress the
-CC1101 PA stage.
+Resolved via Phase 2 RF balun fix. A discrete L-C matching network and SMA connector have been instantiated on the RF_P and RF_N pins.
 
 ---
 
