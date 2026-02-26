@@ -14,6 +14,8 @@ htmlcov/
 *.dsn
 *.dsn.bak
 *.kicad_pcb.bak
+*.erc
+*.log
 
 # macOS
 .DS_Store

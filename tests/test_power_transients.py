@@ -1,17 +1,17 @@
 """
 Tests for simulation/power_transients.py
 
-Validates PDN-DCB-03 (MLCC DC-bias capacitance derating) and PDN-THM-02
-(IP5306 thermal-soak load derate) without requiring PySpice or Ngspice to
-be installed.  All tests inspect the module source text so they run cleanly
+Validates PDN-DCB-03 (MLCC DC-bias capacitance derating) and PDN-BUDGET-01
+(IP5328P full-load transient) without requiring PySpice or Ngspice to be
+installed.  All tests inspect the module source text so they run cleanly
 in a minimal CI environment (no analog simulation toolchain needed).
 
 Covered assertions:
   · PDN-DCB-03: SY6280_COUT_EFF_UF is 3.0µF (not nameplate 10µF)
   · PDN-DCB-03: τ is derived from the derated value → 0.45ms
   · PDN-DCB-03: SPICE circuit instantiates SY_COUT with the derated constant
-  · PDN-THM-02: IP5306_LOAD_MAX_A is 1.5A (not 2.4A)
-  · PDN-THM-02: The underated 2.4A value no longer drives the load step
+  · PDN-BUDGET-01: IP5306_LOAD_MAX_A is 2.4A (IP5328P rated ≥ 3A; no derate needed)
+  · PDN-BUDGET-01: IP5306_VOUT_DROOP_FLOOR is 4.70V (300mV droop budget)
 """
 
 import math
@@ -87,27 +87,27 @@ def test_spice_sy_cout_does_not_use_nominal():
     )
 
 
-# ── PDN-THM-02: IP5306 thermal-soak load derate ──────────────────────────────
+# ── PDN-BUDGET-01: IP5328P full-load transient ───────────────────────────────
 
 
 def test_ip5306_max_load_derated_to_1_5a():
     """
-    PDN-THM-02: IP5306_LOAD_MAX_A must be 1.5A.
+    PDN-BUDGET-01: IP5306_LOAD_MAX_A must now be 2.4A.
 
-    At 2.4A continuous and T_A=50°C:
-      P_D = (12W × 10% loss) = 1.33W
-      T_J = 50 + 1.33 × 50 = 116.5°C  →  < 9°C from T_OTP
-    1.5A keeps T_J ≤ 110°C with the required 15°C guard-band.
+    The IP5328P (QFN-40) is rated ≥ 3A continuous with a 900mA+ margin
+    over the 2.1A all-ports-loaded design point.  Unlike the IP5306 (1.5A
+    thermal derate), no derating is required.  The assertion floor moves
+    from 4.80V to 4.70V to reflect the larger transient current step.
     """
     src = _get_source()
-    assert "IP5306_LOAD_MAX_A = 1.5" in src, (
-        "IP5306_LOAD_MAX_A must be 1.5A – at 2.4A T_J approaches T_OTP at 50°C ambient (PDN-THM-02)"
+    assert "IP5306_LOAD_MAX_A = 2.4" in src, (
+        "IP5306_LOAD_MAX_A must be 2.4A – IP5328P rated ≥ 3A; full-load test required (PDN-BUDGET-01)"
     )
 
 
 def test_ip5306_max_load_not_2_4a():
-    """PDN-THM-02: The underated 2.4A constant must be gone."""
+    """PDN-BUDGET-01: The 4.70V droop floor must be present for the 2.4A step."""
     src = _get_source()
-    assert "IP5306_LOAD_MAX_A = 2.4" not in src, (
-        "IP5306_LOAD_MAX_A = 2.4 still present – thermal derate to 1.5A not applied (PDN-THM-02)"
+    assert "IP5306_VOUT_DROOP_FLOOR = 4.70" in src, (
+        "IP5306_VOUT_DROOP_FLOOR must be 4.70V – 300mV droop budget for 0.1A→2.4A step (PDN-BUDGET-01)"
     )

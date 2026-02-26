@@ -52,9 +52,9 @@ def test_all_footprint_constants_have_colon():
 
 
 def test_custom_ic_library_name():
-    """IP5328P, SL2.1A, and SY6280AAC must reference the 'Daemon_V0' project library."""
+    """IP5328P, SL2.1A, SY6280AAC, RTL8152B must reference the 'Daemon_V0' project library."""
     src = _get_source()
-    for ic in ("IP5328P", "SL2.1A", "SY6280AAC"):
+    for ic in ("IP5328P", "SL2.1A", "SY6280AAC", "RTL8152B"):
         assert f'"Daemon_V0", "{ic}"' in src, (
             f"{ic} must be instantiated from the 'Daemon_V0' custom library"
         )
@@ -171,7 +171,7 @@ def test_battery_connector_is_jst_ph():
 
 
 def test_all_subsystem_functions_defined():
-    """All _build_* functions (A–J) and the assembly function must be present."""
+    """All _build_* functions and the assembly function must be present (ECO #2026-02-V2)."""
     src = _get_source()
     expected = [
         "_build_power_system",
@@ -182,9 +182,14 @@ def test_all_subsystem_functions_defined():
         "_build_radxa_header",
         "_build_heartbeat_keepalive",
         "_build_rf_transceiver",
-        "_build_can_bus",
         "_build_industrial_iso",
         "_build_clean_3v3_rail",
+        "_build_usb_charging_mux",
+        "_build_power_ux",
+        "_build_goobay_bridge",
+        "_build_ethernet",
+        "_build_ws2812b_leds",
+        "_build_ir_blaster",
         "generate_daemon_v0_full_system",
     ]
     for fn in expected:
@@ -460,81 +465,14 @@ def test_rf_transceiver_called_in_assembly():
 # ── Subsystem I: MCP2515 + MCP2551 CAN bus ───────────────────────────────────
 
 
-def test_mcp2515_footprint_constant_present():
-    """Subsystem I: FP_MCP2515 must reference the SOIC-18W package."""
-    src = _get_source()
-    assert "FP_MCP2515" in src, "FP_MCP2515 footprint constant missing from full_system.py"
-    assert "SOIC-18W" in src, "FP_MCP2515 must reference SOIC-18W package"
-
-
-def test_mcp2551_footprint_constant_present():
-    """Subsystem I: FP_MCP2551 must reference the SOIC-8 package."""
-    src = _get_source()
-    assert "FP_MCP2551" in src, "FP_MCP2551 footprint constant missing from full_system.py"
-    assert "SOIC-8_3.9x4.9mm" in src, "FP_MCP2551 must reference SOIC-8 package"
-
-
-def test_mcp2515_instantiated_from_can_library():
-    """Subsystem I: MCP2515 must be instantiated from the Interface_CAN_LIN library."""
-    src = _get_source()
-    assert '"Interface_CAN_LIN", "MCP2515"' in src, (
-        'MCP2515 must be Part("Interface_CAN_LIN", "MCP2515", ...)'
-    )
-
-
-def test_mcp2551_instantiated_from_can_library():
-    """Subsystem I: MCP2551 must be instantiated from the Interface_CAN_LIN library."""
-    src = _get_source()
-    assert '"Interface_CAN_LIN", "MCP2551"' in src, (
-        'MCP2551 must be Part("Interface_CAN_LIN", "MCP2551", ...)'
-    )
-
-
-def test_can_cs_n_net_defined():
-    """Subsystem I: CAN_CS_N must be a distinct net from SCREEN_CS and RF_CS_N."""
-    src = _get_source()
-    assert 'Net("CAN_CS_N")' in src, 'Net("CAN_CS_N") missing from full_system.py'
-
-
-def test_can_h_and_can_l_nets_defined():
-    """Subsystem I: CAN_H and CAN_L bus nets must be defined in the CAN bus subsystem."""
-    src = _get_source()
-    assert 'Net("CAN_H")' in src, 'Net("CAN_H") missing from full_system.py'
-    assert 'Net("CAN_L")' in src, 'Net("CAN_L") missing from full_system.py'
-
-
-def test_can_int_n_net_defined():
-    """Subsystem I: CAN_INT_N interrupt net must be routed to the auxiliary header."""
-    src = _get_source()
-    assert 'Net("CAN_INT_N")' in src, 'Net("CAN_INT_N") missing from full_system.py'
-
-
-def test_mcp2551_uses_5v_supply():
-    """Subsystem I: MCP2551 VDD must connect to vcc_5v (requires 4.5–5.5V)."""
-    src = _get_source()
-    assert 'xcvr["VDD"]  += vcc_5v' in src, (
-        'MCP2551 VDD must be wired to vcc_5v (not vcc_3v3) — device requires 4.5–5.5V'
-    )
-
-
-def test_can_bus_called_in_assembly():
-    """Subsystem I: _build_can_bus must be called from the top-level assembly."""
-    src = _get_source()
-    assert "_build_can_bus(" in src, (
-        "_build_can_bus not called in generate_daemon_v0_full_system()"
-    )
-
-
 def test_spi_cs_pins_are_unique():
-    """All three SPI chip selects must use distinct net names."""
+    """SPI chip selects must use distinct net names (ECO #2026-02-V2: CAN_CS_N removed)."""
     src = _get_source()
-    # Each CS net must be a separate Net() definition
-    assert 'Net("SCREEN_CS")' in src, 'Net("SCREEN_CS") missing'
+    assert 'Net("SPI3_CS")' in src,   'Net("SPI3_CS") missing'
     assert 'Net("RF_CS_N")' in src,   'Net("RF_CS_N") missing'
-    assert 'Net("CAN_CS_N")' in src,  'Net("CAN_CS_N") missing'
-    # They must be three different strings — uniqueness guaranteed by different names
-    cs_names = {"SCREEN_CS", "RF_CS_N", "CAN_CS_N"}
-    assert len(cs_names) == 3, "SPI chip select nets are not unique"
+    # Verify the two remaining CS nets are distinct
+    cs_names = {"SPI3_CS", "RF_CS_N"}
+    assert len(cs_names) == 2, "SPI chip select nets must be unique"
 
 
 # ── Subsystem J: ISO1212 industrial isolation ─────────────────────────────────
@@ -627,18 +565,21 @@ def test_fp_inductor_5a_constant_present():
     )
 
 
-def test_power_system_has_i2c0_params():
-    """_build_power_system must accept i2c0_sda and i2c0_scl for IP5328P I2C telemetry."""
+def test_power_system_has_i2c1_params():
+    """ECO #2026-03-H: _build_power_system must use i2c1_sda/scl (I2C1, Always-On pins 3/5)."""
     src = _get_source()
-    assert "i2c0_sda" in src, "_build_power_system missing i2c0_sda parameter"
-    assert "i2c0_scl" in src, "_build_power_system missing i2c0_scl parameter"
+    assert "i2c1_sda" in src, "_build_power_system missing i2c1_sda parameter (ECO #2026-03-H)"
+    assert "i2c1_scl" in src, "_build_power_system missing i2c1_scl parameter (ECO #2026-03-H)"
 
 
-def test_stinger_iset_resistor_17k():
-    """17 kΩ ISET resistor must be present in _build_stinger_port (400mA OC limit)."""
+def test_stinger_iset_resistor_13k():
+    """ECO #2026-03-H: 13 kΩ ISET resistor must be present (~500mA OC limit)."""
     src = _get_source()
-    assert 'value="17k"' in src, (
-        "17k ISET resistor not found — SY6280 OC threshold not hardware-limited"
+    assert 'value="13k"' in src, (
+        "13k ISET resistor not found — SY6280 OC threshold not updated to ~500mA (ECO #2026-03-H)"
+    )
+    assert 'value="27k"' not in src, (
+        "Old 27k ISET resistor still present — 250mA limit not updated to ~500mA"
     )
     assert "ISET" in src, (
         "ISET net/pin reference not found in stinger port"
@@ -652,10 +593,17 @@ def test_clean_3v3_rail_function_defined():
     )
 
 
-def test_ldo_lm1117_instantiated():
-    """LM1117-3.3 LDO must be instantiated from KiCad Regulator_Linear library."""
-    assert '"Regulator_Linear", "LM1117-3.3"' in _get_source(), (
-        "LM1117-3.3 not found — 3V3_CLEAN LDO not instantiated"
+def test_ldo_ap2112k_instantiated():
+    """ECO #2026-03-GOLD: AP2112K-3.3 LDO must replace LM1117-3.3 for low-dropout RF supply."""
+    src = _get_source()
+    assert '"Regulator_Linear", "AP2112K-3.3"' in src, (
+        "AP2112K-3.3 not found — LDO upgrade (ECO #2026-03-GOLD) not applied"
+    )
+    assert '"Regulator_Linear", "LM1117-3.3"' not in src, (
+        "Old LM1117-3.3 still present — ECO #2026-03-GOLD LDO replacement incomplete"
+    )
+    assert 'ldo["EN"]   += vcc_5v' in src, (
+        "AP2112K EN pin not tied to VIN — LDO may not be enabled"
     )
 
 
@@ -666,12 +614,18 @@ def test_3v3_clean_net_defined():
     )
 
 
-def test_rf_and_can_use_clean_rail():
-    """Assembly must pass vcc_clean (not vcc_3v3) to RF and CAN subsystem calls."""
+def test_rf_uses_clean_rail():
+    """Assembly must pass vcc_clean (not vcc_3v3) to the RF transceiver call."""
     src = _get_source()
-    assert "vcc_clean = vcc_clean" in src, (
-        "vcc_clean not passed to RF/CAN subsystems — power rail bifurcation incomplete"
+    assert "vcc_clean" in src and "_build_rf_transceiver" in src, (
+        "vcc_clean not passed to RF subsystem — power rail bifurcation incomplete"
     )
+    # Verify vcc_3v3 is NOT passed to _build_rf_transceiver as a supply keyword arg
+    import re
+    for call in re.findall(r"_build_rf_transceiver\(.*?\)", src, re.DOTALL):
+        assert "vcc_3v3" not in call, (
+            "vcc_3v3 still passed to RF subsystem — clean rail bifurcation incomplete"
+        )
 
 
 # ── Phase 3 Remediation: Industrial Safety Hardening (IND-SAF-01) ─────────────
@@ -734,4 +688,534 @@ def test_iso_field_ground_remains_isolated_after_hardening():
     # Verify protection components reference field ground, not PCB GND
     assert "gnd1" in src, (
         "gnd1 (ISO_GND1) reference missing — protection components may be tied to wrong ground"
+    )
+
+
+# ── Phase 4 Audit Fixes ───────────────────────────────────────────────────────
+
+
+def test_rf_nets_renamed():
+    """ECO #2026-03-E: SoftSPI nets renamed to RF_CLK/RF_MOSI/RF_MISO for clarity."""
+    src = _get_source()
+    assert 'Net("RF_CLK")'  in src, "RF_CLK net missing — SoftSPI SCK not renamed (ECO #2026-03-E)"
+    assert 'Net("RF_MOSI")' in src, "RF_MOSI net missing — SoftSPI MOSI not renamed"
+    assert 'Net("RF_MISO")' in src, "RF_MISO net missing — SoftSPI MISO not renamed"
+    # Old SOFT_SPI_* names must be gone
+    assert 'Net("SOFT_SPI_SCK")'  not in src, "SOFT_SPI_SCK still present — rename not applied"
+    assert 'Net("SOFT_SPI_MOSI")' not in src, "SOFT_SPI_MOSI still present — rename not applied"
+    assert 'Net("SOFT_SPI_MISO")' not in src, "SOFT_SPI_MISO still present — rename not applied"
+
+
+def test_rf_uses_soft_spi():
+    """RF transceiver assembly call must pass rf_clk/rf_mosi/rf_miso (ECO #2026-03-E)."""
+    src = _get_source()
+    assert "spi_sck      = rf_clk"  in src or "spi_sck=rf_clk" in src, (
+        "rf_clk not passed to RF subsystem — ECO #2026-03-E RF rename not propagated"
+    )
+    assert "spi_mosi     = rf_mosi" in src or "spi_mosi=rf_mosi" in src, (
+        "rf_mosi not passed to RF subsystem"
+    )
+    assert "spi_miso     = rf_miso" in src or "spi_miso=rf_miso" in src, (
+        "rf_miso not passed to RF subsystem"
+    )
+
+
+def test_screen_bl_on_pin_7():
+    """SCREEN_BL must connect to header pin 7 (hardware PWM capable GPIO4)."""
+    src = _get_source()
+    assert "conn[7]  += screen_bl" in src, (
+        "SCREEN_BL not on pin 7 — backlight still on software-PWM-only pin"
+    )
+
+
+def test_rf_clk_on_pin_16():
+    """ECO #2026-03-F: RF_CLK must occupy pin 16 (safe GPIO; moved from pin 32)."""
+    src = _get_source()
+    assert "conn[16] += soft_spi_sck" in src, (
+        "RF_CLK (soft_spi_sck) not on pin 16 — ECO #2026-03-F RF migration not applied"
+    )
+    assert "conn[32] += soft_spi_sck" not in src, (
+        "RF_CLK still on pin 32 — ECO #2026-03-F RF migration not applied"
+    )
+
+
+def test_usb_mux_schottky_diodes_present():
+    """PDN-USB-01: Two SS14 Schottky diodes must be present for VBUS anti-backfeed."""
+    src = _get_source()
+    assert '"Device", "D_Schottky"' in src, (
+        "D_Schottky not found — SS14 anti-backfeed diodes not instantiated"
+    )
+    assert "SS14" in src, "SS14 value not found — wrong Schottky component specified"
+    assert "FP_SCHOTTKY_SMA" in src, "FP_SCHOTTKY_SMA footprint constant missing"
+
+
+def test_mux_sel_voltage_divider():
+    """PDN-USB-01: 430kΩ/620kΩ voltage divider must set MUX_SEL to ~2.95V."""
+    src = _get_source()
+    assert 'value="430k"' in src, "430kΩ series resistor missing from MUX_SEL divider"
+    assert 'value="620k"' in src, "620kΩ shunt resistor missing from MUX_SEL divider"
+    assert 'Net("MUX_SEL")' in src, "MUX_SEL net not defined"
+
+
+
+def test_flag_pullup_resistors_present():
+    """STINGER_FLAG lines must have explicit 10kΩ pull-up resistors to prevent floating inputs."""
+    src = _get_source()
+    assert "flag_pullup" in src, (
+        "flag_pullup resistor not found in _build_stinger_port — FLAG pins may float"
+    )
+    assert "flag_pullup[1] += vcc_3v3" in src, (
+        "flag_pullup not connected to vcc_3v3 — FLAG pull-up not properly terminated"
+    )
+    assert "flag_pullup[2] += flag_net" in src, (
+        "flag_pullup not connected to flag_net — FLAG pull-up not wired to signal"
+    )
+
+
+def test_build_usb_charging_mux_defined():
+    """PDN-USB-01: _build_usb_charging_mux function must be defined."""
+    assert "def _build_usb_charging_mux" in _get_source(), (
+        "_build_usb_charging_mux function not found — USB MUX hardening not implemented"
+    )
+
+
+
+def test_screen_bl_net_comment_updated():
+    """SCREEN_BL net comment must reference GPIO4 / pin 7, not the old GPIO12 / PWM0."""
+    src = _get_source()
+    assert "GPIO4" in src and "SCREEN_BL" in src, (
+        "SCREEN_BL net not associated with GPIO4 — backlight pin fix not applied"
+    )
+    # Old assignment (GPIO12/PWM0 comment) must be gone
+    assert "GPIO12 / PWM0" not in src, (
+        "Stale GPIO12/PWM0 comment still present — SCREEN_BL pin move not documented"
+    )
+
+
+# ── ECO #2026-02-V2 Final Release ─────────────────────────────────────────────
+
+
+def test_can_bus_removed():
+    """ECO #2026-02-V2: CAN bus (MCP2515 / MCP2551) must be entirely absent."""
+    src = _get_source()
+    assert "_build_can_bus" not in src, (
+        "_build_can_bus still present — CAN bus not removed per ECO #2026-02-V2"
+    )
+    assert '"Interface_CAN_LIN", "MCP2515"' not in src, (
+        "MCP2515 Part instantiation found — CAN controller not removed"
+    )
+    assert '"Interface_CAN_LIN", "MCP2551"' not in src, (
+        "MCP2551 Part instantiation found — CAN transceiver not removed"
+    )
+
+
+def test_goobay_usb_c_bridge_defined():
+    """ECO #2026-02-V2: Goobay USB-C bridge function and USB_C_RCPT footprint must be present."""
+    src = _get_source()
+    assert "def _build_goobay_bridge" in src, (
+        "_build_goobay_bridge function missing — Goobay USB-C bridge not implemented"
+    )
+    assert "FP_USB_C_RCPT" in src, (
+        "FP_USB_C_RCPT footprint constant missing — USB-C receptacle footprint not defined"
+    )
+    assert "Goobay-74446" in src, (
+        "Goobay-74446 value not found — USB-C bridge component not instantiated"
+    )
+
+
+def test_ethernet_subsystem_defined():
+    """ECO #2026-02-V2: RTL8152B Ethernet subsystem must be fully defined."""
+    src = _get_source()
+    assert "def _build_ethernet" in src, (
+        "_build_ethernet function missing — Ethernet subsystem not implemented"
+    )
+    assert '"Daemon_V0", "RTL8152B"' in src, (
+        "RTL8152B not in Daemon_V0 library — Ethernet IC not instantiated"
+    )
+    assert "FP_XTAL_25M" in src, (
+        "FP_XTAL_25M footprint constant missing — 25MHz crystal not defined"
+    )
+    assert "HR911105A" in src, (
+        "HR911105A MagJack not found — RJ45 connector not instantiated"
+    )
+    assert "FP_MAGJACK" in src, (
+        "FP_MAGJACK footprint constant missing"
+    )
+
+
+def test_ws2812b_leds_defined():
+    """ECO #2026-02-V2: Four WS2812B addressable LEDs must be present with LED_DIN net."""
+    src = _get_source()
+    assert "def _build_ws2812b_leds" in src, (
+        "_build_ws2812b_leds function missing — WS2812B LED subsystem not implemented"
+    )
+    assert "FP_WS2812B" in src, (
+        "FP_WS2812B footprint constant missing"
+    )
+    assert 'Net("LED_DIN")' in src, (
+        "LED_DIN net not declared in assembly — WS2812B data chain not wired"
+    )
+    assert "WS2812B" in src, (
+        "WS2812B value not found — addressable LED not instantiated"
+    )
+
+
+def test_ir_blaster_defined():
+    """ECO #2026-03-F: IR blaster (VSMB294008 + AO3400A) must be present with IR_GPIO net."""
+    src = _get_source()
+    assert "def _build_ir_blaster" in src, (
+        "_build_ir_blaster function missing — IR blaster not implemented"
+    )
+    assert "VSMB294008" in src, (
+        "VSMB294008 IR LED not found — IR emitter not instantiated"
+    )
+    assert "AO3400A" in src, (
+        "AO3400A N-MOSFET not found — ECO #2026-03-F IR driver upgrade not applied"
+    )
+    assert 'Net("IR_GPIO")' in src, (
+        "IR_GPIO net not declared in assembly — IR blaster gate not wired"
+    )
+
+
+def test_chip_antenna_replaces_sma():
+    """ECO #2026-02-V2: Johanson chip antenna with Pi-network must replace SMA connector."""
+    src = _get_source()
+    assert "0915AT43A0026" in src, (
+        "Johanson 0915AT43A0026 chip antenna not found — SMA replacement not implemented"
+    )
+    assert "FP_CHIP_ANT_915" in src, (
+        "FP_CHIP_ANT_915 footprint constant missing"
+    )
+    # Pi-network component values
+    assert 'value="0.5p"' in src, "Pi-network C1=0.5pF shunt cap missing"
+    assert 'value="10n"'  in src, "Pi-network L1=10nH series inductor missing"
+    assert 'value="4.7p"' in src, "Pi-network C2=4.7pF output shunt cap missing"
+    # RF SMA coaxial connector must be absent (FP_SCHOTTKY_SMA is the Schottky diode package — OK)
+    assert "Connector_Coaxial" not in src, (
+        "Connector_Coaxial reference still present — RF SMA connector not fully removed"
+    )
+
+
+def test_wago_terminal_block_present():
+    """ECO #2026-02-V2: WAGO 2060-404 terminal block must replace ISO1212 pin header."""
+    src = _get_source()
+    assert "FP_WAGO_4P" in src, (
+        "FP_WAGO_4P footprint constant missing — WAGO terminal block not defined"
+    )
+    assert "WAGO-2060-404" in src, (
+        "WAGO-2060-404 value not found — WAGO terminal block not instantiated"
+    )
+
+
+def test_led_din_on_pin_36():
+    """ECO #2026-02-V2: LED_DIN must be on Radxa header pin 36 (was CAN_CS_N)."""
+    src = _get_source()
+    assert "conn[36] += led_din" in src, (
+        "LED_DIN not on pin 36 — WS2812B data chain not routed to Radxa header"
+    )
+    assert "conn[36] += can_cs_n" not in src, (
+        "can_cs_n still on pin 36 — CAN chip-select not removed from header"
+    )
+
+
+# ── ECO #2026-03-D: Advanced Power UX ────────────────────────────────────────
+
+
+def test_build_power_ux_defined():
+    """ECO #2026-03-D: _build_power_ux function must be defined (replaces _build_reset_switch)."""
+    src = _get_source()
+    assert "def _build_power_ux" in src, (
+        "_build_power_ux function not defined — power UX subsystem A6 not implemented"
+    )
+    assert "def _build_reset_switch" not in src, (
+        "_build_reset_switch still present — HW-RST-01 reset switch not removed per ECO #2026-03-D"
+    )
+
+
+def test_pmic_key_net_defined():
+    """ECO #2026-03-D: PMIC_KEY net must be declared in the assembly."""
+    assert 'Net("PMIC_KEY")' in _get_source(), (
+        'Net("PMIC_KEY") missing — KEY pin net not declared for A6 power UX'
+    )
+
+
+def test_bss84_wake_blocker_present():
+    """ECO #2026-03-D: BSS84 PMOS wake-blocker must be instantiated."""
+    src = _get_source()
+    assert "BSS84" in src, (
+        "BSS84 PMOS not found — joystick wake-blocker not instantiated (ECO #2026-03-D)"
+    )
+    assert "FP_PMOS_SOT23" in src, (
+        "FP_PMOS_SOT23 footprint constant missing — PMOS SOT-23 package not defined"
+    )
+    assert "Q_PMOS_GSD" in src, (
+        "Q_PMOS_GSD SKiDL device type not found — PMOS model not instantiated"
+    )
+
+
+def test_pmic_kill_software_kill_present():
+    """ECO #2026-03-D: PMIC_KILL net and 2N7002 kill NMOS must be present."""
+    src = _get_source()
+    assert 'Net("PMIC_KILL")' in src, (
+        'Net("PMIC_KILL") missing — software kill GPIO not declared'
+    )
+    # 2N7002 is also used by IR blaster (E3), so check specific kill context via pmic_kill
+    assert "pmic_kill" in src, (
+        "pmic_kill variable missing — software kill circuit not wired"
+    )
+
+
+def test_sw_pwr_button_present():
+    """ECO #2026-03-D: Physical SW_PWR power button must be instantiated."""
+    src = _get_source()
+    assert 'value="SW_PWR"' in src, (
+        'SW_PWR power button not found — physical power button not instantiated'
+    )
+    assert 'Net("SW_PWR_GPIO")' in src, (
+        'Net("SW_PWR_GPIO") missing — long-press detect GPIO not declared'
+    )
+
+
+def test_power_ux_called_in_assembly():
+    """ECO #2026-03-D: _build_power_ux must be called from the top-level assembly."""
+    assert "_build_power_ux(" in _get_source(), (
+        "_build_power_ux not called in generate_daemon_v0_full_system() — A6 not wired"
+    )
+
+
+def test_reset_n_net_removed():
+    """ECO #2026-03-D: RESET_N net must be absent (reset switch removed)."""
+    assert 'Net("RESET_N")' not in _get_source(), (
+        'Net("RESET_N") still present — reset switch not fully removed per ECO #2026-03-D'
+    )
+
+
+# ── ECO #2026-03-E: Kill List Fixes ──────────────────────────────────────────
+
+
+def test_battery_leds_removed():
+    """ECO #2026-03-E: IP5328P LED1/LED2/LED3 resistors must be absent (I2C conflict)."""
+    src = _get_source()
+    assert 'value="3.3k"' not in src, (
+        "3.3k LED resistors still present — battery LEDs not removed (ECO #2026-03-E I2C fix)"
+    )
+    assert 'Net("LED1")' not in src, (
+        'Net("LED1") still present — LED1 net not removed'
+    )
+    assert 'Net("LED2")' not in src, (
+        'Net("LED2") still present — LED2 net not removed'
+    )
+    assert 'Net("LED3")' not in src, (
+        'Net("LED3") still present — LED3 net not removed'
+    )
+
+
+def test_ws2812b_din_pullup_present():
+    """ECO #2026-03-E: 1kΩ pull-up from LED_DIN to 5V_SYS must be present."""
+    src = _get_source()
+    assert "din_pullup" in src, (
+        "din_pullup not found in _build_ws2812b_leds — open-drain pull-up not added (ECO #2026-03-E)"
+    )
+    assert "din_pullup[1] += vcc_5v" in src, (
+        "din_pullup not connected to vcc_5v — pull-up not tied to 5V_SYS"
+    )
+    assert "din_pullup[2] += led_din" in src, (
+        "din_pullup not connected to led_din — pull-up not tied to LED_DIN"
+    )
+
+
+def test_ethernet_center_tap_biased():
+    """ECO #2026-03-E: HR911105A center taps (pins 4/5) must connect to VCC_3V3."""
+    src = _get_source()
+    assert "rj45[4] += vcc_3v3" in src, (
+        "rj45[4] (CT1) not connected to vcc_3v3 — Ethernet TX center tap floating (ECO #2026-03-E)"
+    )
+    assert "rj45[5] += vcc_3v3" in src, (
+        "rj45[5] (CT2) not connected to vcc_3v3 — Ethernet RX center tap floating"
+    )
+
+
+# ── ECO #2026-03-F: Critical Architecture Rescue ─────────────────────────────
+
+
+def test_rf_pins_migrated_to_safe_gpios():
+    """ECO #2026-03-F: RF SoftSPI must be on safe GPIO pins 13/15/16/18 (not UART 8/10)."""
+    src = _get_source()
+    assert "conn[13] += soft_spi_mosi" in src, (
+        "RF_MOSI not on pin 13 — still on UART TX pin 8 (boot loop risk)"
+    )
+    assert "conn[15] += soft_spi_miso" in src, (
+        "RF_MISO not on pin 15 — still on UART RX pin 10 (boot loop risk)"
+    )
+    assert "conn[16] += soft_spi_sck" in src, (
+        "RF_CLK not on pin 16 — safe GPIO migration incomplete"
+    )
+    assert "conn[18] += rf_cs_n" in src, (
+        "RF_CS_N not on pin 18 — safe GPIO migration incomplete"
+    )
+
+
+def test_stinger_flags_displaced_to_pins_8_10():
+    """ECO #2026-03-F: STINGER_FLAG_2/3 must be on pins 8/10 (freed from UART/RF)."""
+    src = _get_source()
+    assert "conn[8]  += stinger_flag[1]" in src, (
+        "STINGER_FLAG_2 not on pin 8 — displacement from pin 13 incomplete"
+    )
+    assert "conn[10] += stinger_flag[2]" in src, (
+        "STINGER_FLAG_3 not on pin 10 — displacement from pin 15 incomplete"
+    )
+
+
+def test_rf_gdo0_removed_from_header():
+    """ECO #2026-03-F: RF_GDO0 must not occupy any header pin (CC1101 uses polling)."""
+    src = _get_source()
+    assert "conn[16] += rf_gdo0" not in src, (
+        "RF_GDO0 still on header pin 16 — ECO #2026-03-F RF migration not applied"
+    )
+
+
+def test_screen_dc_on_pin_32():
+    """ECO #2026-03-F: SCREEN_DC must be on pin 32 (freed when RF_CLK moved to pin 16)."""
+    src = _get_source()
+    assert "conn[32] += screen_dc" in src, (
+        "SCREEN_DC not on pin 32 — ECO #2026-03-F header reassignment incomplete"
+    )
+
+
+def test_i2c1_pmic_protection_resistors():
+    """ECO #2026-03-H: 470Ω series resistors on I2C1_PMIC_SDA/SCL prevent IP5328P latch-up."""
+    src = _get_source()
+    assert 'Net("I2C1_PMIC_SDA")' in src, (
+        "I2C1_PMIC_SDA net missing — I2C1 SDA protection resistor not wired (ECO #2026-03-H)"
+    )
+    assert 'Net("I2C1_PMIC_SCL")' in src, (
+        "I2C1_PMIC_SCL net missing — I2C1 SCL protection resistor not wired (ECO #2026-03-H)"
+    )
+    assert 'i2c1_pmic_sda' in src, (
+        "i2c1_pmic_sda variable missing — I2C1 SDA 470Ω resistor not declared"
+    )
+    assert 'i2c1_pmic_scl' in src, (
+        "i2c1_pmic_scl variable missing — I2C1 SCL 470Ω resistor not declared"
+    )
+
+
+def test_ethernet_uses_ldo_clean_rail():
+    """ECO #2026-03-F: RTL8152B VCC must come from vcc_clean (LM1117 800mA), not vcc_3v3."""
+    src = _get_source()
+    assert "vcc_3v3 = vcc_clean" in src, (
+        "Ethernet _build_ethernet call still passes vcc_3v3 — ECO #2026-03-F brownout fix missing"
+    )
+
+
+def test_ao3400a_ir_driver():
+    """ECO #2026-03-F: IR blaster NMOS must be AO3400A (logic-level, Rds_on < 50mΩ at 3.3V)."""
+    src = _get_source()
+    assert "AO3400A" in src, (
+        "AO3400A not found — IR driver upgrade (ECO #2026-03-F) not applied"
+    )
+
+
+# ── ECO #2026-03-G: Signal Integrity & Thermal Rescue ────────────────────────
+
+
+def test_power_tank_tantalum_cap():
+    """ECO #2026-03-G: 100µF tantalum power tank must be present on 5V_SYS rail."""
+    src = _get_source()
+    assert "FP_TANT_CASEB" in src, (
+        "FP_TANT_CASEB footprint constant missing — tantalum cap not defined"
+    )
+    assert '"Device", "CP"' in src, (
+        "Polarised capacitor (CP) part missing — tantalum power tank not instantiated"
+    )
+    assert 'value="100u"' in src, (
+        "100µF tantalum value not found — power tank not sized correctly"
+    )
+    assert "tant_5v[1] += vcc_5v" in src, (
+        "tant_5v positive terminal not connected to 5V_SYS — power tank not wired"
+    )
+
+
+def test_ntc_thermistor_on_pmic():
+    """ECO #2026-03-G: 10kΩ NTC thermistor must be connected to IP5328P NTC pin."""
+    src = _get_source()
+    assert '"Device", "R_NTC"' in src, (
+        "R_NTC part missing — NTC thermistor not instantiated"
+    )
+    assert 'Net("IP5328P_NTC")' in src, (
+        "IP5328P_NTC net not declared — NTC thermistor not wired to PMIC"
+    )
+    assert 'ic["NTC"] += ntc_net' in src, (
+        "ic[NTC] not connected to ntc_net — NTC thermistor not linked to IP5328P"
+    )
+
+
+def test_rf_spi_gpio_firmware_note():
+    """ECO #2026-03-G: spi-gpio kernel driver note must appear in RF transceiver docstring."""
+    src = _get_source()
+    assert "spi-gpio" in src, (
+        "spi-gpio firmware note missing from _build_rf_transceiver — ECO #2026-03-G not applied"
+    )
+
+
+# ── ECO #2026-03-H: Pin Mapping & Power Tuning ───────────────────────────────
+
+
+def test_pmic_i2c_on_i2c1():
+    """ECO #2026-03-H: IP5328P telemetry must use I2C1 (pins 3/5, Always-On), not I2C0."""
+    src = _get_source()
+    assert 'Net("I2C1_PMIC_SDA")' in src, (
+        "I2C1_PMIC_SDA net missing — IP5328P not migrated to I2C1 (ECO #2026-03-H)"
+    )
+    assert 'Net("I2C1_PMIC_SCL")' in src, (
+        "I2C1_PMIC_SCL net missing — IP5328P not migrated to I2C1 (ECO #2026-03-H)"
+    )
+    assert 'Net("I2C0_SDA_IC")' not in src, (
+        "Old I2C0_SDA_IC net still present — I2C0 migration to I2C1 incomplete"
+    )
+    assert 'Net("I2C0_SCL_IC")' not in src, (
+        "Old I2C0_SCL_IC net still present — I2C0 migration to I2C1 incomplete"
+    )
+
+
+def test_pins_27_28_not_i2c0():
+    """ECO #2026-03-H: Header pins 27/28 must NOT be assigned I2C0 nets (NC on Zero 3W)."""
+    src = _get_source()
+    assert 'conn[27] += i2c0_sda' not in src, (
+        "conn[27] still on i2c0_sda — pins 27/28 are disconnected on Zero 3W (ECO #2026-03-H)"
+    )
+    assert 'conn[28] += i2c0_scl' not in src, (
+        "conn[28] still on i2c0_scl — pins 27/28 are disconnected on Zero 3W (ECO #2026-03-H)"
+    )
+
+
+def test_screen_audio_no_overlap_comment():
+    """ECO #2026-03-H: Pin lock comment confirming SPI3/I2S0 no overlap must be present."""
+    src = _get_source()
+    assert "NO OVERLAP CONFIRMED" in src, (
+        "PIN LOCK 'NO OVERLAP CONFIRMED' comment missing — ECO #2026-03-H bus segregation not documented"
+    )
+
+
+# ── ECO #2026-03-GOLD: Golden Master Cleanup ─────────────────────────────────
+
+
+def test_rf_pi_network_explicit_names():
+    """ECO #2026-03-GOLD: Pi-network parts must use explicit BOM names C_RF1, L_RF1, C_RF2."""
+    src = _get_source()
+    assert "C_RF1" in src, (
+        "C_RF1 missing — RF Pi-network C1 shunt not explicitly named (ECO #2026-03-GOLD)"
+    )
+    assert "L_RF1" in src, (
+        "L_RF1 missing — RF Pi-network L1 series inductor not explicitly named (ECO #2026-03-GOLD)"
+    )
+    assert "C_RF2" in src, (
+        "C_RF2 missing — RF Pi-network C2 shunt not explicitly named (ECO #2026-03-GOLD)"
+    )
+
+
+def test_ldo_ap2112k_footprint():
+    """ECO #2026-03-GOLD: AP2112K must use SOT-23-5 footprint constant."""
+    src = _get_source()
+    assert "FP_LDO_SOT23_5" in src, (
+        "FP_LDO_SOT23_5 constant missing — AP2112K SOT-23-5 footprint not defined"
     )

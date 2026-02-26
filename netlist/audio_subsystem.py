@@ -7,7 +7,7 @@ Generates a pure-Python KiCad netlist (.net) for:
   - INMP441 omnidirectional MEMS microphone
   - Switched 3.5mm TRRS jack (NC mechanical interrupt logic)
   - JST-SH 2-pin connector for the 1W / 8-Ohm internal micro speaker
-  - ESP32-WROOM-32 acting as I2S master
+  - Radxa Zero 3W acting as I2S master (I2S shared nets connect to full_system.py header)
 
 Protection topology (red-team audit fixes):
 
@@ -56,11 +56,12 @@ FP_QFN16   = "Package_DFN_QFN:QFN-16-1EP_3x3mm_P0.5mm_EP1.8x1.8mm"
 FP_INMP441 = "Sensor_Audio:InvenSense_INMP441_BottomPort"
 FP_TRRS    = "Connector_Audio:Jack_3.5mm_SJ2-2531X-SMT"
 FP_JST_SH2 = "Connector_JST:JST_SH_SM02B-SRSS-TB_1x02-1MP_P1.00mm_Horizontal"
-FP_ESP32   = "RF_Module:ESP32-WROOM-32"
 FP_R0402   = "Resistor_SMD:R_0402_1005Metric"
 FP_C0402   = "Capacitor_SMD:C_0402_1005Metric"
 # SM-AUD-01: ESD9B5.0ST5G bidirectional TVS (ON Semi, SC-70-3 package)
 FP_TVS_SC70 = "Package_TO_SOT_SMD:SC-70-3"
+# SM-AUD-02: BLM18AG601SN1 ferrite bead (Murata, 0402; ~600Ω @ 100MHz) for BTL EMI filter
+FP_FERRITE_0402 = "Inductor_SMD:L_0402_1005Metric"
 
 # ── SM-LOG-03: SD_MODE pull-up – computed, never static ──────────────────────
 # MAX98357A datasheet formula: R_LARGE (kΩ) = 222.2 × V_DDIO − 100
@@ -119,13 +120,6 @@ def generate_daemon_audio_subsystem() -> None:
         footprint=FP_JST_SH2,
     )
 
-    # ESP32-WROOM-32 – I2S bus master (mocked for netlist purposes).
-    i2s_master = Part(
-        "MCU_Espressif",
-        "ESP32-WROOM-32",
-        footprint=FP_ESP32,
-    )
-
     # Passive templates – copied on demand.
     Resistor = Part("Device", "R", dest=TEMPLATE, footprint=FP_R0402)
     Capacitor = Part("Device", "C", dest=TEMPLATE, footprint=FP_C0402)
@@ -162,6 +156,16 @@ def generate_daemon_audio_subsystem() -> None:
     amp_decap_a, amp_decap_b = Capacitor(num_copies=2, value="0.1uF")
     mic_decap_a, mic_decap_b = Capacitor(num_copies=2, value="0.1uF")
 
+    # SM-AUD-02: BLM18AG601SN1 ferrite bead + 1nF cap EMI filter on BTL outputs (ECO #2026-03-G)
+    # Topology: AMP_OUT_P/N → [TVS clamp] → [Ferrite Bead] → AMP_OUT_P/N_FILT → [TRRS switch]
+    #           Post-bead 1nF to GND forms RC low-pass: Z_bead(300kHz)≈80Ω, f_c≈2MHz.
+    # Kills IP5328P 300kHz switching noise before it reaches the speaker cable (which
+    # acts as a 1m antenna and would re-radiate back into the CC1101 RF front-end).
+    fb_p = Part("Device", "Ferrite_Bead", footprint=FP_FERRITE_0402, value="BLM18AG601SN1")
+    fb_n = Part("Device", "Ferrite_Bead", footprint=FP_FERRITE_0402, value="BLM18AG601SN1")
+    c_filt_p = Capacitor(value="1n")   # post-bead shunt cap, OUTP side
+    c_filt_n = Capacitor(value="1n")   # post-bead shunt cap, OUTN side
+
     # ------------------------------------------------------------------
     # Power nets
     # ------------------------------------------------------------------
@@ -194,11 +198,10 @@ def generate_daemon_audio_subsystem() -> None:
     i2s_dout = Net("I2S_DATA_OUT")  # MCU → amplifier
     i2s_din = Net("I2S_DATA_IN")    # microphone → MCU
 
-    # MCU I2S master outputs (GPIO assignments per the report spec)
-    i2s_master["IO25"] += i2s_bclk
-    i2s_master["IO26"] += i2s_lrclk
-    i2s_master["IO22"] += i2s_dout
-    i2s_master["IO21"] += i2s_din
+    # I2S bus: Radxa Zero 3W is the I2S master.  These nets are shared by name
+    # with full_system.py (I2S_BCLK=pin 12, I2S_LRCLK=pin 35, I2S_DATA_IN=pin 38,
+    # I2S_DATA_OUT=pin 40).  No MCU Part instantiation is needed here; the Radxa
+    # header in full_system.py connects the SoC's I2S3 peripheral to these nets.
 
     # Amplifier I2S inputs
     amp["BCLK"] += i2s_bclk
@@ -238,9 +241,22 @@ def generate_daemon_audio_subsystem() -> None:
     tvs_btl_n["A"] += btl_out_n
     tvs_btl_n["K"] += gnd
 
-    # Route BTL signals into the NC switch input side of the TRRS jack.
-    trrs_jack["TipSwitch"] += btl_out_p    # pin 10 on SJ2-2531X-SMT
-    trrs_jack["Ring1Switch"] += btl_out_n  # pin 11
+    # SM-AUD-02: Ferrite bead EMI filter between raw amp output and TRRS switch (ECO #2026-03-G).
+    # Order: amp → TVS (spike clamp) → ferrite bead → 1nF shunt → TRRS switch → speaker.
+    # TVS stays on the raw side to catch spikes; bead kills 300kHz switching noise
+    # propagating toward the speaker cable (1m wire = effective antenna at 300kHz).
+    btl_filt_p = Net("AMP_OUT_P_FILT")   # post-bead filtered BTL positive
+    btl_filt_n = Net("AMP_OUT_N_FILT")   # post-bead filtered BTL negative
+
+    fb_p[1] += btl_out_p;    fb_p[2] += btl_filt_p    # bead in series, OUTP path
+    c_filt_p[1] += btl_filt_p; c_filt_p[2] += gnd      # shunt cap to GND
+
+    fb_n[1] += btl_out_n;    fb_n[2] += btl_filt_n    # bead in series, OUTN path
+    c_filt_n[1] += btl_filt_n; c_filt_n[2] += gnd      # shunt cap to GND
+
+    # Route filtered BTL signals into the NC switch input side of the TRRS jack.
+    trrs_jack["TipSwitch"] += btl_filt_p    # pin 10 on SJ2-2531X-SMT (was btl_out_p)
+    trrs_jack["Ring1Switch"] += btl_filt_n  # pin 11                   (was btl_out_n)
 
     # The output side of the NC switches drives the JST-SH speaker connector.
     # When the plug is absent the path is: AMP_OUT_P → NC switch → speaker pin 1
@@ -251,7 +267,7 @@ def generate_daemon_audio_subsystem() -> None:
     # ------------------------------------------------------------------
     # Amplifier shutdown via insertion-detect switch
     #
-    # The SD pin is pulled high (633kΩ to 5V, per SM-LOG-03 formula) by
+    # The SD pin is pulled high (633kΩ to 3V3_SYS, per SM-LOG-03 formula; ECO #2026-03-G) by
     # default, setting L/2+R/2 mono mix mode.  On plug insertion, the detect
     # switch closes and the RC-filtered signal pulls SD_MODE to GND, forcing
     # the MAX98357A into micropower shutdown (<1µA).
@@ -265,8 +281,11 @@ def generate_daemon_audio_subsystem() -> None:
     amp_sd = Net("AMP_SD")
     amp["SD"] += amp_sd
 
-    # Default pull-up: 5V → 633kΩ → AMP_SD  (SM-LOG-03 computed value)
-    pullup_sd[1] += vcc_5v
+    # Default pull-up: 3V3_SYS → 633kΩ → AMP_SD  (SM-LOG-03 computed value; ECO #2026-03-G)
+    # VDDIO = 3.3V → R = 222.2×3.3−100 = 633kΩ; pull-up must connect to VDDIO (3V3_SYS),
+    # NOT to VDD (5V_AUDIO).  Connecting to 5V would overdrive SD above V_IH_B2 trip point,
+    # locking the amplifier into gain-select mode instead of L/2+R/2 mono mix.
+    pullup_sd[1] += vcc_3v3   # VDDIO reference (was incorrectly vcc_5v; ECO #2026-03-G)
     pullup_sd[2] += amp_sd
 
     # Debounced detect path:
