@@ -24,7 +24,7 @@ import logging
 import signal
 import time
 from dataclasses import dataclass, field
-from enum import Enum, auto
+from enum import Enum
 from pathlib import Path
 from typing import Any
 
@@ -63,14 +63,24 @@ class PowerStateMachine:
     spurious events and log spam.  Uses 3-reading debounce + voltage hysteresis.
     """
 
-    # (enter_below_v, exit_above_v) — hysteresis band prevents oscillation
-    THRESHOLDS = [
-        ("cutoff",   3.00, 3.10),
-        ("critical", 3.20, 3.30),
-        ("low",      3.40, 3.55),
-        ("nominal",  3.70, 3.70),
-        ("full",     4.20, 4.20),
-    ]
+    # Transition boundaries with hysteresis.
+    # "dropping" thresholds: voltage falls below → enter worse state
+    # "rising" thresholds: voltage rises above → enter better state
+    # The gap between dropping and rising prevents oscillation.
+    TRANSITIONS = {
+        # (from_state, to_state): threshold_voltage
+        # Dropping transitions (voltage falling):
+        ("full",     "nominal"):  4.00,
+        ("nominal",  "low"):      3.40,
+        ("low",      "critical"): 3.20,
+        ("critical", "cutoff"):   3.00,
+        # Rising transitions (voltage rising) — higher than drop thresholds:
+        ("cutoff",   "critical"): 3.10,
+        ("critical", "low"):      3.30,
+        ("low",      "nominal"):  3.55,
+        ("nominal",  "full"):     4.10,
+    }
+    STATE_ORDER = ["cutoff", "critical", "low", "nominal", "full"]
     DEBOUNCE_COUNT = 3  # require N consecutive readings before transition
 
     def __init__(self) -> None:
@@ -92,7 +102,6 @@ class PowerStateMachine:
                 self._pending = raw
                 self._debounce = 1
             if self._debounce >= self.DEBOUNCE_COUNT:
-                old = self._current
                 self._current = raw
                 self._pending = None
                 self._debounce = 0
@@ -103,12 +112,35 @@ class PowerStateMachine:
         return self._current, False
 
     def _classify(self, voltage: float) -> str:
-        """Classify voltage using hysteresis-aware thresholds."""
-        for name, enter_v, exit_v in self.THRESHOLDS:
-            threshold = exit_v if self._current == name else enter_v
-            if voltage < threshold:
-                return name
-        return "full"
+        """Classify voltage with hysteresis relative to current state.
+
+        Walks from current state toward worse/better states via adjacent
+        transitions.  Each step uses the drop or rise threshold for that
+        specific transition, providing natural hysteresis.
+        """
+        idx = self.STATE_ORDER.index(self._current)
+
+        # Check if we should drop to worse states (walk downward)
+        while idx > 0:
+            from_state = self.STATE_ORDER[idx]
+            to_state = self.STATE_ORDER[idx - 1]
+            threshold = self.TRANSITIONS.get((from_state, to_state))
+            if threshold is not None and voltage < threshold:
+                idx -= 1
+            else:
+                break
+
+        # Check if we should rise to better states (walk upward)
+        while idx < len(self.STATE_ORDER) - 1:
+            from_state = self.STATE_ORDER[idx]
+            to_state = self.STATE_ORDER[idx + 1]
+            threshold = self.TRANSITIONS.get((from_state, to_state))
+            if threshold is not None and voltage >= threshold:
+                idx += 1
+            else:
+                break
+
+        return self.STATE_ORDER[idx]
 
 
 class AgentLoop:
@@ -539,8 +571,7 @@ class AgentLoop:
     def _read_cpu_temp(self) -> float | None:
         """Read RK3566 CPU temperature from sysfs."""
         try:
-            raw = open(self.config.thermal_zone_path).read().strip()
-            return int(raw) / 1000.0
+            return int(Path(self.config.thermal_zone_path).read_text().strip()) / 1000.0
         except Exception:
             return None
 

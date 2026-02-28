@@ -217,6 +217,7 @@ class Peripheral(ABC):
                 self.init()
                 if self.probe():
                     self._recovery_level = 0
+                    self._breaker._on_success()  # Reset breaker to CLOSED
                     return True
             except Exception as exc:
                 self.log.warning("Re-init failed: %s", exc)
@@ -227,6 +228,7 @@ class Peripheral(ABC):
                 self._hard_reset()
                 if self.probe():
                     self._recovery_level = 0
+                    self._breaker._on_success()  # Reset breaker to CLOSED
                     return True
             except Exception as exc:
                 self.log.warning("Hard reset failed: %s", exc)
