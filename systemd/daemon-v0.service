@@ -1,0 +1,76 @@
+# ═══════════════════════════════════════════════════════════════════════
+# Daemon V0 — systemd Service Unit
+#
+# Install:
+#   sudo cp daemon-v0.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable daemon-v0
+#   sudo systemctl start daemon-v0
+#
+# Logs:
+#   journalctl -u daemon-v0 -f
+# ═══════════════════════════════════════════════════════════════════════
+
+[Unit]
+Description=Daemon V0 Hardware Agent
+Documentation=file:///opt/daemon-v0/ARCHITECTURE.md
+After=network-online.target
+Wants=network-online.target
+
+# Ensure I2C and SPI kernel modules are loaded
+After=systemd-modules-load.service
+Requires=systemd-modules-load.service
+
+[Service]
+Type=simple
+User=daemon
+Group=daemon
+
+# Working directory — contains specs/ YAML database
+WorkingDirectory=/opt/daemon-v0
+
+# Main process
+ExecStart=/usr/bin/python3 -m daemon_core.main run
+
+# Graceful shutdown via SIGTERM
+KillSignal=SIGTERM
+TimeoutStopSec=10
+
+# Restart on crash (hardware agent should always be running)
+Restart=on-failure
+RestartSec=5
+
+# Resource limits — respect pocket thermal budget
+# RK3566 must stay below 60% sustained CPU in pocket (ARCHITECTURE.md §3.5)
+CPUQuota=60%
+
+# Memory limit — leave room for OS + other processes on 1GB/2GB/4GB variants
+MemoryMax=256M
+
+# Hardware access
+SupplementaryGroups=i2c spi gpio dialout video audio plugdev
+
+# Security hardening
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ReadWritePaths=/var/log /tmp
+
+# Allow access to hardware devices
+DeviceAllow=/dev/i2c-* rw
+DeviceAllow=/dev/spidev* rw
+DeviceAllow=/dev/gpiochip* rw
+DeviceAllow=/dev/lirc* rw
+DeviceAllow=/dev/snd/* rw
+DeviceAllow=/dev/mem rw
+
+# Environment
+Environment=PYTHONUNBUFFERED=1
+Environment=DAEMON_LOG_LEVEL=INFO
+
+# Watchdog — agent must report healthy within 30s
+WatchdogSec=30
+
+[Install]
+WantedBy=multi-user.target

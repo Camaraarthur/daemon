@@ -1,0 +1,26 @@
+# Daemon V0 — Pre-Installed Tool Catalog
+
+bus_tools:
+  apt: ["i2c-tools", "spi-tools", "libgpiod-dev", "python3-libgpiod"]
+  pip: ["smbus2", "spidev", "gpiod", "pyserial", "pyudev", "rpi-ws281x", "Pillow", "pyyaml"]
+
+enumeration:
+  apt: ["usbutils", "pciutils", "lshw", "ethtool", "alsa-utils", "v4l-utils"]
+
+dt_tools:
+  apt: ["device-tree-compiler"]
+  overlays:
+    - "daemon-v0-spi-gpio-cc1101"
+    - "daemon-v0-i2s-audio"
+    - "daemon-v0-pwm-backlight"
+
+kernel_modules:
+  required: ["i2c-dev", "spi-dev", "spi-gpio", "spi-bitbang", "rtl8152"]
+  optional: ["snd-soc-max98357a", "ads1015", "gpio-ir-tx", "gpio-keys"]
+
+security_tools:
+  apt: ["nmap", "tcpdump", "minicom", "binwalk", "openocd", "flashrom", "gdb-multiarch"]
+  pip: ["pyusb", "scapy"]
+
+network:
+  apt: ["curl", "wget", "dnsutils", "openssh-client", "openssh-server", "git", "jq"]

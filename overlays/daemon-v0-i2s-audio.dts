@@ -1,0 +1,41 @@
+/*
+ * Daemon V0 — I2S Audio overlay
+ * MAX98357A (playback) + INMP441 (capture) on I2S3
+ * Pins: BCLK=12, LRCLK=35, DATA_OUT=40, DATA_IN=38
+ */
+/dts-v1/;
+/plugin/;
+
+/ {
+	compatible = "radxa,zero-3w", "rockchip,rk3566";
+
+	fragment@0 {
+		target-path = "/";
+		__overlay__ {
+			max98357a: max98357a {
+				compatible = "maxim,max98357a";
+				#sound-dai-cells = <0>;
+				status = "okay";
+			};
+		};
+	};
+
+	fragment@1 {
+		target-path = "/";
+		__overlay__ {
+			daemon_sound: sound {
+				compatible = "simple-audio-card";
+				simple-audio-card,name = "DaemonV0-Audio";
+				simple-audio-card,format = "i2s";
+				status = "okay";
+				simple-audio-card,cpu { sound-dai = <&i2s3_2ch>; };
+				simple-audio-card,codec { sound-dai = <&max98357a>; };
+			};
+		};
+	};
+
+	fragment@2 {
+		target = <&i2s3_2ch>;
+		__overlay__ { status = "okay"; };
+	};
+};

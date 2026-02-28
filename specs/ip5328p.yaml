@@ -1,0 +1,37 @@
+# IP5328P — Power Management IC (Subsystem A)
+# I2C1 at 0x75, 470 ohm series protection
+
+ic:
+  name: "IP5328P"
+  manufacturer: "Injoinic"
+  package: "QFN-40 (6x6mm)"
+  function: "Synchronous boost converter + Li-ion charger + I2C telemetry"
+
+i2c:
+  address: 0x75
+  bus: "I2C1 (pins 3/5)"
+  protection: "470 ohm series on SDA/SCL"
+  registers:
+    SYS_CTL0: {addr: 0x01, fields: {boost_en: "bit 5", charger_en: "bit 4"}}
+    BAT_VOLT_H: {addr: 0x64, description: "Battery voltage high byte"}
+    BAT_VOLT_L: {addr: 0x65}
+    VBUS_VOLT_H: {addr: 0x62}
+    VBUS_VOLT_L: {addr: 0x63}
+    BAT_CUR_H: {addr: 0x66, description: "Signed: + charge, - discharge"}
+    BAT_CUR_L: {addr: 0x67}
+
+boost:
+  output_v: 5.0
+  max_continuous_a: 3.0
+  inductor: "4.7uH TDK VLF12560T-4R7M7R9 (Isat=7.9A, DO NOT use Bourns SRR1260-4R7Y)"
+
+thermal:
+  ntc: "10k NTC on IP5328P_NTC pin"
+  shutdown_c: 120
+
+battery_thresholds:
+  full: 4.20
+  nominal: 3.70
+  low: 3.40
+  critical: 3.20
+  cutoff: 3.00

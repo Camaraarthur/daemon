@@ -1,0 +1,47 @@
+# Daemon V0 — Top-Level Board Specification
+# ECO #2026-03-GOLD — Golden Master
+
+board:
+  name: "Daemon V0"
+  revision: "ECO #2026-03-GOLD"
+  sbc: "Radxa Zero 3W (RK3566, Cortex-A55 quad, 1-4GB LPDDR4)"
+  os: "Armbian / Radxa Debian (kernel 5.10+ or 6.1+)"
+
+power:
+  pmic: "IP5328P (QFN-40, 3A continuous boost)"
+  battery: "Single-cell Li-ion via JST-PH 2-pin"
+  rails:
+    5V_SYS: {source: "IP5328P boost", max_a: 3.0, tank: "100uF tantalum"}
+    3V3_CLEAN: {source: "AP2112K-3.3 LDO", dropout_v: 0.250, max_a: 0.600}
+    3V3_SYS: {source: "Radxa internal LDO"}
+
+buses:
+  spi3: {type: "hardware", devices: ["ST7789V2"], pins: "19/21/23/24"}
+  softspi_rf: {type: "spi-gpio kernel", devices: ["CC1101"], pins: "13/15/16/18"}
+  i2c1: {devices: ["ADS1015 (0x48)", "IP5328P (0x75)"], pins: "3/5"}
+  i2s: {devices: ["MAX98357A", "INMP441"], pins: "12/35/38/40"}
+  usb: {hub: "SL2.1A", ports: "3x Stinger + RTL8152B Ethernet"}
+
+thermal:
+  pocket_max_cpu_pct: 60
+  throttle_onset_c: 85
+  max_sustained_power_w: 0.71
+
+subsystems:
+  A: "IP5328P Power Management"
+  A2: "AP2112K-3.3 Clean LDO"
+  A3: "USB Charging MUX"
+  A5: "Goobay 74446 USB-C Bridge"
+  A6: "Advanced Power UX (BSS84 + 2N7002 + SW_PWR)"
+  B: "SL2.1A USB 2.0 Hub"
+  B2: "RTL8152B USB-Ethernet"
+  C: "SY6280AAC Stinger Ports x3"
+  D: "ST7789V2 SPI Display"
+  E: "Analog Joystick + ADS1015 ADC"
+  E2: "WS2812B RGB LEDs x4"
+  E3: "IR Blaster"
+  F: "40-Pin Radxa Header"
+  G: "NE555 Heartbeat"
+  H: "CC1101 Sub-GHz RF"
+  J: "ISO1212 Industrial 24V Isolation"
+  Audio: "MAX98357A + INMP441"

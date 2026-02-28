@@ -1,0 +1,31 @@
+# Daemon V0 — 40-Pin Header Pin Map (from ARCHITECTURE.md)
+
+header:
+  type: "2x20 P2.54mm right-angle HAT-compatible"
+  pins:
+    1: {net: "3V3_SYS", function: "power out"}
+    2: {net: "5V_SYS", function: "power in (IP5328P)"}
+    3: {net: "I2C1_SDA", function: "i2c", devices: "ADS1015 + IP5328P"}
+    5: {net: "I2C1_SCL", function: "i2c"}
+    7: {net: "SCREEN_BL", function: "gpio_out (PWM)"}
+    8: {net: "STINGER_FLAG_2", function: "gpio_in"}
+    10: {net: "STINGER_FLAG_3", function: "gpio_in"}
+    11: {net: "STINGER_FLAG_1", function: "gpio_in"}
+    12: {net: "I2S_BCLK", function: "i2s"}
+    13: {net: "RF_MOSI", function: "softspi out"}
+    15: {net: "RF_MISO", function: "softspi in"}
+    16: {net: "RF_CLK", function: "softspi clock"}
+    18: {net: "RF_CS_N", function: "softspi cs"}
+    19: {net: "SPI3_MOSI", function: "spi"}
+    22: {net: "SCREEN_RST", function: "gpio_out"}
+    23: {net: "SPI3_CLK", function: "spi"}
+    24: {net: "SPI3_CS", function: "spi"}
+    29: {net: "STINGER_EN_1", function: "gpio_out"}
+    31: {net: "STINGER_EN_2", function: "gpio_out"}
+    32: {net: "SCREEN_DC", function: "gpio_out"}
+    33: {net: "STINGER_EN_3", function: "gpio_out"}
+    35: {net: "I2S_LRCLK", function: "i2s (exclusive)"}
+    36: {net: "LED_DIN", function: "gpio_out (DMA)"}
+    37: {net: "JOY_SW", function: "gpio_in"}
+    38: {net: "I2S_DATA_IN", function: "i2s capture"}
+    40: {net: "I2S_DATA_OUT", function: "i2s playback"}

@@ -1,0 +1,28 @@
+/*
+ * Daemon V0 — PWM Backlight overlay for ST7789V2 display
+ * Pin 7 (GPIO4, hardware PWM capable)
+ */
+/dts-v1/;
+/plugin/;
+
+/ {
+	compatible = "radxa,zero-3w", "rockchip,rk3566";
+
+	fragment@0 {
+		target = <&pwm1>;
+		__overlay__ { status = "okay"; };
+	};
+
+	fragment@1 {
+		target-path = "/";
+		__overlay__ {
+			backlight: backlight {
+				compatible = "pwm-backlight";
+				pwms = <&pwm1 0 25000 0>;
+				brightness-levels = <0 4 8 16 32 64 128 255>;
+				default-brightness-level = <6>;
+				status = "okay";
+			};
+		};
+	};
+};

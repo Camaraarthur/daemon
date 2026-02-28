@@ -1,0 +1,148 @@
+# ═══════════════════════════════════════════════════════════════════════
+# Daemon V0 — Peripheral IC Specifications
+# All non-PMIC, non-RF active components
+# ═══════════════════════════════════════════════════════════════════════
+
+st7789v2:
+  name: "ST7789V2"
+  manufacturer: "Sitronix"
+  function: "262K-color TFT LCD controller, 240x280 px (1.69 inch module)"
+  interface: "SPI3 (hardware, write-only)"
+  connector: "J_SCREEN — 8-pin SIL"
+  voltage: "3V3_SYS"
+  spi:
+    bus: "SPI3"
+    max_freq: 62500000
+    mode: 0
+    cs_pin: 24
+  gpio:
+    dc: {pin: 32, net: "SCREEN_DC"}
+    rst: {pin: 22, net: "SCREEN_RST", active_low: true}
+    bl: {pin: 7, net: "SCREEN_BL", notes: "GPIO4, HW PWM capable"}
+  resolution: {width: 240, height: 280}
+  color_depth: 16  # RGB565 mode
+  init_sequence:
+    - [0x01, [], 150]     # SWRESET
+    - [0x11, [], 120]     # SLPOUT
+    - [0x3A, [0x55], 0]   # COLMOD RGB565
+    - [0x36, [0x00], 0]   # MADCTL normal
+    - [0x21, [], 0]       # INVON (required for most modules)
+    - [0x29, [], 50]      # DISPON
+
+ads1015:
+  name: "ADS1015"
+  manufacturer: "Texas Instruments"
+  function: "12-bit 4-channel I2C ADC"
+  datasheet: "SBAS473"
+  interface: "I2C1 (pins 3/5)"
+  address: 0x48
+  channels:
+    AIN0: "Joystick VRX (X-axis)"
+    AIN1: "Joystick VRY (Y-axis)"
+  sample_rates: [128, 250, 490, 920, 1600, 2400, 3300]
+  pga_gains: [6.144, 4.096, 2.048, 1.024, 0.512, 0.256]
+
+sy6280aac:
+  name: "SY6280AAC"
+  manufacturer: "Silergy"
+  function: "USB power distribution switch with current limit"
+  package: "SOT-23-5"
+  instances: 3
+  iset_resistor: 13000
+  overcurrent_trip: 0.523  # A (6800 / 13000)
+  port_mapping:
+    1: {en_pin: 29, flag_pin: 11}
+    2: {en_pin: 31, flag_pin: 8}
+    3: {en_pin: 33, flag_pin: 10}
+
+sl2_1a:
+  name: "SL2.1A"
+  manufacturer: "Terminus Technology"
+  function: "4-port USB 2.0 hub controller"
+  package: "QFN-28"
+  crystal: "12 MHz"
+  ports:
+    upstream: "Goobay 74446 bridge"
+    downstream_1_2_3: "SY6280 → Stinger USB-A"
+    downstream_4: "RTL8152B Ethernet"
+
+rtl8152b:
+  name: "RTL8152B"
+  manufacturer: "Realtek"
+  function: "USB 2.0 to 100Base-TX Ethernet"
+  package: "QFN-32"
+  crystal: "25 MHz"
+  voltage: "3V3_CLEAN"
+  linux_driver: "r8152 or cdc_ether"
+  magjack: "HanRun HR911105A"
+  center_tap_bias: "3V3_SYS on pins 4/5"
+
+max98357a:
+  name: "MAX98357A"
+  manufacturer: "Analog Devices"
+  function: "I2S Class-D BTL mono amplifier"
+  output: "3.2W into 4 ohm"
+  i2s_pins:
+    bclk: {pin: 12}
+    lrclk: {pin: 35}
+    din: {pin: 40}
+  sd_mode:
+    pullup: "633k to 3V3_SYS"
+    mode: "L/2+R/2 stereo mix"
+  output_protection:
+    tvs: "ESD9B5.0ST5G"
+    emi_filter: "BLM18AG601SN1 + 1nF"
+
+inmp441:
+  name: "INMP441"
+  manufacturer: "TDK InvenSense"
+  function: "Omnidirectional MEMS microphone with I2S output"
+  i2s_pins:
+    sck: {pin: 12}
+    ws: {pin: 35}
+    sd: {pin: 38}
+  lr_select: "LOW = left channel"
+  sensitivity: -26  # dBFS
+  snr: 61  # dB(A)
+  data_format: "24-bit left-justified in 32-bit frames"
+
+iso1212:
+  name: "ISO1212"
+  manufacturer: "Texas Instruments"
+  function: "Dual-channel digital isolator (2.5kV)"
+  channels: 2
+  field_supply: "8-35V"
+  field_connector: "WAGO 2060-404"
+  isolation_ground: "ISO_GND1 (STRICTLY isolated from PCB GND)"
+  protection_per_channel:
+    - "Littelfuse 60R PTC"
+    - "Vishay VCAN26A2 TVS (26V clamp)"
+    - "562 ohm series + 1k threshold"
+    - "10nF 100V filter"
+
+ne555:
+  name: "NE555"
+  function: "Astable oscillator — IP5328P anti-shutdown heartbeat"
+  interval: "~15 seconds"
+  dummy_load: "82 ohm = 61mA pulse"
+  note: "Hardware-only, no software interaction needed"
+
+ws2812b:
+  name: "WS2812B"
+  count: 4
+  data_pin: {pin: 36, net: "LED_DIN"}
+  pullup: "1k to 5V_SYS"
+  protocol: "800kHz NRZ"
+  color_order: "GRB"
+  current_per_led: 60  # mA
+  driver: "rpi_ws281x (DMA required)"
+
+ir_blaster:
+  name: "VSMB294008 + AO3400A"
+  wavelength: 940  # nm
+  driver_fet: "AO3400A (Vgs_th 0.45-1.0V)"
+  series_resistor: 33  # ohm
+  led_current: 106  # mA pulsed
+  duty_limit: 10  # % continuous
+  gpio: {pin: "aux_hdr:3", net: "IR_GPIO"}
+  linux_driver: "gpio-ir-tx + ir-ctl (v4l-utils)"

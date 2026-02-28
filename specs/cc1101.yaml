@@ -1,0 +1,42 @@
+# CC1101 — Sub-GHz RF Transceiver (Subsystem H)
+# TI SWRS061I, 915 MHz ISM, spi-gpio kernel driver
+
+ic:
+  name: "CC1101"
+  manufacturer: "Texas Instruments"
+  package: "QFN-20 (4x4mm)"
+  datasheet: "SWRS061I"
+
+rf:
+  frequency_mhz: 915.0
+  modulation: ["2-FSK", "4-FSK", "GFSK", "OOK/ASK", "MSK"]
+  max_data_rate_kbps: 500
+  tx_power_dbm: [-30, 12]
+  rx_sensitivity_dbm: -116
+
+spi:
+  type: "spi-gpio kernel driver (NOT userspace bitbang)"
+  pins: {sck: 16, mosi: 13, miso: 15, cs: 18}
+  max_speed_hz: 6500000
+  mandate: "ECO #2026-03-G: spi-gpio required, >10us userspace jitter violates 50ns SCLK"
+
+antenna:
+  type: "Johanson 0915AT43A0026 chip antenna"
+  matching:
+    C_RF1: "0.5pF shunt"
+    L_RF1: "10nH series"
+    C_RF2: "4.7pF shunt"
+
+identity:
+  PARTNUM: 0x00
+  VERSION: 0x14
+
+preset_915mhz_250kbps:
+  FREQ2: 0x23
+  FREQ1: 0x31
+  FREQ0: 0x3B
+  note: "SmartRF Studio values for 2-GFSK 250 kbps"
+
+patable_10dbm: [0xC0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]
+
+rssi_formula: "RSSI_dBm = (RSSI_dec / 2) - 74  (for 915 MHz)"

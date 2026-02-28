@@ -1,0 +1,40 @@
+/*
+ * Daemon V0 — spi-gpio overlay for CC1101 RF (Subsystem H)
+ * ECO #2026-03-G: MUST use spi-gpio, NOT userspace bitbang
+ * Pins: SCK=16, MOSI=13, MISO=15, CS=18 (active-low)
+ *
+ * GPIO numbers are PLACEHOLDERS — verify with gpioinfo at bringup.
+ *
+ * Install:
+ *   dtc -@ -I dts -O dtb -o daemon-v0-spi-gpio-cc1101.dtbo this_file.dts
+ *   cp *.dtbo /boot/dtbs/$(uname -r)/rockchip/overlay/
+ */
+/dts-v1/;
+/plugin/;
+
+/ {
+	compatible = "radxa,zero-3w", "rockchip,rk3566";
+
+	fragment@0 {
+		target-path = "/";
+		__overlay__ {
+			spi_gpio_cc1101: spi-gpio-cc1101 {
+				compatible = "spi-gpio";
+				#address-cells = <1>;
+				#size-cells = <0>;
+				status = "okay";
+				sck-gpios  = <&gpio3 8 0>;
+				mosi-gpios = <&gpio3 5 0>;
+				miso-gpios = <&gpio3 6 0>;
+				cs-gpios   = <&gpio3 9 1>;
+				num-chipselects = <1>;
+
+				cc1101@0 {
+					compatible = "ti,cc1101";
+					reg = <0>;
+					spi-max-frequency = <1000000>;
+				};
+			};
+		};
+	};
+};
