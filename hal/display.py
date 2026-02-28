@@ -75,6 +75,11 @@ class ST7789(Peripheral):
     def set_backlight(self, on: int) -> None:
         self._gpio.write("SCREEN_BL", 1 if on else 0)
 
+    def _hard_reset(self) -> None:
+        """Toggle hardware RST pin to force full display controller reset."""
+        self._gpio.pulse_reset("SCREEN_RST", 0.050)
+        self.log.info("ST7789V2 hardware reset via RST pin")
+
     def teardown(self) -> None:
         self.set_backlight(0)
         if self._spi: self._spi.close(); self._spi = None

@@ -56,6 +56,12 @@ class StingerManager(Peripheral):
     def power_cycle_port(self, port: int, delay_s: float = 1.0) -> None:
         self.disable_port(port); time.sleep(delay_s); self.enable_port(port)
 
+    def _hard_reset(self) -> None:
+        """Power cycle all 3 Stinger ports to clear any stuck USB devices."""
+        for port in self.PORTS:
+            self.power_cycle_port(port, delay_s=0.5)
+        self.log.info("All Stinger ports power-cycled")
+
     def list_usb_devices(self) -> list[str]:
         try:
             out = subprocess.check_output(["lsusb"], timeout=5, text=True)

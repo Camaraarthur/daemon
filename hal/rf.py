@@ -188,6 +188,17 @@ class CC1101(Peripheral):
                 pass
         return base
 
+    def _hard_reset(self) -> None:
+        """CC1101 hard reset via SRES strobe — clears all registers to defaults."""
+        if self._spi:
+            try:
+                self._strobe(SRES)
+                import time
+                time.sleep(0.005)
+                self.log.info("CC1101 SRES issued (hard reset)")
+            except Exception as exc:
+                self.log.warning("CC1101 SRES failed: %s", exc)
+
     def teardown(self) -> None:
         if self._spi:
             try:

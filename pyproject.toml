@@ -15,6 +15,8 @@ dependencies = [
     "numpy>=1.26",
     # Utilities
     "rich>=13.0",          # pretty CI output
+    # Daemon lifecycle
+    "sdnotify>=0.3",       # systemd READY=1 + WATCHDOG=1 (pure Python, zero C deps)
 ]
 
 [project.optional-dependencies]
@@ -26,7 +28,7 @@ dev = [
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["netlist*", "simulation*", "layout*", "dft*"]
+include = ["daemon_core*", "hal*", "netlist*", "simulation*", "layout*", "dft*"]
 
 [tool.ruff]
 line-length = 100

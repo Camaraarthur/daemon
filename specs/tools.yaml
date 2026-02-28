@@ -2,7 +2,7 @@
 
 bus_tools:
   apt: ["i2c-tools", "spi-tools", "libgpiod-dev", "python3-libgpiod"]
-  pip: ["smbus2", "spidev", "gpiod", "pyserial", "pyudev", "rpi-ws281x", "Pillow", "pyyaml"]
+  pip: ["smbus2", "spidev", "gpiod", "pyserial", "pyudev", "rpi-ws281x", "Pillow", "pyyaml", "sdnotify"]
 
 enumeration:
   apt: ["usbutils", "pciutils", "lshw", "ethtool", "alsa-utils", "v4l-utils"]

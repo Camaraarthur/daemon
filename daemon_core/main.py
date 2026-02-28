@@ -25,32 +25,67 @@ from __future__ import annotations
 import json
 import logging
 import sys
+import traceback
+from pathlib import Path
 
 log = logging.getLogger("daemon")
 
 
 def setup_logging(level: str = "INFO") -> None:
-    """Configure structured logging for systemd journal compatibility."""
-    fmt = "%(asctime)s [%(levelname)-8s] %(name)-25s %(message)s"
-    logging.basicConfig(
-        level=getattr(logging, level.upper(), logging.INFO),
-        format=fmt,
-        handlers=[
-            logging.StreamHandler(sys.stdout),
-        ],
-    )
+    """Configure logging — uses systemd journal if available, else stdout."""
+    log_level = getattr(logging, level.upper(), logging.INFO)
+    try:
+        from systemd.journal import JournalHandler
+        handler = JournalHandler(SYSLOG_IDENTIFIER="daemon-v0")
+        handler.setLevel(log_level)
+        logging.root.addHandler(handler)
+        logging.root.setLevel(log_level)
+    except ImportError:
+        # Fallback for non-systemd environments (dev machines, CI)
+        fmt = "[%(levelname)-8s] %(name)-25s %(message)s"
+        logging.basicConfig(
+            level=log_level,
+            format=fmt,
+            handlers=[logging.StreamHandler(sys.stdout)],
+        )
     # Reduce noise from libraries
     logging.getLogger("urllib3").setLevel(logging.WARNING)
     logging.getLogger("spidev").setLevel(logging.WARNING)
+
+
+def _get_notifier():
+    """Get systemd notifier (returns None if not running under systemd)."""
+    try:
+        import sdnotify
+        return sdnotify.SystemdNotifier()
+    except ImportError:
+        log.info("sdnotify not installed — watchdog/readiness notifications disabled")
+        return None
+
+
+CRASH_LOG = Path("/var/log/daemon-v0-crash.log")
 
 
 def cmd_run() -> None:
     """Run the full agent daemon."""
     from daemon_core.agent import AgentLoop
 
+    notifier = _get_notifier()
     agent = AgentLoop()
-    agent.setup()
-    agent.run()
+    try:
+        agent.setup()
+        if notifier:
+            notifier.notify("READY=1")
+            notifier.notify("STATUS=Agent loop running")
+        agent.run(notifier=notifier)
+    except Exception:
+        tb = traceback.format_exc()
+        log.critical("Fatal crash:\n%s", tb)
+        try:
+            CRASH_LOG.write_text(tb)
+        except OSError:
+            pass
+        raise
 
 
 def cmd_scan() -> None:

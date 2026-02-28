@@ -22,7 +22,8 @@ After=systemd-modules-load.service
 Requires=systemd-modules-load.service
 
 [Service]
-Type=simple
+Type=notify
+NotifyAccess=main
 User=daemon
 Group=daemon
 
@@ -31,6 +32,9 @@ WorkingDirectory=/opt/daemon-v0
 
 # Main process
 ExecStart=/usr/bin/python3 -m daemon_core.main run
+
+# Startup timeout — 7-phase probe cascade may take time on first boot
+TimeoutStartSec=90
 
 # Graceful shutdown via SIGTERM
 KillSignal=SIGTERM

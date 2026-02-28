@@ -25,6 +25,7 @@ import signal
 import time
 from dataclasses import dataclass, field
 from enum import Enum, auto
+from pathlib import Path
 from typing import Any
 
 log = logging.getLogger("daemon.agent")
@@ -52,6 +53,62 @@ class Event:
     message: str
     data: dict[str, Any] = field(default_factory=dict)
     timestamp: float = field(default_factory=time.monotonic)
+
+
+class PowerStateMachine:
+    """Track power state with hysteresis to prevent oscillation near thresholds.
+
+    Without hysteresis, ADC noise (~0.5mV) at a boundary like 3.40V causes
+    the daemon to alternate between "low" and "nominal" every 5s, generating
+    spurious events and log spam.  Uses 3-reading debounce + voltage hysteresis.
+    """
+
+    # (enter_below_v, exit_above_v) — hysteresis band prevents oscillation
+    THRESHOLDS = [
+        ("cutoff",   3.00, 3.10),
+        ("critical", 3.20, 3.30),
+        ("low",      3.40, 3.55),
+        ("nominal",  3.70, 3.70),
+        ("full",     4.20, 4.20),
+    ]
+    DEBOUNCE_COUNT = 3  # require N consecutive readings before transition
+
+    def __init__(self) -> None:
+        self._current = "nominal"
+        self._pending: str | None = None
+        self._debounce = 0
+
+    @property
+    def state(self) -> str:
+        return self._current
+
+    def update(self, voltage: float) -> tuple[str, bool]:
+        """Returns (state, changed).  Only transitions after debounce."""
+        raw = self._classify(voltage)
+        if raw != self._current:
+            if raw == self._pending:
+                self._debounce += 1
+            else:
+                self._pending = raw
+                self._debounce = 1
+            if self._debounce >= self.DEBOUNCE_COUNT:
+                old = self._current
+                self._current = raw
+                self._pending = None
+                self._debounce = 0
+                return self._current, True
+        else:
+            self._pending = None
+            self._debounce = 0
+        return self._current, False
+
+    def _classify(self, voltage: float) -> str:
+        """Classify voltage using hysteresis-aware thresholds."""
+        for name, enter_v, exit_v in self.THRESHOLDS:
+            threshold = exit_v if self._current == name else enter_v
+            if voltage < threshold:
+                return name
+        return "full"
 
 
 class AgentLoop:
@@ -89,6 +146,7 @@ class AgentLoop:
 
         # State
         self._power_state = None
+        self._power_sm = PowerStateMachine()
         self._cpu_temp = None
 
     def setup(self) -> None:
@@ -203,20 +261,26 @@ class AgentLoop:
 
         log.info("═══ Hardware agent setup complete ═══")
 
-    def run(self) -> None:
+    def run(self, notifier=None) -> None:
         """
         Main agent loop.  Runs until SIGTERM/SIGINT.
 
         Each tick:
           1. Read sensors (power, thermal, GPIO inputs)
-          2. Check for events (overcurrent, button press, etc.)
+          2. Check for GPIO edge events (overcurrent — microsecond detection)
           3. Process events by priority
           4. Update display / LEDs
-          5. Sleep until next tick
+          5. Ping systemd watchdog
+          6. Sleep until next tick
         """
         self._running = True
+        self._notifier = notifier
         signal.signal(signal.SIGTERM, self._handle_signal)
         signal.signal(signal.SIGINT, self._handle_signal)
+        # Prevent signals from interrupting I2C ioctl() calls with EINTR,
+        # which could leave a slave device with SDA stuck low (bus lockup).
+        signal.siginterrupt(signal.SIGTERM, False)
+        signal.siginterrupt(signal.SIGINT, False)
 
         log.info("Agent loop started (poll_interval=%.1fs)", self.config.poll_interval_s)
 
@@ -232,12 +296,21 @@ class AgentLoop:
                 log.error("Agent tick %d failed: %s", self._tick_count, exc,
                           exc_info=True)
 
+            # Watchdog keepalive — systemd expects this every WatchdogSec/2
+            if self._notifier:
+                self._notifier.notify("WATCHDOG=1")
+
+            # Attempt recovery on any drivers with open circuit breakers
+            self._attempt_recoveries()
+
             # Sleep for remainder of poll interval
             elapsed = time.monotonic() - tick_start
             sleep_time = max(0, self.config.poll_interval_s - elapsed)
             if sleep_time > 0:
                 time.sleep(sleep_time)
 
+        if self._notifier:
+            self._notifier.notify("STOPPING=1")
         self._shutdown()
 
     def _observe(self) -> None:
@@ -258,17 +331,34 @@ class AgentLoop:
             self._cpu_temp = self._read_cpu_temp()
             self._last_thermal_check = now
 
-        # Stinger overcurrent check (every tick)
+        # Stinger overcurrent — use edge events if available (microsecond detection),
+        # otherwise fall back to level polling
         if self._stinger and self._stinger.alive:
-            flags = self._gpio.read_stinger_flags()
-            for port, oc in flags.items():
-                if oc:
-                    self._events.append(Event(
-                        priority=Priority.OVERCURRENT,
-                        source=f"Stinger:{port}",
-                        message=f"Stinger port {port} overcurrent (FLAG asserted)",
-                        data={"port": port},
-                    ))
+            if self._gpio.has_edge_detection:
+                # Edge detection active: drain kernel event buffer (non-blocking)
+                for name, _edge_type in self._gpio.drain_edge_events():
+                    if name.startswith("STINGER_FLAG_"):
+                        try:
+                            port = int(name.split("_")[-1])
+                            self._events.append(Event(
+                                priority=Priority.OVERCURRENT,
+                                source=f"Stinger:{port}",
+                                message=f"Stinger port {port} overcurrent (edge detected)",
+                                data={"port": port},
+                            ))
+                        except ValueError:
+                            pass
+            else:
+                # No edge detection: poll level every tick
+                flags = self._gpio.read_stinger_flags()
+                for port, oc in flags.items():
+                    if oc:
+                        self._events.append(Event(
+                            priority=Priority.OVERCURRENT,
+                            source=f"Stinger:{port}",
+                            message=f"Stinger port {port} overcurrent (FLAG asserted)",
+                            data={"port": port},
+                        ))
 
         # Joystick button (every tick)
         if self._joystick and self._joystick.alive:
@@ -285,22 +375,29 @@ class AgentLoop:
 
     def _orient(self) -> None:
         """Analyze observations and generate events for anomalies."""
-        # Power level events
+        # Power level events — use state machine with hysteresis to prevent
+        # oscillation when voltage hovers near a threshold (ADC noise ~0.5mV)
         if self._power_state:
             ps = self._power_state
-            if ps.level == "critical":
-                self._events.append(Event(
-                    priority=Priority.POWER_CRIT,
-                    source="IP5328P",
-                    message=f"CRITICAL: Battery at {ps.battery_voltage:.2f}V "
-                            f"({ps.battery_percent}%) — initiate graceful shutdown",
-                ))
-            elif ps.level == "low":
-                self._events.append(Event(
-                    priority=Priority.POWER_LOW,
-                    source="IP5328P",
-                    message=f"Low battery: {ps.battery_voltage:.2f}V ({ps.battery_percent}%)",
-                ))
+            level, changed = self._power_sm.update(ps.battery_voltage)
+            if changed:
+                if level == "critical":
+                    self._events.append(Event(
+                        priority=Priority.POWER_CRIT,
+                        source="IP5328P",
+                        message=f"CRITICAL: Battery at {ps.battery_voltage:.2f}V "
+                                f"({ps.battery_percent}%) — initiate graceful shutdown",
+                    ))
+                elif level == "low":
+                    self._events.append(Event(
+                        priority=Priority.POWER_LOW,
+                        source="IP5328P",
+                        message=f"Low battery: {ps.battery_voltage:.2f}V "
+                                f"({ps.battery_percent}%)",
+                    ))
+                elif level in ("nominal", "full"):
+                    log.info("Battery recovered to %s: %.2fV (%d%%)",
+                             level, ps.battery_voltage, ps.battery_percent)
 
         # Thermal events
         if self._cpu_temp is not None:
@@ -366,15 +463,40 @@ class AgentLoop:
     def get_full_status(self) -> dict[str, Any]:
         """
         Build complete system status for agent inspection.
+        Structured after AWS IoT Device Shadow / Azure IoT Twin pattern:
+          reported: actual hardware state (what sensors say)
+          metadata: version info, uptime, board identity
         This is what an LLM agent would consume to understand the hardware state.
         """
-        status: dict[str, Any] = {
-            "tick": self._tick_count,
-            "cpu_temp_c": self._cpu_temp,
-            "subsystems": {},
+        subsystems: dict[str, Any] = {}
+        for name, driver in self._drivers():
+            if driver:
+                try:
+                    subsystems[name] = driver.status()
+                except Exception as exc:
+                    subsystems[name] = {"error": str(exc)}
+
+        return {
+            "version": self._tick_count,
+            "timestamp": time.time(),
+            "state": {
+                "reported": {
+                    "cpu_temp_c": self._cpu_temp,
+                    "power_level": self._power_sm.state,
+                    "subsystems": subsystems,
+                },
+            },
+            "metadata": {
+                "agent_version": "0.1.0",
+                "board": "daemon-v0-radxa-zero-3w",
+                "eco": "2026-03-GOLD",
+                "uptime_ticks": self._tick_count,
+            },
         }
 
-        for name, driver in [
+    def _drivers(self) -> list[tuple[str, Any]]:
+        """All HAL driver instances for iteration."""
+        return [
             ("power", self._pmic),
             ("joystick", self._joystick),
             ("rf", self._rf),
@@ -384,14 +506,35 @@ class AgentLoop:
             ("audio", self._audio),
             ("ethernet", self._ethernet),
             ("ir", self._ir),
-        ]:
-            if driver:
-                try:
-                    status["subsystems"][name] = driver.status()
-                except Exception as exc:
-                    status["subsystems"][name] = {"error": str(exc)}
+        ]
 
-        return status
+    def _attempt_recoveries(self) -> None:
+        """Try escalating recovery on any drivers with open circuit breakers.
+
+        Only attempts recovery when the circuit breaker's adaptive timeout
+        has elapsed — avoids spamming re-init on a dead device every tick.
+        """
+        now = time.monotonic()
+        for name, driver in self._drivers():
+            if driver and hasattr(driver, '_breaker') and not driver.alive:
+                cb = driver._breaker
+                if cb.state.value != "open":
+                    continue
+                # Respect the adaptive recovery timeout before trying
+                elapsed = now - cb.last_failure_time
+                if elapsed < cb.effective_recovery_timeout:
+                    continue
+                if driver._recovery_level >= 3:
+                    continue  # Already declared unrecoverable
+                recovered = driver.attempt_recovery()
+                if recovered:
+                    log.info("Device %s recovered via escalating recovery", name)
+                elif driver._recovery_level >= 3:
+                    self._events.append(Event(
+                        priority=Priority.FAULT,
+                        source=name,
+                        message=f"{name} unrecoverable after escalating recovery",
+                    ))
 
     def _read_cpu_temp(self) -> float | None:
         """Read RK3566 CPU temperature from sysfs."""
