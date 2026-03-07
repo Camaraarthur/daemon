@@ -134,7 +134,8 @@ FP_USB_A_MALE   = "Connector_USB:USB_A_CNCTech_1001-011-01101_Horizontal"
 FP_SY6280       = "Package_TO_SOT_SMD:SOT-23-5"
 
 # Connectors
-FP_RADXA_HDR    = "Connector_PinHeader_2.54mm:PinHeader_2x20_P2.54mm_Vertical"
+# ECO #2026-03-HWR: Changed to female socket — mates with Radxa's male header pins
+FP_RADXA_HDR    = "Connector_PinSocket_2.54mm:PinSocket_2x20_P2.54mm_Vertical"
 FP_SCREEN_CONN  = "Connector_PinHeader_2.54mm:PinHeader_1x08_P2.54mm_Vertical"
 FP_JOY_CONN     = "Connector_PinHeader_2.54mm:PinHeader_1x05_P2.54mm_Vertical"
 FP_BAT_CONN     = "Connector_JST:JST_PH_S2B-PH-K_1x02_P2.00mm_Horizontal"
@@ -155,8 +156,9 @@ FP_TVS_SMB      = "Diode_SMD:D_SMB"
 FP_PTC_1206     = "Fuse:Fuse_1206_3216Metric"
 # PDN-USB-01: SS14 Schottky diode (DO-214AC / SMA) for VBUS anti-backfeed
 FP_SCHOTTKY_SMA = "Diode_SMD:D_SMA"
-# HW-RST-01: Tactile reset switch (PTS645 series, 6×6 mm SMD)
-FP_SW_PUSH      = "Button_Switch_SMD:SW_SPST_PTS645"
+# HW-RST-01: Right-angle tactile switch, flush with board edge for ergonomics
+# ECO #2026-03-HWR: Changed from top-press PTS645 to horizontal Alps SKRTLAE010
+FP_SW_PUSH      = "Button_Switch_SMD:SW_Push_1P1T-MP_NO_Horizontal_Alps_SKRTLAE010"
 # PDN-JMP-04: 1225 wide-terminal reverse-geometry shunt (≥3.5A rated)
 FP_JUMPER_1225  = "Resistor_SMD:R_1210_3225Metric"
 # SM-PWR-02: heartbeat keepalive components

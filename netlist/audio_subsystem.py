@@ -197,6 +197,17 @@ def generate_daemon_audio_subsystem() -> None:
     mic_decap_b[1] += vcc_3v3
     mic_decap_b[2] += gnd
 
+    # ECO #2026-03-HWR: Hardware mic-active indicator LED.
+    # Red LED wired directly to INMP441 VDD — lights whenever mic has power.
+    # No software can disable this; it's a privacy/trust indicator.
+    # 3V3 - 1.8V(red Vf) = 1.5V across 1k → ~1.5mA (dim but visible)
+    FP_LED_0402 = "LED_SMD:LED_0402_1005Metric"
+    mic_led = Part("Device", "LED", footprint=FP_LED_0402, value="RED_0402")
+    mic_led_r = Resistor(value="1k")
+    mic_led_r[1] += vcc_3v3       # same rail as INMP441 VDD
+    mic_led_r[2] += mic_led["A"]  # resistor → LED anode
+    mic_led["K"] += gnd           # LED cathode → GND
+
     # ------------------------------------------------------------------
     # I2S bus – parallel clock topology
     # MAX98357A does not require MCLK; bus uses only BCLK, LRCLK, DATA.
