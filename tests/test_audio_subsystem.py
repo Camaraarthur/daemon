@@ -35,8 +35,8 @@ def test_ferrite_bead_footprint_constant():
 def test_ferrite_bead_parts_instantiated():
     """SM-AUD-02: BLM18AG601SN1 ferrite beads must be instantiated on both BTL outputs."""
     src = _get_source()
-    assert '"Device", "Ferrite_Bead"' in src, (
-        "Ferrite_Bead part not found — BTL EMI filter not instantiated (ECO #2026-03-G)"
+    assert '"Device", "FerriteBead"' in src, (
+        "FerriteBead part not found — BTL EMI filter not instantiated (ECO #2026-03-G)"
     )
     assert "BLM18AG601SN1" in src, (
         "BLM18AG601SN1 value not found — specific Murata ferrite bead not specified"

@@ -91,6 +91,7 @@ Usage:
 from __future__ import annotations
 
 import sys
+from pathlib import Path
 
 try:
     import skidl
@@ -99,6 +100,14 @@ try:
 except ModuleNotFoundError as exc:
     sys.exit(f"SKiDL not installed. Run: pip install skidl\n{exc}")
 
+# ── KiCad 8 library setup ─────────────────────────────────────────────────────
+# Add the project's custom symbol library directory so SKiDL can find
+# Daemon_V0.kicad_sym (IP5328P, SL2.1A, SY6280AAC, RTL8152B, ISO1212, etc.)
+_REPO = Path(__file__).resolve().parent.parent
+_tool = skidl.get_default_tool()
+_custom_lib = str(_REPO / "lib")
+if _custom_lib not in skidl.lib_search_paths[_tool]:
+    skidl.lib_search_paths[_tool].append(_custom_lib)
 
 # ── Output ────────────────────────────────────────────────────────────────────
 
@@ -107,7 +116,7 @@ NETLIST_OUTPUT = "daemon_v0_full_system.net"
 # ── Footprints ────────────────────────────────────────────────────────────────
 
 # Power management
-FP_IP5328P     = "Package_DFN_QFN:QFN-40-1EP_6x6mm_P0.5mm_EP4.2x4.2mm"
+FP_IP5328P     = "Package_DFN_QFN:QFN-40-1EP_6x6mm_P0.5mm_EP4.6x4.6mm"
 FP_INDUCTOR_5A = "Inductor_SMD:L_Bourns_SRR1260"  # 12.5×11.5mm package
 # INDUCTOR MPN REQUIREMENT: must be TDK VLF12560T-4R7M7R9 (Isat=7.9A) or equiv.
 # Peak inductor current: I_avg(3V→5V/2.46A,η=90%) + ΔI/2 = 4.56 + 0.34 = 4.90A
@@ -118,8 +127,8 @@ FP_LDO_SOT23_5 = "Package_TO_SOT_SMD:SOT-23-5"            # AP2112K-3.3 (ECO #20
 # USB hub
 FP_SL2_1A       = "Package_DFN_QFN:QFN-28-1EP_5x5mm_P0.5mm_EP3.35x3.35mm"
 FP_XTAL_12M     = "Crystal:Crystal_SMD_3225-4Pin_3.2x2.5mm"
-FP_USB_A_FEMALE = "Connector_USB:USB_A_Molex_67897_Horizontal"
-FP_USB_A_MALE   = "Connector_USB:USB_A_Plug_Horizontal"
+FP_USB_A_FEMALE = "Connector_USB:USB_A_Molex_67643_Horizontal"
+FP_USB_A_MALE   = "Connector_USB:USB_A_CNCTech_1001-011-01101_Horizontal"
 
 # Stinger switches
 FP_SY6280       = "Package_TO_SOT_SMD:SOT-23-5"
@@ -139,40 +148,40 @@ FP_R0402        = "Resistor_SMD:R_0402_1005Metric"
 FP_C0402        = "Capacitor_SMD:C_0402_1005Metric"
 FP_C0805        = "Capacitor_SMD:C_0805_2012Metric"
 # SM-AUD-01: ESD9B5.0ST5G bidirectional TVS (ON Semi, SC-70-3 package)
-FP_TVS_SC70     = "Package_TO_SOT_SMD:SC-70-3"
+FP_TVS_SC70     = "Package_TO_SOT_SMD:SOT-323_SC-70"
 # IND-SAF-01: Vishay VCAN26A2 bidirectional TVS (SMB / DO-214AA)
 FP_TVS_SMB      = "Diode_SMD:D_SMB"
 # IND-SAF-01: Littelfuse 60R series resettable PTC fuse (1206)
-FP_PTC_1206     = "Fuse_SMD:Fuse_1206_3216Metric"
+FP_PTC_1206     = "Fuse:Fuse_1206_3216Metric"
 # PDN-USB-01: SS14 Schottky diode (DO-214AC / SMA) for VBUS anti-backfeed
 FP_SCHOTTKY_SMA = "Diode_SMD:D_SMA"
 # HW-RST-01: Tactile reset switch (PTS645 series, 6×6 mm SMD)
 FP_SW_PUSH      = "Button_Switch_SMD:SW_SPST_PTS645"
 # PDN-JMP-04: 1225 wide-terminal reverse-geometry shunt (≥3.5A rated)
-FP_JUMPER_1225  = "Resistor_SMD:R_1225_3264Metric"
+FP_JUMPER_1225  = "Resistor_SMD:R_1210_3225Metric"
 # SM-PWR-02: heartbeat keepalive components
 FP_TIMER_NE555  = "Package_DIP:DIP-8_W7.62mm"
 FP_BJT_SOT23    = "Package_TO_SOT_SMD:SOT-23"
 FP_C_ELEC_6MM   = "Capacitor_THT:CP_Radial_D6.3mm_P2.50mm"
 
 # Protocol analyzers and bus interfaces (Subsystems H–J)
-FP_CC1101        = "Package_QFN:QFN-20-1EP_4x4mm_P0.5mm_EP2.6x2.6mm"
+FP_CC1101        = "Package_DFN_QFN:QFN-20-1EP_4x4mm_P0.5mm_EP2.6x2.6mm"
 FP_ISO1212       = "Package_SO:SOIC-16W_7.5x10.3mm_P1.27mm"
 FP_CONN_1X02_254 = "Connector_PinHeader_2.54mm:PinHeader_1x02_P2.54mm_Vertical"
 FP_CONN_1X03_254 = "Connector_PinHeader_2.54mm:PinHeader_1x03_P2.54mm_Vertical"
 FP_CONN_1X04_254 = "Connector_PinHeader_2.54mm:PinHeader_1x04_P2.54mm_Vertical"
 
 # ECO #2026-02-V2: New subsystems
-# A5: Goobay 74446 USB-C bridge (B.Cu; 8.4mm vertical pitch to Radxa)
+# A5: Goobay 74446 USB-C bridge (B.Cu; 8.85mm vertical pitch to Radxa)
 FP_USB_C_RCPT   = "Connector_USB:USB_C_Receptacle_HRO_TYPE-C-31-M-12"
 # B2: RTL8152B USB-to-Ethernet (QFN-32)
 FP_RTL8152B     = "Package_DFN_QFN:QFN-32-1EP_5x5mm_P0.5mm_EP3.1x3.1mm"
 # B2: HanRun HR911105A integrated-magnetics RJ45 MagJack
-FP_MAGJACK      = "Connector_RJ45:HanRun_HR911105A"
+FP_MAGJACK      = "Connector_RJ:RJ45_Hanrun_HR911105A_Horizontal"
 # B2: 25 MHz crystal for RTL8152B (same 3225-4Pin SMD package class)
 FP_XTAL_25M     = "Crystal:Crystal_SMD_3225-4Pin_3.2x2.5mm"
 # E2: WS2812B addressable RGB LED (PLCC4 5×5 mm)
-FP_WS2812B      = "LED_SMD:LED_WS2812B_PLCC4_5.0x5.0mm_P3.81mm"
+FP_WS2812B      = "LED_SMD:LED_WS2812B_PLCC4_5.0x5.0mm_P3.2mm"
 # E3: VSMB294008 side-view IR LED (SMD; front-edge placement)
 FP_IR_LED       = "LED_SMD:LED_0603_1608Metric_Pad1.05x0.95mm_HandSolder"
 # E3: AO3400A N-channel MOSFET (SOT-23; ECO #2026-03-F: replaced 2N7002)
@@ -180,9 +189,9 @@ FP_NFET_SOT23   = "Package_TO_SOT_SMD:SOT-23"
 # A6: BSS84 P-channel MOSFET (SOT-23) for wake-blocker circuit
 FP_PMOS_SOT23   = "Package_TO_SOT_SMD:SOT-23"
 # J: WAGO 2060-404 4-position 3.5mm-pitch terminal block
-FP_WAGO_4P      = "TerminalBlock_WAGO:TerminalBlock_WAGO_2060-404_1x04_P3.50mm_Horizontal"
+FP_WAGO_4P      = "Daemon_V0:TerminalBlock_WAGO_2060-404_1x04_P4.00mm_Horizontal"
 # H: Johanson 0915AT43A0026E4E chip antenna (915 MHz)
-FP_CHIP_ANT_915 = "Antenna:Antenna_Chip_Johanson_0915AT43A0026"
+FP_CHIP_ANT_915 = "Daemon_V0:Antenna_Chip_Johanson_0915AT43A0026"
 # ECO #2026-03-G: Power tank + thermal protection
 FP_TANT_CASEB  = "Capacitor_Tantalum_SMD:CP_EIA-3528-21_Kemet-B"  # Case-B 3.5×2.8mm, 100µF 6.3V
 FP_NTC_0402    = "Resistor_SMD:R_0402_1005Metric"                  # NTC thermistor (0402)
@@ -247,10 +256,10 @@ def _build_power_system(
     )
 
     # ── DFT: test points ──────────────────────────────────────────────────────
-    TP1 = Part("Device", "TestPoint", footprint=FP_TP_D15, value="TP_VIN")
-    TP2 = Part("Device", "TestPoint", footprint=FP_TP_D15, value="TP_BAT")
-    TP3 = Part("Device", "TestPoint", footprint=FP_TP_D10, value="TP_SW")
-    TP4 = Part("Device", "TestPoint", footprint=FP_TP_D15, value="TP_VOUT")
+    TP1 = Part("Connector", "TestPoint", footprint=FP_TP_D15, value="TP_VIN")
+    TP2 = Part("Connector", "TestPoint", footprint=FP_TP_D15, value="TP_BAT")
+    TP3 = Part("Connector", "TestPoint", footprint=FP_TP_D10, value="TP_SW")
+    TP4 = Part("Connector", "TestPoint", footprint=FP_TP_D15, value="TP_VOUT")
 
     # ── DFT: 0Ω isolation jumpers ────────────────────────────────────────────
     J1 = HiCurrJumper(value="0")   # BAT  → BAT_ISO  (PDN-JMP-04: 1225 wide-terminal)
@@ -274,11 +283,11 @@ def _build_power_system(
     # SM-PDN-01: 100µF 6.3V tantalum power tank on 5V_SYS (ECO #2026-03-G)
     # Absorbs 4A transients during simultaneous SBC + RF + Ethernet + Stinger load steps,
     # preventing IP5328P OCP trip.  Case-B footprint (3.5×2.8mm) on back of boost node.
-    tant_5v = Part("Device", "CP", footprint=FP_TANT_CASEB, value="100u")
+    tant_5v = Part("Device", "C_Polarized", footprint=FP_TANT_CASEB, value="100u")
     # SM-THM-01: 10kΩ NTC thermistor on IP5328P NTC pin (ECO #2026-03-G)
     # IC measures V_NTC = V_REF × R_NTC/(R_PULLUP + R_NTC) to derive junction temperature.
     # Hardware throttles the boost converter to prevent thermal runaway above Tj = 120°C.
-    ntc = Part("Device", "R_NTC", footprint=FP_NTC_0402, value="10k")
+    ntc = Part("Device", "Thermistor_NTC", footprint=FP_NTC_0402, value="10k")
 
     # ── Internal nets ─────────────────────────────────────────────────────────
     vin      = Net("VIN")        # 5V USB charge input
@@ -332,10 +341,10 @@ def _build_power_system(
     J2[2] += vout_iso
 
     # ── DFT test point connections ────────────────────────────────────────────
-    TP1["P"] += vin
-    TP2["P"] += bat         # probe raw BAT for charge-curve analysis
-    TP3["P"] += sw
-    TP4["P"] += vout
+    TP1["1"] += vin
+    TP2["1"] += bat         # probe raw BAT for charge-curve analysis
+    TP3["1"] += sw
+    TP4["1"] += vout
 
     # ── MFB pull-up ──────────────────────────────────────────────────────────
     mfb_pullup[1] += vin
@@ -569,7 +578,7 @@ def _build_stinger_port(
 
     # ── USB Type-A downstream connector ──────────────────────────────────────
     usb_a = Part(
-        "Connector_USB", "USB_A",
+        "Connector", "USB_A",
         footprint=usb_footprint,
     )
 
@@ -913,9 +922,9 @@ def _build_heartbeat_keepalive(gnd: Net, vcc_5v: Net) -> None:
 
     # ── NE555 timer IC ────────────────────────────────────────────────────────
     timer = Part(
-        "Timer", "NE555",
+        "Timer", "NE555P",
         footprint=FP_TIMER_NE555,
-        value="NE555",
+        value="NE555P",
     )
 
     # ── PNP BJT dummy-load switch (BC857 SOT-23) ──────────────────────────────
@@ -943,9 +952,9 @@ def _build_heartbeat_keepalive(gnd: Net, vcc_5v: Net) -> None:
     tmr_thr  = Net("HB_TMR_THR")   # threshold / trigger / discharge junction
 
     # ── 555 power ─────────────────────────────────────────────────────────────
-    timer["VCC"]   += vcc_5v
-    timer["GND"]   += gnd
-    timer["RESET"] += vcc_5v   # active-low RESET tied high → free-running
+    timer["VCC"]  += vcc_5v
+    timer["GND"]  += gnd
+    timer["R"]    += vcc_5v   # active-low RESET tied high → free-running
 
     # ── Astable RC network ────────────────────────────────────────────────────
     # 5V_SYS → R1 → junction(THR/TRG/DIS) → R2 → C_tmr → GND
@@ -954,19 +963,19 @@ def _build_heartbeat_keepalive(gnd: Net, vcc_5v: Net) -> None:
     r2_tmr[1] += tmr_thr
     r2_tmr[2] += tmr_thr   # DIS open-drain also pulls this node
 
-    timer["THRES"] += tmr_thr
-    timer["TRIG"]  += tmr_thr
-    timer["DIS"]   += tmr_thr
+    timer["THR"]  += tmr_thr
+    timer["TR"]   += tmr_thr
+    timer["DIS"]  += tmr_thr
     c_tmr[1] += tmr_thr
     c_tmr[2] += gnd
 
     # ── Control-voltage bypass ────────────────────────────────────────────────
-    timer["CTRL"] += tmr_ctrl
-    c_byp[1]      += tmr_ctrl
-    c_byp[2]      += gnd
+    timer["CV"]  += tmr_ctrl
+    c_byp[1]     += tmr_ctrl
+    c_byp[2]     += gnd
 
     # ── 555 output → PNP base ─────────────────────────────────────────────────
-    timer["OUT"] += tmr_out
+    timer["Q"]   += tmr_out
     r_base[1]    += tmr_out
     r_base[2]    += pnp["B"]
 
@@ -1108,7 +1117,7 @@ def _build_power_ux(
     pmos = Pfet(value="BSS84")     # P-channel wake-blocker (SOT-23)
     nmos = Nfet(value="2N7002")    # N-channel software kill (SOT-23)
     sw_pwr = Part(
-        "Device", "SW_Push",
+        "Switch", "SW_Push",
         footprint=FP_SW_PUSH,
         value="SW_PWR",
     )
@@ -1177,7 +1186,7 @@ def _build_rf_transceiver(
 
     # ── CC1101 RF transceiver IC ──────────────────────────────────────────────
     ic = Part(
-        "RF_Transceiver", "CC1101",
+        "Daemon_V0", "CC1101",
         footprint=FP_CC1101,
         value="CC1101",
     )
@@ -1236,7 +1245,7 @@ def _build_rf_transceiver(
     c_rfn    = Capacitor(value="1p")     # RF_N single-ended termination cap
 
     chip_ant = Part(
-        "Device", "Antenna",
+        "Device", "Antenna_Chip",
         footprint=FP_CHIP_ANT_915,
         value="0915AT43A0026",
     )
@@ -1375,14 +1384,14 @@ def _build_industrial_iso(
 
     # ── Channel 1 protection chain ────────────────────────────────────────────
     ptc1[1]   += in1_raw;  ptc1[2]   += in1_ptc    # series PTC fuse
-    tvs1["A"] += gnd1;     tvs1["K"] += in1_ptc    # TVS clamp to field GND
+    tvs1["A1"] += gnd1;    tvs1["A2"] += in1_ptc   # TVS clamp to field GND
     r_ser1[1] += in1_ptc;  r_ser1[2] += in1         # 562Ω current limit
     r_thr1[1] += in1;      r_thr1[2] += gnd1        # 1kΩ threshold shunt
     cflt1[1]  += in1;      cflt1[2]  += gnd1        # 10nF HF filter
 
     # ── Channel 2 protection chain (mirrors channel 1) ────────────────────────
     ptc2[1]   += in2_raw;  ptc2[2]   += in2_ptc
-    tvs2["A"] += gnd1;     tvs2["K"] += in2_ptc
+    tvs2["A1"] += gnd1;    tvs2["A2"] += in2_ptc
     r_ser2[1] += in2_ptc;  r_ser2[2] += in2
     r_thr2[1] += in2;      r_thr2[2] += gnd1
     cflt2[1]  += in2;      cflt2[2]  += gnd1
@@ -1408,15 +1417,15 @@ def _build_goobay_bridge(
     Subsystem A5 – Goobay 74446 USB-C Mechanical Bridge
 
     U-shape USB-C receptacle providing the upstream USB-C port for the Radxa SBC.
-    Connects via 8.4mm vertical pitch to Radxa; mounted on B.Cu (bottom copper).
+    Connects via 8.85mm vertical pitch to Radxa; mounted on B.Cu (bottom copper).
     VBUS is fused via the Goobay internal trace; D+/D- connect to SL2.1A upstream pair.
     """
     usb_c = Part(
-        "Connector_USB", "USB_C_Receptacle",
+        "Connector", "USB_C_Receptacle",
         footprint=FP_USB_C_RCPT,
         value="Goobay-74446",
     )
-    # B.Cu placement note: bridge straddles Radxa USB-C header at 8.4mm pitch
+    # B.Cu placement note: bridge straddles Radxa USB-C header at 8.85mm pitch
     usb_c["VBUS"]  += vcc_5v
     usb_c["GND"]   += gnd
     usb_c["D+"]    += usb_up_dp
@@ -1471,7 +1480,7 @@ def _build_ethernet(
     # >15mm away from the USB-C Upstream Port (Goobay 74446, B.Cu) to prevent
     # Z-axis collision between the MagJack body and the Goobay bridge structure.
     rj45 = Part(
-        "Connector_RJ45", "HR911105A",
+        "Connector", "RJ45_Hanrun_HR911105A_Horizontal",
         footprint=FP_MAGJACK,
         value="HR911105A",
     )
@@ -1554,7 +1563,7 @@ def _build_ws2812b_leds(
     """
     Capacitor = Part("Device", "C", dest=TEMPLATE, footprint=FP_C0402)
     Resistor  = Part("Device", "R", dest=TEMPLATE, footprint=FP_R0402)
-    LED       = Part("Device", "LED", dest=TEMPLATE, footprint=FP_WS2812B)
+    LED       = Part("LED", "WS2812B", dest=TEMPLATE, footprint=FP_WS2812B)
 
     leds      = LED(num_copies=4, value="WS2812B")
     byp       = Capacitor(num_copies=4, value="100n")
@@ -1569,7 +1578,7 @@ def _build_ws2812b_leds(
 
     for i, (led, cap) in enumerate(zip(leds, byp)):
         led["VDD"]  += vcc_5v
-        led["GND"]  += gnd
+        led["VSS"]  += gnd
         led["DIN"]  += din_chain[i]
         if i < 3:
             led["DOUT"] += din_chain[i + 1]

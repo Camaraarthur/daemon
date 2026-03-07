@@ -319,9 +319,9 @@ def test_tvs_sc70_footprint_in_both_files():
 
     assert 'FP_TVS_SC70' in audio_src, "FP_TVS_SC70 footprint constant missing from audio_subsystem.py"
     assert 'FP_TVS_SC70' in full_src,  "FP_TVS_SC70 footprint constant missing from full_system.py"
-    # Both must resolve to the SC-70-3 package
-    assert "SC-70-3" in audio_src, "FP_TVS_SC70 must reference SC-70-3 package in audio_subsystem.py"
-    assert "SC-70-3" in full_src,  "FP_TVS_SC70 must reference SC-70-3 package in full_system.py"
+    # Both must resolve to the SOT-323_SC-70 package (KiCad 8 name)
+    assert "SOT-323_SC-70" in audio_src, "FP_TVS_SC70 must reference SOT-323_SC-70 package in audio_subsystem.py"
+    assert "SOT-323_SC-70" in full_src,  "FP_TVS_SC70 must reference SOT-323_SC-70 package in full_system.py"
 
 
 def test_trrs_detect_debounce_rc_present():
@@ -362,8 +362,8 @@ def test_isolation_jumpers_use_1225_footprint():
     assert "FP_JUMPER_1225" in src, (
         "FP_JUMPER_1225 constant missing from full_system.py (PDN-JMP-04)"
     )
-    assert "R_1225_3264Metric" in src, (
-        "R_1225_3264Metric KiCad footprint not referenced in full_system.py"
+    assert "R_1210_3225Metric" in src, (
+        "R_1210_3225Metric KiCad footprint not referenced in full_system.py"
     )
 
 
@@ -437,8 +437,8 @@ def test_cc1101_footprint_constant_present():
 def test_cc1101_instantiated_from_rf_transceiver_library():
     """Subsystem H: CC1101 must be instantiated from the RF_Transceiver KiCad library."""
     src = _get_source()
-    assert '"RF_Transceiver", "CC1101"' in src, (
-        'CC1101 must be instantiated as Part("RF_Transceiver", "CC1101", ...)'
+    assert '"Daemon_V0", "CC1101"' in src, (
+        'CC1101 must be instantiated as Part("Daemon_V0", "CC1101", ...)'
     )
 
 
@@ -1124,8 +1124,8 @@ def test_power_tank_tantalum_cap():
     assert "FP_TANT_CASEB" in src, (
         "FP_TANT_CASEB footprint constant missing — tantalum cap not defined"
     )
-    assert '"Device", "CP"' in src, (
-        "Polarised capacitor (CP) part missing — tantalum power tank not instantiated"
+    assert '"Device", "C_Polarized"' in src, (
+        "C_Polarized part missing — tantalum power tank not instantiated"
     )
     assert 'value="100u"' in src, (
         "100µF tantalum value not found — power tank not sized correctly"
@@ -1138,8 +1138,8 @@ def test_power_tank_tantalum_cap():
 def test_ntc_thermistor_on_pmic():
     """ECO #2026-03-G: 10kΩ NTC thermistor must be connected to IP5328P NTC pin."""
     src = _get_source()
-    assert '"Device", "R_NTC"' in src, (
-        "R_NTC part missing — NTC thermistor not instantiated"
+    assert '"Device", "Thermistor_NTC"' in src, (
+        "Thermistor_NTC part missing — NTC thermistor not instantiated"
     )
     assert 'Net("IP5328P_NTC")' in src, (
         "IP5328P_NTC net not declared — NTC thermistor not wired to PMIC"

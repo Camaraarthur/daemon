@@ -45,7 +45,8 @@ except ModuleNotFoundError as exc:
 # IP5328P model parameters (replaces IP5306; rated ≥ 3A continuous)
 IP5306_VOUT_NOMINAL = 5.0          # V   – boost converter nominal output
 IP5306_ESR_OHMS = 0.05             # Ω   – ESR of the bulk output capacitor bank
-IP5306_COUT_UF = 22.0              # µF  – total output decoupling capacitance
+# ECO #2026-03-G: 22µF MLCC + 100µF tantalum power tank on 5V_SYS
+IP5306_COUT_UF = 122.0             # µF  – total output decoupling (22µF MLCC + 100µF tantalum)
 IP5306_LOAD_IDLE_A = 0.1           # A   – quiescent draw before load event
 IP5306_LOAD_MAX_A = 2.4            # A   – PDN-BUDGET-01: full-load stress (3× Stinger + SBC)
 IP5306_LOAD_RISE_US = 10.0         # µs  – load ramp time (simultaneous port activation)

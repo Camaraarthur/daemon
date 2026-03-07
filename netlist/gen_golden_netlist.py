@@ -94,14 +94,14 @@ COMPONENTS: list[dict] = [
     # ── A: IP5328P Power Management ──────────────────────────────────────────
     # ECO #2026-03-H: I2C moved to I2C1 (via 470Ω, simplified here as I2C1_PMIC_SDA/SCL)
     # ECO #2026-03-E: LED1/LED2/LED3 REMOVED (I2C bus clamping conflict)
-    dict(ref="U1",  value="IP5328P",     fp="Package_DFN_QFN:QFN-40-1EP_6x6mm_P0.5mm_EP4.2x4.2mm", lib="Daemon_V0",         part="IP5328P",
+    dict(ref="U1",  value="IP5328P",     fp="Package_DFN_QFN:QFN-40-1EP_6x6mm_P0.5mm_EP4.6x4.6mm", lib="Daemon_V0",         part="IP5328P",
          pins=[("BAT","BAT_P"),("SW","IP5328P_SW"),("VIN","5V_SYS"),("VOUT","5V_SYS"),
                ("SDA","I2C1_PMIC_SDA"),("SCL","I2C1_PMIC_SCL"),("GND","GND")]),
     dict(ref="L1",  value="4u7",         fp="Inductor_SMD:L_Bourns_SRR1260",                         lib="Device",           part="L",
          pins=[("~","IP5328P_SW"),("~","5V_SYS")]),
-    dict(ref="J1",  value="0R",          fp="Resistor_SMD:R_1225_3264Metric",                         lib="Device",           part="R",
+    dict(ref="J1",  value="0R",          fp="Resistor_SMD:R_1210_3225Metric",                         lib="Device",           part="R",
          pins=[("~","GND"),("~","GND")]),
-    dict(ref="J2",  value="0R",          fp="Resistor_SMD:R_1225_3264Metric",                         lib="Device",           part="R",
+    dict(ref="J2",  value="0R",          fp="Resistor_SMD:R_1210_3225Metric",                         lib="Device",           part="R",
          pins=[("~","5V_SYS"),("~","5V_SYS")]),
     dict(ref="BAT1",value="Li-ion",      fp="Connector_JST:JST_PH_S2B-PH-K_1x02_P2.00mm_Horizontal", lib="Connector_JST",    part="JST_PH_2",
          pins=[("1","BAT_P"),("2","GND")]),
@@ -157,7 +157,7 @@ COMPONENTS: list[dict] = [
          pins=[("E","5V_SYS"),("B","BJT_BASE"),("C","BJT_COLLECTOR")]),
 
     # ── H: CC1101 RF Transceiver ──────────────────────────────────────────────
-    dict(ref="U8",  value="CC1101",      fp="Package_QFN:QFN-20-1EP_4x4mm_P0.5mm_EP2.6x2.6mm",        lib="RF_Transceiver",   part="CC1101",
+    dict(ref="U8",  value="CC1101",      fp="Package_DFN_QFN:QFN-20-1EP_4x4mm_P0.5mm_EP2.6x2.6mm",    lib="RF_Transceiver",   part="CC1101",
          pins=[("VDD","3V3_CLEAN"),("GND","GND"),
                ("SCLK","SOFT_SPI_SCK"),("SI","SOFT_SPI_MOSI"),("SO","SOFT_SPI_MISO"),
                ("CSN","RF_CS_N"),("GDO0","RF_GDO0"),("GDO1","RF_GDO1"),("GDO2","RF_GDO2"),

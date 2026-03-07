@@ -93,7 +93,7 @@ A passive mechanical bridge connector that mates with the Radxa Zero 3W's USB-C 
 
 | Ref | Part | Value / MPN | Package | Qty | What it does |
 |-----|------|-------------|---------|-----|--------------|
-| USB_C | USB-C receptacle | Goobay 74446 | U-shaped bridge, 8.4mm pitch | 1 | Mechanical USB-C bridge mounted on B.Cu directly beneath the Radxa SBC's USB-C port. Routes the Radxa USB 2.0 D+/D− lines to the SL2.1A hub upstream port. No active components — purely a passive signal path |
+| USB_C | USB-C receptacle | Goobay 74446 | U-shaped bridge, 8.85mm pitch | 1 | Mechanical USB-C bridge mounted on B.Cu directly beneath the Radxa SBC's USB-C port. Routes the Radxa USB 2.0 D+/D− lines to the SL2.1A hub upstream port. No active components — purely a passive signal path |
 | R_CC1 | Resistor | 5.1kΩ | 0402 | 1 | Pull-down on CC1 pin. Identifies this port as a UFP (Upstream Facing Port / device) to the USB-C charger, enabling correct VBUS negotiation |
 | R_CC2 | Resistor | 5.1kΩ | 0402 | 1 | Pull-down on CC2 pin. Same function as R_CC1 for the second CC line (handles cable orientation detection) |
 

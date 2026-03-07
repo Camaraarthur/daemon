@@ -17,6 +17,14 @@ htmlcov/
 *.erc
 *.log
 
+# KiCad caches/temp
+fp-info-cache
+*.kicad_prl
+daemon_v0-backups/
+
+# SKiDL generated lib caches
+*_sklib.py
+
 # macOS
 .DS_Store
 

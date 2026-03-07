@@ -34,6 +34,7 @@ Usage:
 from __future__ import annotations
 
 import sys
+from pathlib import Path
 
 # SKiDL import – the library must be installed via pip.
 # If it is absent (e.g. during a dry-run in a minimal CI environment),
@@ -45,6 +46,13 @@ try:
 except ModuleNotFoundError as exc:
     sys.exit(f"SKiDL not installed. Run: pip install skidl\n{exc}")
 
+# ── KiCad 8 library setup ─────────────────────────────────────────────────────
+_REPO = Path(__file__).resolve().parent.parent
+_tool = skidl.get_default_tool()
+_custom_lib = str(_REPO / "lib")
+if _custom_lib not in skidl.lib_search_paths[_tool]:
+    skidl.lib_search_paths[_tool].append(_custom_lib)
+
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -52,14 +60,14 @@ NETLIST_OUTPUT = "daemon_v0_audio.net"
 
 # Footprint strings – these map to KiCad library references and must match
 # the symbol library paths configured in your KiCad environment.
-FP_QFN16   = "Package_DFN_QFN:QFN-16-1EP_3x3mm_P0.5mm_EP1.8x1.8mm"
-FP_INMP441 = "Sensor_Audio:InvenSense_INMP441_BottomPort"
-FP_TRRS    = "Connector_Audio:Jack_3.5mm_SJ2-2531X-SMT"
+FP_QFN16   = "Package_DFN_QFN:QFN-16-1EP_3x3mm_P0.5mm_EP1.75x1.75mm"
+FP_INMP441 = "Daemon_V0:InvenSense_INMP441_BottomPort"
+FP_TRRS    = "Daemon_V0:Jack_3.5mm_SJ2-2531X-SMT"
 FP_JST_SH2 = "Connector_JST:JST_SH_SM02B-SRSS-TB_1x02-1MP_P1.00mm_Horizontal"
 FP_R0402   = "Resistor_SMD:R_0402_1005Metric"
 FP_C0402   = "Capacitor_SMD:C_0402_1005Metric"
 # SM-AUD-01: ESD9B5.0ST5G bidirectional TVS (ON Semi, SC-70-3 package)
-FP_TVS_SC70 = "Package_TO_SOT_SMD:SC-70-3"
+FP_TVS_SC70 = "Package_TO_SOT_SMD:SOT-323_SC-70"
 # SM-AUD-02: BLM18AG601SN1 ferrite bead (Murata, 0402; ~600Ω @ 100MHz) for BTL EMI filter
 FP_FERRITE_0402 = "Inductor_SMD:L_0402_1005Metric"
 
@@ -85,7 +93,7 @@ def generate_daemon_audio_subsystem() -> None:
     # MAX98357A – filterless, BTL, I2S Class-D amplifier.
     # SD/GAIN pin determines channel mix (floating → L/2+R/2 via pull-up).
     amp = Part(
-        "audio",
+        "Audio",
         "MAX98357A",
         footprint=FP_QFN16,
     )
@@ -93,7 +101,7 @@ def generate_daemon_audio_subsystem() -> None:
     # INMP441 – omnidirectional MEMS I2S microphone.
     # Shares BCLK and LRCLK with the amplifier (parallel clock topology).
     mic = Part(
-        "audio",
+        "Daemon_V0",
         "INMP441",
         footprint=FP_INMP441,
     )
@@ -108,7 +116,7 @@ def generate_daemon_audio_subsystem() -> None:
     #   11 → Ring 1 Switch (NC; breaks when plug inserted)
     #   12 → Detect / sleeve switch (NO; closes when plug inserted)
     trrs_jack = Part(
-        "Connector_Audio",
+        "Daemon_V0",
         "AudioJack4_Switch",
         footprint=FP_TRRS,
     )
@@ -161,8 +169,8 @@ def generate_daemon_audio_subsystem() -> None:
     #           Post-bead 1nF to GND forms RC low-pass: Z_bead(300kHz)≈80Ω, f_c≈2MHz.
     # Kills IP5328P 300kHz switching noise before it reaches the speaker cable (which
     # acts as a 1m antenna and would re-radiate back into the CC1101 RF front-end).
-    fb_p = Part("Device", "Ferrite_Bead", footprint=FP_FERRITE_0402, value="BLM18AG601SN1")
-    fb_n = Part("Device", "Ferrite_Bead", footprint=FP_FERRITE_0402, value="BLM18AG601SN1")
+    fb_p = Part("Device", "FerriteBead", footprint=FP_FERRITE_0402, value="BLM18AG601SN1")
+    fb_n = Part("Device", "FerriteBead", footprint=FP_FERRITE_0402, value="BLM18AG601SN1")
     c_filt_p = Capacitor(value="1n")   # post-bead shunt cap, OUTP side
     c_filt_n = Capacitor(value="1n")   # post-bead shunt cap, OUTN side
 
@@ -279,7 +287,7 @@ def generate_daemon_audio_subsystem() -> None:
     # in/out of shutdown while the BTL outputs are shorted to external GND.
     # ------------------------------------------------------------------
     amp_sd = Net("AMP_SD")
-    amp["SD"] += amp_sd
+    amp["~{SD_MODE}"] += amp_sd
 
     # Default pull-up: 3V3_SYS → 633kΩ → AMP_SD  (SM-LOG-03 computed value; ECO #2026-03-G)
     # VDDIO = 3.3V → R = 222.2×3.3−100 = 633kΩ; pull-up must connect to VDDIO (3V3_SYS),

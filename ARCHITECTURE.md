@@ -212,7 +212,7 @@ The four I2S nets are also broken out on the Radxa header in `full_system.py`.
 ### 2.4 USB Topology
 
 ```
-  Goobay 74446 USB-C receptacle (B.Cu, 8.4mm pitch)
+  Goobay 74446 USB-C receptacle (B.Cu, 8.85mm pitch)
        │  USB_UP_DP / USB_UP_DM
        ▼
   SL2.1A USB 2.0 Hub (QFN-28)
@@ -686,7 +686,7 @@ to select external crystal + self-powered USB mode.
 ### ℹ NOTE N-3: Goobay 74446 Placement Constraint
 
 The Goobay 74446 USB-C bridge must be placed on B.Cu (bottom copper) directly
-below the Radxa SBC USB-C port with 8.4mm vertical pitch. Misplacement will
+below the Radxa SBC USB-C port with 8.85mm vertical pitch. Misplacement will
 result in the U-shape bridge not mating with the Radxa connector. Mark this
 component with a `DNI` rule if building without the Radxa SBC.
 
