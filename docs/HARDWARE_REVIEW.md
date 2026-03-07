@@ -9,7 +9,7 @@
 
 ## Executive Summary
 
-The Daemon V0 is an ambitious multi-subsystem parasitic implant board (85.6 x 54mm, 4-layer FR4) that stacks on a Radxa Zero 3W SBC. It integrates power management (IP5328P), USB hub (SL2.1A), Ethernet (RTL8152B), sub-GHz RF (CC1101), industrial isolation (ISO1212), audio (MAX98357A + INMP441), display interface, joystick ADC, WS2812B LEDs, IR blaster, and three USB-A output ports -- all powered from a single Li-ion cell.
+The Daemon V0 is an ambitious multi-subsystem parasitic implant board (85.6 x 54mm, 4-layer FR4) that stacks on a Radxa Zero 3W SBC. It integrates power management (IP5328P), cascaded USB hubs (2x SL2.1A), Ethernet (RTL8152B), sub-GHz RF (CC1101), industrial isolation (ISO1212), audio (MAX98357A + INMP441), display interface, joystick ADC, WS2812B LEDs, IR blaster, and four USB stinger ports (USB-C male, USB-A male, 2x USB-A female) -- all powered from a single Li-ion cell.
 
 The design has undergone extensive iterative hardening (ECOs A through GOLD) and shows evidence of careful engineering. This review identifies one blocker, several quantified risks, and a significant number of correctly-engineered subsystems.
 
@@ -281,7 +281,7 @@ The IP5328P power system is well-engineered:
 
 ---
 
-### S-3: SY6280AAC Stinger Ports (x3) -- VERIFIED STABLE
+### S-3: SY6280AAC Stinger Ports (x4) -- VERIFIED STABLE
 
 - **ISET formula verified:** R_ISET = 6800 / I_OC. At 13k ohm: I_OC = 6800 / 13000 = 523mA. The BOM states ~500mA which is consistent.
 - **Worst-case 3-port load:** 3 x 523mA = 1.57A. Added to base system load of ~960mA = 2.53A. This is within the IP5328P's 3A continuous limit with 470mA margin.
@@ -426,19 +426,19 @@ When board is ON: 5V_SYS = 5V, Gate = 5V. Source = PMIC_KEY (~5V region). Vgs = 
 
 ---
 
-### S-14: NE555 Heartbeat Logic -- VERIFIED STABLE (Electrically)
+### S-14: NE555 Heartbeat Logic -- VERIFIED STABLE
 
-The timing math is correct:
-- t_HIGH = 0.693 x (220k + 150) x 100uF = 15.24 seconds (PNP OFF, no load)
-- t_LOW = 0.693 x 150 x 100uF = 10.4ms (PNP ON, 61mA pulse)
+**ECO #2026-03-HWR2 FIX:** The R2 wiring was corrected. Previously both pins of R2 were on the same net (tmr_thr), effectively shorting R2 out and producing ~50% duty cycle instead of 0.07%. The fix introduces a proper intermediate node (HB_TMR_NODE_A) between R1 and R2, with DIS tapping node_a.
+
+Corrected timing:
+- t_HIGH = 0.693 x R1 x C = 0.693 x 220k x 100uF = 15.25s (PNP OFF, no load)
+- t_LOW = 0.693 x R2 x C = 0.693 x 150 x 100uF = 10.4ms (PNP ON, 61mA pulse)
 - Duty cycle = 10.4ms / 15.25s = 0.068%
 - Average current draw = 61mA x 0.068% = 0.042mA -- negligible
 
 The 61mA pulse exceeds the IP5328P's ~45mA keepalive detection threshold.
 
-**Note:** The BC857 PNP BJT is correctly driven by the NE555 output. When 555 OUT goes LOW, current flows from 5V (emitter) through R_BASE (10k) into the NE555 output sink, turning the PNP ON. The collector drives 5V/82 ohm = 61mA through R_DUMMY.
-
-**Verdict:** Electrically correct. See BLOCKER B-1 for package concerns.
+**Verdict:** Electrically correct after R2 wiring fix.
 
 ---
 
@@ -448,10 +448,11 @@ The 61mA pulse exceeds the IP5328P's ~45mA keepalive detection threshold.
 - **VCAN26A2 TVS** (26V) on ISO1212 field inputs -- bidirectional, IEC 61000-4-5 compliant.
 - **Littelfuse 60R PTC fuses** on field inputs -- self-resetting overcurrent protection.
 - **5.1k CC pull-downs** on USB-C bridge -- correct UFP identification.
+- **USBLC6-2SC6** on all 4 Stinger port D+/D- pairs -- IEC 61000-4-2 ±15kV air, ±8kV contact.
 
-**Gap noted:** No explicit ESD protection on the three USB-A Stinger port data lines (USB_DN_DP/DM_1-3). The SY6280AAC provides overcurrent protection on VBUS, but the D+/D- lines are directly exposed to user-inserted USB devices. In a pocket/field environment, ESD events on these lines could damage the SL2.1A hub IC. Consider adding ESD diode arrays (e.g., TPD2E001 or USBLC6-2SC6) on each USB-A D+/D- pair.
+**ECO #2026-03-HWR2 FIX:** USB ESD gap resolved. USBLC6-2SC6 dual-channel TVS arrays added to each Stinger port (USB-C male, USB-A male, 2x USB-A female). Placed at connector side of D+/D- pairs.
 
-**Risk level for USB ESD gap:** MODERATE. Industrial USB ports typically require ESD protection. Consumer-grade operation in a pocket reduces the risk but does not eliminate it.
+**Verdict:** All external-facing connectors now have appropriate ESD/surge protection.
 
 ---
 
@@ -472,8 +473,8 @@ The 61mA pulse exceeds the IP5328P's ~45mA keepalive detection threshold.
 | W-10 | Mechanical | Goobay USB-C | Footprint must exactly match Goobay 74446 mechanical drawing | MODERATE RISK |
 | S-1 | Power | IP5328P System | 3A capability, correct inductor MPN, NTC, tantalum, test points | STABLE |
 | S-2 | Power | AP2112K LDO | 250mV dropout, 490mA headroom, always-on | STABLE |
-| S-3 | Power | SY6280 Stingers | Correct ISET math, FLAG/EN topology, decoupling | STABLE |
-| S-4 | USB | SL2.1A Hub | Standard reference design, correct straps | STABLE |
+| S-3 | Power | SY6280 Stingers (x4) | Correct ISET math, FLAG/EN topology, decoupling, USBLC6 ESD | STABLE |
+| S-4 | USB | SL2.1A Hubs (x2) | Cascaded topology, correct straps, 12 MHz crystal separation rules | STABLE |
 | S-5 | Ethernet | RTL8152B | Clean LDO rail, correct straps, center tap bias | STABLE |
 | S-6 | RF | CC1101 + Antenna | Reference design match, safe GPIO pins, Pi-network correct | STABLE |
 | S-7 | Audio | MAX98357A/INMP441 | Correct SD_MODE formula, EMI filter, TVS protection | STABLE |
@@ -483,8 +484,8 @@ The 61mA pulse exceeds the IP5328P's ~45mA keepalive detection threshold.
 | S-11 | IR | AO3400A Blaster | Logic-level FET, correct current limit | STABLE |
 | S-12 | SI | Diff Pairs | Correct impedance specs for JLC stackup | STABLE |
 | S-13 | Charging | USB MUX | OR-diode anti-backfeed, correct voltage divider | STABLE |
-| S-14 | Keepalive | NE555 Timer | Timing math correct, pulse exceeds threshold | STABLE |
-| S-15 | Protection | ESD/Surge | Audio and industrial protection present; USB-A ESD gap noted | STABLE (partial) |
+| S-14 | Keepalive | NE555 Timer | R2 wiring fixed (ECO HWR2); timing math correct | STABLE |
+| S-15 | Protection | ESD/Surge | USBLC6-2SC6 on all 4 stinger ports; audio/industrial TVS present | STABLE |
 
 ---
 
@@ -494,12 +495,20 @@ The Daemon V0 at ECO #2026-03-GOLD is a mature design that has survived multiple
 
 The power system architecture is particularly well-engineered, with proper inductor selection, transient suppression, thermal protection, and current limiting across all output ports. The iterative ECO process has systematically addressed real failure modes rather than theoretical ones.
 
-**Recommended pre-fabrication actions (priority order):**
-1. Replace NE555 DIP-8 with NE555DR SOIC-8 and C_TMR with SMD tantalum/polymer (BLOCKER)
-2. Verify Goobay 74446 footprint against actual mechanical drawing (MODERATE RISK)
-3. Add USB-A ESD protection diodes to Stinger port D+/D- lines (MODERATE RISK)
-4. Consider WS2812B level shifter or verify open-drain GPIO configuration (RISK)
+**Resolved since last review (ECO #2026-03-HWR2):**
+- NE555 R2 wiring bug fixed (was shorted — both pins on same net)
+- USB ESD protection added (USBLC6-2SC6 on all 4 stinger ports)
+- Stale docstrings updated (pin 21, Ethernet port, LDO name)
+- BOM passive counts corrected for 4 stingers
+- Crystal separation rules added for 2x 12 MHz hubs
+
+**Remaining pre-fabrication actions (priority order):**
+1. Verify Goobay 74446 footprint against actual mechanical drawing (MODERATE RISK)
+2. Consider WS2812B level shifter or verify open-drain GPIO configuration (RISK)
+3. Verify USB-A male plug (CNCTech 1001) footprint-to-symbol Shield pin mapping (LOW RISK)
+4. Verify USB-C plug (Molex 105444) CC pin name matches KiCad symbol (LOW RISK)
 5. Upgrade tantalum voltage rating from 6.3V to 10V (LOW RISK, cheap insurance)
+6. Monitor 5V_SYS power budget — 4 stingers at full load approach IP5328P 3A limit (ADVISORY)
 
 ---
 

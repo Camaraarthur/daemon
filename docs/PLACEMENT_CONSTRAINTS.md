@@ -167,7 +167,7 @@ These components have electrical, thermal, or signal-integrity constraints that 
 
 2. **Keep away from RF/antenna:** Minimum **25 mm from the chip antenna** and **20 mm from the CC1101**. The inductor's fringing magnetic field is the strongest EMI source on the board.
 
-3. **Keep away from crystals:** At least **15 mm from all three crystals** (12 MHz, 25 MHz, 26 MHz). Magnetic coupling from the inductor can injection-lock or frequency-modulate crystal oscillators.
+3. **Keep away from crystals:** At least **15 mm from all four crystals** (2x 12 MHz, 25 MHz, 26 MHz). Magnetic coupling from the inductor can injection-lock or frequency-modulate crystal oscillators.
 
 4. **Orientation:** Orient the inductor so its magnetic axis does not point toward the CC1101 or any crystal. If the inductor is a shielded drum type, this is less critical but still recommended.
 
@@ -585,6 +585,9 @@ These are mandatory spatial relationships between components that must be respec
 | L1 (inductor) | ANT | 25 | Magnetic field EMI |
 | L1 (inductor) | Any crystal | 15 | Magnetic field frequency pulling |
 | XTAL_RF (26 MHz) | XTAL_ETH (25 MHz) | 10 | 1 MHz heterodyne beat coupling |
+| XTAL_HUB1 (12 MHz) | XTAL_HUB2 (12 MHz) | 8 | Same-frequency injection locking |
+| XTAL_HUB1/2 (12 MHz) | XTAL_ETH (25 MHz) | 10 | 2nd harmonic 24 MHz vs 25 MHz = 1 MHz beat |
+| XTAL_HUB1/2 (12 MHz) | XTAL_RF (26 MHz) | 10 | 2nd harmonic 24 MHz vs 26 MHz = 2 MHz beat |
 | MagJack (RJ45) | Goobay USB-C | 15 | Z-axis mechanical collision |
 | MagJack (RJ45) | ANT | 20 | Transformer magnetic coupling |
 | MAX98357A | CC1101 | 15 | Class-D EMI into RF |

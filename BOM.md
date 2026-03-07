@@ -173,15 +173,17 @@ Four USB output ports each guarded by a SY6280 power-distribution switch. The SY
 | R_FLAG1–R_FLAG4 | Resistors | 10kΩ | 0402 | 4 | FLAG pull-ups to 3V3_SYS |
 | C_SW_IN_BULK1–4 | Capacitors | 10µF | 0805 | 4 | Bulk input decoupling on each SY6280 IN pin |
 | C_SW_IN_BYP1–4 | Capacitors | 100nF | 0402 | 4 | Bypass input decoupling |
-| C_SW_OUT_BULK1–3 | Capacitors | 10µF | 0805 | 3 | Bulk output decoupling on each VBUS output |
-| C_SW_OUT_BYP1–3 | Capacitors | 100nF | 0402 | 3 | Bypass output decoupling |
-| R_ISET1–R_ISET3 | Resistors | 13kΩ | 0402 | 3 | ISET current-limit resistors. Formula: R_ISET = 6800 / I_OC → 6800 / 0.5A = 13.6kΩ → 13kΩ (E96 standard). Sets the overcurrent trip point to ~500mA per port — enough for modern USB peripherals, while keeping worst-case three-port load within the IP5328P's 3A continuous output (ECO #2026-03-H) |
+| C_SW_OUT_BULK1–4 | Capacitors | 10µF | 0805 | 4 | Bulk output decoupling on each VBUS output |
+| C_SW_OUT_BYP1–4 | Capacitors | 100nF | 0402 | 4 | Bypass output decoupling |
+| R_ISET1–R_ISET4 | Resistors | 13kΩ | 0402 | 4 | ISET current-limit resistors. R_ISET = 6800 / I_OC → 13kΩ sets OC trip ~500mA per port |
+| R_CC1 | Resistor | 5.1kΩ | 0402 | 1 | CC pull-down on USB-C plug (port 1) for UFP identification |
+| ESD1–ESD4 | USBLC6-2SC6 | USBLC6-2SC6 | SOT-23-6 | 4 | USB D+/D- ESD protection on each stinger port. IEC 61000-4-2: ±15kV air, ±8kV contact discharge |
 
 ---
 
 ## Subsystem D — ST7789V2 SPI Display
 
-Connector interface for a 1.69-inch ST7789V2-based SPI display module. The display uses Radxa SPI3 (pins 19/21/23/24) for data and several GPIOs for control signals.
+Connector interface for a 1.69-inch ST7789V2-based SPI display module. The display uses Radxa SPI3 (pins 19/23/24) for data and several GPIOs for control signals.
 
 | Ref | Part | Value / MPN | Package | Qty | What it does |
 |-----|------|-------------|---------|-----|--------------|

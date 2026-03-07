@@ -38,7 +38,7 @@ Instantiates and wires every subsystem in the Daemon V0 architecture:
 
   Subsystem D  – 1.69″ SPI Display
     · 8-pin SIL connector for ST7789V2-based display module
-    · SCK / MOSI / CS from Radxa SPI3 bus (pins 19/21/23/24); BL → GPIO4 / pin 7 (hardware PWM)
+    · SCK / MOSI / CS from Radxa SPI3 bus (pins 19/23/24); BL → GPIO4 / pin 7 (hardware PWM)
 
   Subsystem E  – Analog Joystick + ADS1015 ADC
     · VRX / VRY → ADS1015 I2C ADC (I2C1 bus)
@@ -135,6 +135,8 @@ FP_USB_C_PLUG   = "Connector_USB:USB_C_Plug_Molex_105444"
 
 # Stinger switches
 FP_SY6280       = "Package_TO_SOT_SMD:SOT-23-5"
+# USB ESD protection (dual-channel, placed at each external connector)
+FP_USBLC6       = "Package_TO_SOT_SMD:SOT-23-6"
 
 # Connectors
 # ECO #2026-03-HWR: Changed to female socket — mates with Radxa's male header pins
@@ -527,7 +529,6 @@ def _build_sl21a_hub(
 
 def _build_usb_hubs(
     gnd: Net,
-    vcc_5v: Net,
     vcc_3v3: Net,
 ) -> dict[str, list[Net]]:
     """
@@ -629,10 +630,19 @@ def _build_stinger_port(
         value="SY6280AAC",
     )
 
-    # ── USB Type-A downstream connector ──────────────────────────────────────
+    # ── USB downstream connector ─────────────────────────────────────────────
     usb_a = Part(
         "Connector", usb_symbol,
         footprint=usb_footprint,
+    )
+
+    # ── USB ESD protection ───────────────────────────────────────────────────
+    # USBLC6-2SC6: dual-channel TVS for D+/D- (IEC 61000-4-2: ±15kV air, ±8kV contact)
+    # Place as close as possible to the connector on the PCB.
+    esd = Part(
+        "Power_Protection", "USBLC6-2SC6",
+        footprint=FP_USBLC6,
+        value="USBLC6-2SC6",
     )
 
     # ── Passives ──────────────────────────────────────────────────────────────
@@ -678,14 +688,29 @@ def _build_stinger_port(
     usb_a["D-"]     += dm_net
     usb_a["D+"]     += dp_net
     usb_a["GND"]    += gnd
-    # USB-C plugs have CC pin (5.1k pull-down for UFP ID), USB-A has Shield
+    # USB-C plugs: 5.1k Rd pull-down on CC identifies port as UFP (device) to
+    # the target host. The SY6280 still sources VBUS for self-powered operation;
+    # at ~5V equilibrium with the host's VBUS, current flow is negligible.
+    # USB-A connectors: tie Shield to GND.
     try:
         usb_a["CC"]
         cc_pd = Resistor(value="5.1k")
         usb_a["CC"] += cc_pd[1]
         cc_pd[2] += gnd
     except Exception:
-        usb_a["Shield"] += gnd
+        try:
+            usb_a["Shield"] += gnd
+        except Exception:
+            pass  # some male plug footprints have no separate Shield pad
+
+    # ── ESD protection wiring ──────────────────────────────────────────────────
+    # USBLC6-2SC6 pins: 1=I/O1(D-), 2=GND, 3=I/O2(D+), 4=I/O2(D+), 5=VBUS, 6=I/O1(D-)
+    esd[1] += dm_net       # I/O1 → D-
+    esd[6] += dm_net       # I/O1 → D-
+    esd[3] += dp_net       # I/O2 → D+
+    esd[4] += dp_net       # I/O2 → D+
+    esd[2] += gnd          # GND
+    esd[5] += vbus_out     # VBUS (clamping reference)
 
     # ── Decoupling ────────────────────────────────────────────────────────────
     cin_bulk[1]    += vcc_5v;   cin_bulk[2]    += gnd
@@ -867,7 +892,7 @@ def _build_radxa_header(
     │ 15 │ RF_MISO (SoftSPI)    RF_CLK     │ 16 │
     │ 17 │ 3V3_SYS              RF_CS_N    │ 18 │
     │ 19 │ SPI3_MOSI            GND        │ 20 │
-    │ 21 │ SPI3_MISO            SCREEN_RST │ 22 │
+    │ 21 │ STINGER_EN_4         SCREEN_RST │ 22 │
     │ 23 │ SPI3_CLK             SPI3_CS    │ 24 │
     │ 25 │ GND                  NC/GND     │ 26 │
     │ 27 │ NC/GND               NC/GND     │ 28 │
@@ -882,7 +907,7 @@ def _build_radxa_header(
     Notes:
     · Pin 7  (GPIO4): hardware-PWM-capable; SCREEN_BL for flicker-free backlight.
     · Pins 13/15/16/18 (ECO #2026-03-F): RF SoftSPI on safe GPIOs, away from UART
-      pins 8/10. Separating from SPI3 (pins 19/21/23) eliminates CS conflicts.
+      pins 8/10. Separating from SPI3 (pins 19/23/24) eliminates CS conflicts.
       RF_GDO0 is NOT on any header pin (CC1101 polling mode).
     · Pin 36 (GPIO16): LED_DIN – WS2812B addressable LED data chain (ECO #2026-02-V2).
     · Pin 35 (I2S3_LRCK_M0): exclusively I2S_LRCLK; joystick VRX/VRY offloaded
@@ -891,7 +916,7 @@ def _build_radxa_header(
     · ECO #2026-03-H: Pins 27/28 (I2C0) are NC/GND — disconnected on Zero 3W.
       IP5328P I2C telemetry on pins 3/5 (I2C1, Always-On, 470Ω protection).
     · PIN LOCK — NO OVERLAP CONFIRMED:
-        Screen  = SPI3  (pins 19/21/23/24 — SPI3_MOSI/MISO/CLK/CS)
+        Screen  = SPI3  (pins 19/23/24 — SPI3_MOSI/CLK/CS; pin 21 → STINGER_EN_4)
         Audio   = I2S0  (pins 12/35/38/40 — PCM_CLK/LRCK/DIN/DOUT)
         RF      = SoftSPI (pins 13/15/16 + CS on 18)
         I2C1    = pins 3/5 (ADS1015 + IP5328P; shared bus, different addresses)
@@ -1016,15 +1041,23 @@ def _build_heartbeat_keepalive(gnd: Net, vcc_5v: Net) -> None:
     timer["R"]    += vcc_5v   # active-low RESET tied high → free-running
 
     # ── Astable RC network ────────────────────────────────────────────────────
-    # 5V_SYS → R1 → junction(THR/TRG/DIS) → R2 → C_tmr → GND
+    # Standard 555 astable: VCC → R1 → node_a → R2 → node_b → GND (via C)
+    #   THR/TR tap node_b (capacitor voltage)
+    #   DIS taps node_a (between R1 and R2; shorts R2 during discharge)
+    #
+    # Timing:  t_HIGH = 0.693 × R1 × C = 0.693 × 220k × 100µ = 15.25s
+    #          t_LOW  = 0.693 × R2 × C = 0.693 × 150  × 100µ = 10.4ms
+    #          Duty   ≈ 0.07% ON → ~0.04mA average dummy-load drain
+    tmr_node_a = Net("HB_TMR_NODE_A")  # junction between R1 and R2 (DIS tap)
+
     r1_tmr[1] += vcc_5v
-    r1_tmr[2] += tmr_thr
-    r2_tmr[1] += tmr_thr
-    r2_tmr[2] += tmr_thr   # DIS open-drain also pulls this node
+    r1_tmr[2] += tmr_node_a
+    r2_tmr[1] += tmr_node_a
+    r2_tmr[2] += tmr_thr
 
     timer["THR"]  += tmr_thr
     timer["TR"]   += tmr_thr
-    timer["DIS"]  += tmr_thr
+    timer["DIS"]  += tmr_node_a   # DIS shorts node_a to GND during discharge
     c_tmr[1] += tmr_thr
     c_tmr[2] += gnd
 
@@ -1491,8 +1524,8 @@ def _build_goobay_bridge(
     usb_c["D+"]    += usb_up_dp
     usb_c["D-"]    += usb_up_dm
     # CC1/CC2 pull-downs: identify as UFP (device) to host / charger upstream
-    cc1_pd = Part("Device", "R", dest=TEMPLATE, footprint=FP_R0402)(value="5k1")
-    cc2_pd = Part("Device", "R", dest=TEMPLATE, footprint=FP_R0402)(value="5k1")
+    cc1_pd = Part("Device", "R", dest=TEMPLATE, footprint=FP_R0402)(value="5.1k")
+    cc2_pd = Part("Device", "R", dest=TEMPLATE, footprint=FP_R0402)(value="5.1k")
     cc1_pd[1] += usb_c["CC1"];  cc1_pd[2] += gnd
     cc2_pd[1] += usb_c["CC2"];  cc2_pd[2] += gnd
 
@@ -1509,7 +1542,7 @@ def _build_ethernet(
     """
     Subsystem B2 – RTL8152B USB 2.0 to 100Base-TX Ethernet
 
-    RTL8152B (QFN-32) connects to SL2.1A downstream port 4 (USB DP4/DM4).
+    RTL8152B (QFN-32) connects to Hub 2 downstream port 2 (cascaded from Hub 1).
     25 MHz crystal provides PHY clock reference.
     HanRun HR911105A integrated-magnetics RJ45 MagJack handles isolation.
 
@@ -1781,7 +1814,7 @@ def generate_daemon_v0_full_system() -> None:
     #     Hub 2 port 1:    Stinger port 4
     #     Hub 2 port 2:    RTL8152B Ethernet
     # ──────────────────────────────────────────────────────────────────────────
-    hub_nets          = _build_usb_hubs(gnd, vcc_5v, vcc_3v3)
+    hub_nets          = _build_usb_hubs(gnd, vcc_3v3)
     stinger_dn        = hub_nets["stinger_dn"]    # [(DP,DM) x4]
     stinger_oc_n      = hub_nets["stinger_oc_n"]  # [OC_N x4]
     up_dp, up_dm      = hub_nets["up"]            # upstream → Goobay bridge
@@ -1885,7 +1918,7 @@ def generate_daemon_v0_full_system() -> None:
     # ──────────────────────────────────────────────────────────────────────────
     _build_ethernet(
         gnd     = gnd,
-        vcc_3v3 = vcc_clean,   # ECO #2026-03-F: RTL8152B VCC → 3V3_CLEAN (LM1117 800mA)
+        vcc_3v3 = vcc_clean,   # ECO #2026-03-F: RTL8152B VCC → 3V3_CLEAN (AP2112K 600mA)
         usb_dp  = eth_dp,
         usb_dm  = eth_dm,
     )
