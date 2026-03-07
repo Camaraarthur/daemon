@@ -363,4 +363,4 @@ Separate netlist (`netlist/audio_subsystem.py`, generates `daemon_v0_audio.net`)
 ---
 
 *Generated from `netlist/full_system.py` and `netlist/audio_subsystem.py` — ECO #2026-03-GOLD.*
-*All quantities are per-board. Loop-instantiated components (Stinger ports ×3, LEDs ×4) are shown at their total board count.*
+*All quantities are per-board. Loop-instantiated components (Stinger ports ×4, LEDs ×4) are shown at their total board count.*

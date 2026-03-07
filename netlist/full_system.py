@@ -32,8 +32,8 @@ Instantiates and wires every subsystem in the Daemon V0 architecture:
     · SW_PWR tactile button: always-on hard wake/sleep; SW_PWR_GPIO for long-press
     · 3-pin Power Management Header: PMIC_KILL / SW_PWR_GPIO / GND
 
-  Subsystem C  – Stinger Ports (3 × SY6280AAC power-distribution switch)
-    · One SY6280AAC (SOT-23-5) per user-accessible USB-A port
+  Subsystem C  – Stinger Ports (4 × SY6280AAC power-distribution switch)
+    · One SY6280AAC (SOT-23-5) per stinger USB port + USBLC6-2SC6 ESD
     · 5V_SYS → SY6280 IN → USB_VBUS_x; 13 kΩ ISET (~500 mA OC limit, ECO #2026-03-H)
 
   Subsystem D  – 1.69″ SPI Display
@@ -77,12 +77,12 @@ Instantiates and wires every subsystem in the Daemon V0 architecture:
 
 Power topology:
     Li-ion cell ──► IP5328P BAT ──► SW / inductor ──► VOUT
-    VOUT ──[J2 0Ω]──► 5V_SYS ──► SL2.1A VCC, SY6280×3 IN, WS2812B, Radxa 5V
+    VOUT ──[J2 0Ω]──► 5V_SYS ──► SL2.1A×2 VCC, SY6280×4 IN, WS2812B, Radxa 5V
     5V_SYS ──► AP2112K-3.3 ──► 3V3_CLEAN ──► CC1101, RTL8152B, ISO1212 logic side
     Radxa header 3.3V ──► 3V3_SYS ──► screen VCC, joystick, pull-ups
 
 Custom KiCad symbol library required (add to ./lib/Daemon_V0.kicad_sym):
-    IP5328P, SL2.1A, SY6280AAC, RTL8152B, ISO1212
+    IP5328P, SL2.1A×2, SY6280AAC×4, RTL8152B, ISO1212, USBLC6-2SC6×4
 
 Usage:
     python -m netlist.full_system
@@ -613,7 +613,7 @@ def _build_stinger_port(
     EN  is driven HIGH by a Radxa GPIO to enable power (default ON via
         10 kΩ pull-up so the port stays live if the GPIO is tristated).
     FLAG is open-drain active-low; pulled to 3V3 via the hub OC pull-ups
-        defined in _build_usb_hub.  Signals overcurrent / overtemperature.
+        defined in _build_sl21a_hub.  Signals overcurrent / overtemperature.
 
     Returns the USB_VBUS_<n> net (the switched VBUS output).
     """
@@ -721,7 +721,7 @@ def _build_stinger_port(
     return vbus_out
 
 
-# ── Subsystem D: 1.47″ SPI Display ───────────────────────────────────────────
+# ── Subsystem D: 1.69″ SPI Display ───────────────────────────────────────────
 
 
 def _build_spi_screen(
@@ -873,7 +873,7 @@ def _build_radxa_header(
     i2c1_scl:   Net,
     # SPI chip selects / interrupts for protocol analyzer subsystems (H, J)
     rf_cs_n:    Net,    # CC1101 SPI chip select      (pin 26)
-    rf_gdo0:    Net,    # CC1101 GDO0 packet interrupt (pin 16)
+    rf_gdo0:    Net,    # CC1101 GDO0 (not on header; polling mode; ECO #2026-03-F)
     # ECO #2026-02-V2: CAN bus removed; pin 36 → WS2812B LED data chain
     led_din:    Net,    # WS2812B data chain DIN       (pin 36)
 ) -> None:
@@ -1045,7 +1045,7 @@ def _build_heartbeat_keepalive(gnd: Net, vcc_5v: Net) -> None:
     #   THR/TR tap node_b (capacitor voltage)
     #   DIS taps node_a (between R1 and R2; shorts R2 during discharge)
     #
-    # Timing:  t_HIGH = 0.693 × R1 × C = 0.693 × 220k × 100µ = 15.25s
+    # Timing:  t_HIGH = 0.693 × (R1 + R2) × C ≈ 0.693 × 220.15k × 100µ ≈ 15.25s
     #          t_LOW  = 0.693 × R2 × C = 0.693 × 150  × 100µ = 10.4ms
     #          Duty   ≈ 0.07% ON → ~0.04mA average dummy-load drain
     tmr_node_a = Net("HB_TMR_NODE_A")  # junction between R1 and R2 (DIS tap)
@@ -1585,7 +1585,6 @@ def _build_ethernet(
     mdi_rxn  = Net("ETH_MDI_RXN")
     xi_net   = Net("ETH_XI")
     xo_net   = Net("ETH_XO")
-    usb_vbus = Net("ETH_USB_VBUS")
 
     # Passives
     cxtal_a, cxtal_b   = Capacitor(num_copies=2, value="22p")   # crystal load caps
@@ -1606,7 +1605,10 @@ def _build_ethernet(
     ic["MDI_RXP"]   += mdi_rxp
     ic["MDI_RXN"]   += mdi_rxn
 
-    # PSELF=Low: self-powered from USB VBUS
+    # PSELF=Low: reports as "bus-powered" to USB host (Realtek convention).
+    # The chip is actually self-powered from 3V3_CLEAN, but bus-powered mode
+    # is simpler (no need for remote wakeup power management). Functionally
+    # benign since Hub 2 has no power switch on this port.
     pself_r[1] += ic["PSELF"]; pself_r[2] += gnd
 
     # XTALDET=High: external crystal mode
