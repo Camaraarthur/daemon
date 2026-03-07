@@ -319,6 +319,7 @@ def _build_power_system(
     ic["BAT"]  += bat_iso         # BAT pin sits behind J1 isolation jumper
     ic["SW"]   += sw
     ic["VOUT"] += vout
+    ic["GND"]  += gnd             # QFN-40 exposed pad + GND pins
     ic["MFB"]  += mfb_net
     ic["KEY"]  += key_net         # PMIC_KEY: A6 wake-blocker / kill / button
 
@@ -862,9 +863,9 @@ def _build_radxa_header(
     # Joystick button (VRX/VRY are handled by ADS1015 on I2C1; only SW on header)
     joy_sw:     Net,
     # SoftSPI bus (bit-banged; CC1101 on free GPIOs to avoid SPI0 collision)
-    soft_spi_sck:  Net,   # SOFT_SPI_SCK  → pin 32 (GPIO12)
-    soft_spi_mosi: Net,   # SOFT_SPI_MOSI → pin 8  (GPIO14)
-    soft_spi_miso: Net,   # SOFT_SPI_MISO → pin 10 (GPIO15)
+    soft_spi_sck:  Net,   # RF_CLK  → pin 16
+    soft_spi_mosi: Net,   # RF_MOSI → pin 13
+    soft_spi_miso: Net,   # RF_MISO → pin 15
     # Stinger port enable / flag GPIOs
     stinger_en:   list[Net],   # len == 4
     stinger_flag: list[Net],   # len == 4 (FLAG_4 not on header; pulled up at hub)
@@ -1150,6 +1151,12 @@ def _build_usb_charging_mux(gnd: Net, vcc_5v: Net) -> Net:
     r_shunt  = Resistor(value="620k")   # shunt arm
 
     # ── Nets ──────────────────────────────────────────────────────────────────
+    # NOTE: VBUS_A and VBUS_C are created but not connected to external VBUS
+    # sources. This MUX circuit is a design placeholder — the OR-diode anodes
+    # need to be wired to the Goobay bridge VBUS and/or a USB-A charging port.
+    # Currently the Goobay bridge connects VBUS directly to vcc_5v, bypassing
+    # this MUX entirely. The voltage divider (MUX_SEL) return value is also
+    # unused at the call site. TODO: integrate or remove.
     vbus_a  = Net("VBUS_A")    # upstream VBUS from host port A
     vbus_c  = Net("VBUS_C")    # upstream VBUS from host port C
     mux_vin = Net("MUX_VIN")   # OR-diode output into MUX common input

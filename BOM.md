@@ -346,7 +346,7 @@ Separate netlist (`netlist/audio_subsystem.py`, generates `daemon_v0_audio.net`)
 |----------|-------|
 | ICs / active components | 14 |
 | MOSFETs / BJTs | 4 |
-| Crystals | 3 |
+| Crystals | 4 |
 | Connectors / headers | 12 |
 | Resistors | ~55 |
 | Capacitors (ceramic) | ~55 |
