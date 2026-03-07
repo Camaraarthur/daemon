@@ -15,9 +15,9 @@ Components are grouped by subsystem. Quantities marked (×N) reflect loop-instan
 3. [Subsystem A3 — USB Charging MUX (PDN-USB-01)](#subsystem-a3--usb-charging-mux-pdn-usb-01)
 4. [Subsystem A5 — Goobay 74446 USB-C Bridge](#subsystem-a5--goobay-74446-usb-c-bridge)
 5. [Subsystem A6 — Advanced Power UX](#subsystem-a6--advanced-power-ux)
-6. [Subsystem B — SL2.1A USB 2.0 Hub](#subsystem-b--sl21a-usb-20-hub)
+6. [Subsystem B — Cascaded SL2.1A USB 2.0 Hubs](#subsystem-b--cascaded-sl21a-usb-20-hubs)
 7. [Subsystem B2 — RTL8152B USB–Ethernet](#subsystem-b2--rtl8152b-usbethernet)
-8. [Subsystem C — SY6280AAC Stinger Ports × 3](#subsystem-c--sy6280aac-stinger-ports--3)
+8. [Subsystem C — SY6280AAC Stinger Ports × 4](#subsystem-c--sy6280aac-stinger-ports--4)
 9. [Subsystem D — ST7789V2 SPI Display](#subsystem-d--st7789v2-spi-display)
 10. [Subsystem E — Analog Joystick + ADS1015 ADC](#subsystem-e--analog-joystick--ads1015-adc)
 11. [Subsystem E2 — WS2812B RGB LEDs × 4](#subsystem-e2--ws2812b-rgb-leds--4)
@@ -113,30 +113,33 @@ Three-circuit power management front-end: a PMOS wake-blocker isolates the joyst
 
 ---
 
-## Subsystem B — SL2.1A USB 2.0 Hub
+## Subsystem B — Cascaded SL2.1A USB 2.0 Hubs
 
-4-port USB 2.0 hub that multiplies the single upstream USB port (from the Radxa via the Goobay bridge) into three downstream Stinger ports (via SY6280 power switches) and one port dedicated to the RTL8152B Ethernet chip.
+Two cascaded 4-port USB 2.0 hubs. Hub 1 (primary) multiplies the single upstream USB port (from the Radxa via the Goobay bridge) into three Stinger ports + a cascade link. Hub 2 (secondary) provides a 4th Stinger port and the RTL8152B Ethernet connection.
+
+**Hub 1**: Ports 1–3 → Stinger ports 1–3 (via SY6280); Port 4 → Hub 2 upstream
+**Hub 2**: Port 1 → Stinger port 4 (via SY6280); Port 2 → RTL8152B Ethernet; Ports 3–4 unused
 
 | Ref | Part | Value / MPN | Package | Qty | What it does |
 |-----|------|-------------|---------|-----|--------------|
-| U_HUB | SL2.1A | SL2.1A | QFN-28 | 1 | USB 2.0 hub controller supporting one upstream and four downstream ports at up to 480 Mbps. Ports 1–3 feed the SY6280-gated Stinger USB-A receptacles; port 4 feeds the RTL8152B Ethernet adapter |
-| XTAL_HUB | Crystal | 12 MHz | 3225 package | 1 | Reference oscillator for the SL2.1A's PLL. 12 MHz is required by the SL2.1A; the hub generates its own 480 MHz HS clock internally |
-| C_XTAL_A | Capacitor | 22pF | 0402 | 1 | Crystal load capacitor (XI pin). Together with C_XTAL_B and board parasitic capacitance, sets the crystal's effective load capacitance |
-| C_XTAL_B | Capacitor | 22pF | 0402 | 1 | Crystal load capacitor (XO pin) |
-| R_RBIAS | Resistor | 12kΩ | 0402 | 1 | RBIAS: sets the USB FS/HS differential driver bias current per the USB 2.0 specification |
-| R_RST | Resistor | 10kΩ | 0402 | 1 | Pull-up on RST_N to 3V3_SYS. Keeps the hub out of reset during normal operation; a logic-low on this line would reset all four ports |
-| R_CFG0 | Resistor | 10kΩ | 0402 | 1 | CFG0 configuration strap pulled to GND. Sets hub operating mode per the SL2.1A datasheet strap table |
-| R_CFG1 | Resistor | 10kΩ | 0402 | 1 | CFG1 configuration strap pulled to 3V3 |
-| R_CFG2 | Resistor | 10kΩ | 0402 | 1 | CFG2 configuration strap pulled to 3V3 |
-| R_OC1–R_OC3 | Resistors | 10kΩ | 0402 | 3 | Over-current (OC_N) pull-ups for SY6280 FLAG lines. The SY6280 FLAG is open-drain; without these pull-ups the SL2.1A OC_N inputs would float and might assert spuriously |
-| C_VDD_BULK | Capacitor | 10µF | 0805 | 1 | Bulk decoupling on VDD33 (the hub's 3.3V core supply) |
-| C_VDD_BYP_A/B | Capacitors | 100nF | 0402 | 2 | High-frequency bypass decoupling on VDD33 (two caps at different locations for broadband noise rejection) |
+| U_HUB1, U_HUB2 | SL2.1A | SL2.1A | QFN-28 | 2 | USB 2.0 hub controllers. Hub 1 upstream from Radxa, Hub 2 cascaded off Hub 1 port 4 |
+| XTAL_HUB1, XTAL_HUB2 | Crystal | 12 MHz | 3225 package | 2 | Reference oscillators for each SL2.1A PLL |
+| C_XTAL_A/B × 2 | Capacitor | 22pF | 0402 | 4 | Crystal load capacitors (2 per hub) |
+| R_RBIAS × 2 | Resistor | 12kΩ | 0402 | 2 | RBIAS: sets USB bias current (1 per hub) |
+| R_RST × 2 | Resistor | 10kΩ | 0402 | 2 | Pull-up on RST_N (1 per hub) |
+| R_CFG0 × 2 | Resistor | 10kΩ | 0402 | 2 | CFG0 strap to GND (1 per hub) |
+| R_CFG1 × 2 | Resistor | 10kΩ | 0402 | 2 | CFG1 strap to 3V3 (1 per hub) |
+| R_CFG2 × 2 | Resistor | 10kΩ | 0402 | 2 | CFG2 strap to 3V3 (1 per hub) |
+| R_OC (Hub 1) | Resistors | 10kΩ | 0402 | 3 | OC_N pull-ups for Hub 1 stinger FLAG lines |
+| R_OC (Hub 2) | Resistor | 10kΩ | 0402 | 1 | OC_N pull-up for Hub 2 stinger 4 FLAG line |
+| C_VDD_BULK × 2 | Capacitor | 10µF | 0805 | 2 | Bulk VDD33 decoupling (1 per hub) |
+| C_VDD_BYP × 2 | Capacitors | 100nF | 0402 | 4 | HF bypass decoupling on VDD33 (2 per hub) |
 
 ---
 
 ## Subsystem B2 — RTL8152B USB–Ethernet
 
-USB 2.0 to 100Base-TX Ethernet adapter integrated directly on-board. Connects from SL2.1A hub port 4 upstream, and drives the RJ45 MagJack downstream.
+USB 2.0 to 100Base-TX Ethernet adapter integrated directly on-board. Connects from Hub 2 port 2 upstream, and drives the RJ45 MagJack downstream.
 
 | Ref | Part | Value / MPN | Package | Qty | What it does |
 |-----|------|-------------|---------|-----|--------------|
@@ -151,18 +154,25 @@ USB 2.0 to 100Base-TX Ethernet adapter integrated directly on-board. Connects fr
 
 ---
 
-## Subsystem C — SY6280AAC Stinger Ports × 3
+## Subsystem C — SY6280AAC Stinger Ports × 4
 
-Three independent USB-A output ports each guarded by a SY6280 power-distribution switch. The SY6280 enforces a hardware-set current limit (ISET) and pulls FLAG low on an overcurrent event. All three ports are identical; the loop instantiates them as Port 1, 2, and 3.
+Four USB output ports each guarded by a SY6280 power-distribution switch. The SY6280 enforces a hardware-set current limit (ISET) and pulls FLAG low on an overcurrent event.
+
+- **Port 1**: USB-C male plug (parasitic insertion into target host)
+- **Port 2**: USB-A male plug (parasitic insertion into target host)
+- **Port 3**: USB-A female receptacle (device input)
+- **Port 4**: USB-A female receptacle (device input)
 
 | Ref | Part | Value / MPN | Package | Qty | What it does |
 |-----|------|-------------|---------|-----|--------------|
-| U_SW1–U_SW3 | SY6280AAC | SY6280AAC | SOT-23-5 | 3 | Power-distribution switch with adjustable current limit. Routes 5V_SYS to a USB-A VBUS pin when EN is asserted high. Asserts FLAG low (open-drain) when load current exceeds the ISET threshold. Rds_on < 90mΩ at 5V |
-| USB_A1–USB_A3 | USB Type-A receptacle | — | USB-A Female | 3 | Downstream USB-A ports ("Stinger" ports). Provide 5V power and USB 2.0 data to attached peripherals |
-| R_EN1–R_EN3 | Resistors | 10kΩ | 0402 | 3 | EN pull-ups to 3V3_SYS. The SY6280 EN pin is active-high; this pull-up ensures the port is ON by default and only turns off when the Radxa drives STINGER_EN_x low |
-| R_FLAG1–R_FLAG3 | Resistors | 10kΩ | 0402 | 3 | FLAG pull-ups to 3V3_SYS. The FLAG output is open-drain active-low; this pull-up produces a logic-high idle state and a clean falling edge on overcurrent |
-| C_SW_IN_BULK1–3 | Capacitors | 10µF | 0805 | 3 | Bulk input decoupling on each SY6280 IN pin |
-| C_SW_IN_BYP1–3 | Capacitors | 100nF | 0402 | 3 | Bypass input decoupling |
+| U_SW1–U_SW4 | SY6280AAC | SY6280AAC | SOT-23-5 | 4 | Power-distribution switch with adjustable current limit. Routes 5V_SYS to USB VBUS when EN is asserted high. Asserts FLAG low (open-drain) on overcurrent. Rds_on < 90mΩ at 5V |
+| USB_C_PLUG | USB-C plug | Molex 105444 | USB-C Male | 1 | Port 1: USB-C male plug for parasitic insertion. CC pull-down 5.1kΩ for UFP identification |
+| USB_A_MALE | USB-A plug | CNCTech 1001 | USB-A Male | 1 | Port 2: USB-A male plug for parasitic insertion |
+| USB_A_FEM1–2 | USB-A receptacle | Molex 67643 | USB-A Female | 2 | Ports 3–4: USB-A female receptacles for device input |
+| R_EN1–R_EN4 | Resistors | 10kΩ | 0402 | 4 | EN pull-ups to 3V3_SYS. Ports ON by default |
+| R_FLAG1–R_FLAG4 | Resistors | 10kΩ | 0402 | 4 | FLAG pull-ups to 3V3_SYS |
+| C_SW_IN_BULK1–4 | Capacitors | 10µF | 0805 | 4 | Bulk input decoupling on each SY6280 IN pin |
+| C_SW_IN_BYP1–4 | Capacitors | 100nF | 0402 | 4 | Bypass input decoupling |
 | C_SW_OUT_BULK1–3 | Capacitors | 10µF | 0805 | 3 | Bulk output decoupling on each VBUS output |
 | C_SW_OUT_BYP1–3 | Capacitors | 100nF | 0402 | 3 | Bypass output decoupling |
 | R_ISET1–R_ISET3 | Resistors | 13kΩ | 0402 | 3 | ISET current-limit resistors. Formula: R_ISET = 6800 / I_OC → 6800 / 0.5A = 13.6kΩ → 13kΩ (E96 standard). Sets the overcurrent trip point to ~500mA per port — enough for modern USB peripherals, while keeping worst-case three-port load within the IP5328P's 3A continuous output (ECO #2026-03-H) |

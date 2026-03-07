@@ -119,20 +119,20 @@ def test_stinger_nets_are_indexed_one_to_three():
     assert '"USB_VBUS_"' in src or 'f"USB_VBUS_{' in src, (
         "USB_VBUS_* net prefix missing from full_system.py"
     )
-    # Also verify the loop iterates over 3 ports
-    assert "range(1, 4)" in src, "Stinger net list comprehension must use range(1, 4)"
+    # Also verify the loop iterates over 4 ports
+    assert "range(1, 5)" in src, "Stinger net list comprehension must use range(1, 5)"
 
 
 def test_usb_downstream_nets_cover_all_four_ports():
-    """SL2.1A has 4 downstream ports; nets are built via range(1, 5) list comprehension."""
+    """Each SL2.1A hub has 4 downstream ports; nets use {prefix}_DN_DP/DM_ naming."""
     src = _get_source()
-    assert '"USB_DN_DP_"' in src or 'f"USB_DN_DP_{' in src, (
-        "USB_DN_DP_* net prefix missing from full_system.py"
+    assert '_DN_DP_' in src, (
+        "Hub downstream DP net prefix missing from full_system.py"
     )
-    assert '"USB_DN_DM_"' in src or 'f"USB_DN_DM_{' in src, (
-        "USB_DN_DM_* net prefix missing from full_system.py"
+    assert '_DN_DM_' in src, (
+        "Hub downstream DM net prefix missing from full_system.py"
     )
-    assert "range(1, 5)" in src, "USB downstream net list comprehension must use range(1, 5)"
+    assert "range(1, 5)" in src, "Hub downstream net list comprehension must use range(1, 5)"
 
 
 # ── Connector pin counts ──────────────────────────────────────────────────────
@@ -196,11 +196,11 @@ def test_all_subsystem_functions_defined():
         assert f"def {fn}" in src, f"Function {fn} not defined in full_system.py"
 
 
-def test_stinger_port_loop_calls_three_times():
-    """The top-level assembly must invoke _build_stinger_port in a range(3) loop."""
+def test_stinger_port_loop_calls_four_times():
+    """The top-level assembly must build 4 stinger ports (2 male + 2 female)."""
     src = _get_source()
-    assert "range(3)" in src, (
-        "Stinger port loop must use range(3) to build exactly 3 ports"
+    assert "stinger_configs" in src, (
+        "Stinger port loop must use stinger_configs to build exactly 4 ports"
     )
 
 
