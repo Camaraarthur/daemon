@@ -160,9 +160,12 @@ FP_SW_PUSH      = "Button_Switch_SMD:SW_SPST_PTS645"
 # PDN-JMP-04: 1225 wide-terminal reverse-geometry shunt (≥3.5A rated)
 FP_JUMPER_1225  = "Resistor_SMD:R_1210_3225Metric"
 # SM-PWR-02: heartbeat keepalive components
-FP_TIMER_NE555  = "Package_DIP:DIP-8_W7.62mm"
+# ECO #2026-03-HWR-B1: NE555 changed from DIP-8 to SOIC-8 (NE555DR) for
+# turnkey SMT assembly. Electrolytic 100uF changed to tantalum SMD (Case-D)
+# to eliminate through-hole deps and Z-height collision with Radxa stack.
+FP_TIMER_NE555  = "Package_SO:SOIC-8_3.9x4.9mm_P1.27mm"
 FP_BJT_SOT23    = "Package_TO_SOT_SMD:SOT-23"
-FP_C_ELEC_6MM   = "Capacitor_THT:CP_Radial_D6.3mm_P2.50mm"
+FP_C_TMR_TANT   = "Capacitor_Tantalum_SMD:CP_EIA-7343-31_Kemet-D"
 
 # Protocol analyzers and bus interfaces (Subsystems H–J)
 FP_CC1101        = "Package_DFN_QFN:QFN-20-1EP_4x4mm_P0.5mm_EP2.6x2.6mm"
@@ -918,13 +921,13 @@ def _build_heartbeat_keepalive(gnd: Net, vcc_5v: Net) -> None:
     """
     Resistor       = Part("Device", "R", dest=TEMPLATE, footprint=FP_R0402)
     Capacitor      = Part("Device", "C", dest=TEMPLATE, footprint=FP_C0402)
-    Capacitor_elec = Part("Device", "C", dest=TEMPLATE, footprint=FP_C_ELEC_6MM)
+    Capacitor_tant = Part("Device", "C_Polarized", dest=TEMPLATE, footprint=FP_C_TMR_TANT)
 
     # ── NE555 timer IC ────────────────────────────────────────────────────────
     timer = Part(
-        "Timer", "NE555P",
+        "Timer", "NE555D",
         footprint=FP_TIMER_NE555,
-        value="NE555P",
+        value="NE555DR",
     )
 
     # ── PNP BJT dummy-load switch (BC857 SOT-23) ──────────────────────────────
@@ -943,7 +946,7 @@ def _build_heartbeat_keepalive(gnd: Net, vcc_5v: Net) -> None:
     r_dummy = Resistor(value="82")    # collector load: 5V / 82Ω ≈ 61mA
 
     # ── Timing capacitor ─────────────────────────────────────────────────────
-    c_tmr = Capacitor_elec(value="100u")   # 100µF electrolytic timing cap
+    c_tmr = Capacitor_tant(value="100u")   # 100µF SMD tantalum timing cap (Case-D)
     c_byp = Capacitor(value="10n")         # control-voltage bypass (pin 5)
 
     # ── Internal nets ─────────────────────────────────────────────────────────

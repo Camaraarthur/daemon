@@ -48,7 +48,7 @@ The core power system. The IP5328P is a boost converter that charges a Li-ion ce
 | C_BAT_BYP | Capacitor | 100nF | 0402 | 1 | High-frequency bypass on BAT rail |
 | C_OUT_BULK | Capacitor | 22µF | 0805 | 1 | Bulk output decoupling on 5V_SYS. Sized to match the PySpice PDN-DCB-03 transient model |
 | C_OUT_BYP | Capacitor | 100nF | 0402 | 1 | High-frequency bypass on 5V_SYS output |
-| C_TANT | Tantalum capacitor | 100µF 6.3V | Case-B (3.5×2.8mm) | 1 | SM-PDN-01: 100µF power tank on 5V_SYS. Absorbs simultaneous load steps (SBC resume + RF TX + Ethernet link-up + Stinger enumeration) that can reach 4A in under 100µs — faster than the boost converter can respond. Low ESR (~100mΩ) of tantalum is key here; MLCC equivalents would need multiple 22µF in parallel (ECO #2026-03-G) |
+| C_TANT | Tantalum capacitor | 100µF 10V | Case-B (3.5×2.8mm) | 1 | SM-PDN-01: 100µF power tank on 5V_SYS. Absorbs simultaneous load steps (SBC resume + RF TX + Ethernet link-up + Stinger enumeration) that can reach 4A in under 100µs — faster than the boost converter can respond. Low ESR (~100mΩ) of tantalum is key here; MLCC equivalents would need multiple 22µF in parallel. 10V rating for 2x derating margin (ECO #2026-03-G, W-5 fix) |
 | R_NTC | NTC thermistor | 10kΩ | 0402 | 1 | SM-THM-01: 10kΩ NTC connected to IP5328P NTC pin. The IC computes junction temperature via a voltage divider and throttles/shuts down the boost stage above Tj ≈ 120°C, preventing thermal runaway (ECO #2026-03-G) |
 | R_MFB | Resistor | 100kΩ | 0402 | 1 | Pull-up on the MFB (multi-function button) pin to 3V3. Keeps the PMIC in normal operating mode when no button is pressed |
 | R_I2C_SDA | Resistor | 470Ω | 0402 | 1 | Series protection on I2C1 SDA between Radxa pin 3 and IP5328P SDA pin. When the Radxa is powered off but the PMIC battery supply is live, the IP5328P's internal I2C pull-up (4.7kΩ) would back-drive the SoC I/O clamp. 470Ω limits this to ~7mA — below latch-up threshold (ECO #2026-03-F/H) |
@@ -234,13 +234,13 @@ The IP5328P auto-shuts down when it detects no load for several seconds. This ci
 
 | Ref | Part | Value / MPN | Package | Qty | What it does |
 |-----|------|-------------|---------|-----|--------------|
-| U_555 | NE555 | NE555 | DIP-8 | 1 | Classic astable timer IC. Configured as an astable multivibrator: R1=220kΩ, R2=150Ω, C=100µF → period ≈ 15 seconds, pulse width ≈ 100µs. The short high pulse triggers the PNP dummy load |
+| U_555 | NE555 | NE555DR | SOIC-8 | 1 | Classic astable timer IC (SOIC-8 for SMT assembly). Configured as an astable multivibrator: R1=220kΩ, R2=150Ω, C=100µF → period ≈ 15 seconds, pulse width ≈ 100µs. The short high pulse triggers the PNP dummy load (ECO #2026-03-HWR-B1: changed from DIP-8 for turnkey SMT) |
 | Q_DUMMY | BC857 PNP BJT | BC857 | SOT-23 | 1 | PNP transistor driven by the NE555 output. When the 555 output goes high, the PNP base is pulled low via R_BASE, turning the transistor ON and routing current through R_DUMMY. Provides the heartbeat load pulse that prevents IP5328P auto-shutdown |
 | R1_TMR | Resistor | 220kΩ | 0402 | 1 | 555 timing resistor (discharge path). Sets the long inter-pulse interval |
 | R2_TMR | Resistor | 150Ω | 0402 | 1 | 555 timing resistor (charge path). Sets the short pulse duration |
 | R_BASE | Resistor | 10kΩ | 0402 | 1 | PNP base resistor. Limits base current from the 555 output to the BC857 |
 | R_DUMMY | Resistor | 82Ω | 0402 | 1 | Collector load resistor. 5V / 82Ω ≈ 61mA during the pulse — enough to register as a real load on the IP5328P VOUT measurement |
-| C_TMR | Electrolytic capacitor | 100µF | 6mm diameter | 1 | 555 timing capacitor. Large value gives the ~15-second inter-pulse period |
+| C_TMR | Tantalum capacitor | 100µF 10V | Case-D (7.3×4.3mm) | 1 | 555 timing capacitor. SMD tantalum replaces through-hole electrolytic for turnkey SMT assembly and Radxa Z-height clearance (ECO #2026-03-HWR-B1). 10V rating for derating margin |
 | C_BYP_555 | Capacitor | 10nF | 0402 | 1 | Control-voltage bypass on the 555 pin 5. Prevents noise on the VCC rail from modulating the 555's internal 2/3 VCC threshold and introducing timing jitter |
 
 ---
@@ -338,7 +338,7 @@ Separate netlist (`netlist/audio_subsystem.py`, generates `daemon_v0_audio.net`)
 | Connectors / headers | 12 |
 | Resistors | ~55 |
 | Capacitors (ceramic) | ~55 |
-| Capacitors (electrolytic / tantalum) | 2 |
+| Capacitors (tantalum SMD) | 2 |
 | Inductors | 2 |
 | Ferrite beads | 2 |
 | Diodes (Schottky / TVS / IR LED) | 8 |

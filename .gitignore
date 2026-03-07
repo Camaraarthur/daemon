@@ -21,6 +21,12 @@ htmlcov/
 fp-info-cache
 *.kicad_prl
 daemon_v0-backups/
+_autosave-*
+*~_autosave*
+*.lck
+
+# Large binaries
+tools/
 
 # SKiDL generated lib caches
 *_sklib.py
