@@ -1225,7 +1225,124 @@ def _build_netlist() -> str:
             name = net_aliases[name]
         return name
 
-    # Build reverse map: net_name -> [(ref, pin_name), ...]
+    # Pin name → pad number maps for ICs where KiCad pad numbers differ from pin names.
+    # Simple 2-pin parts (R, C, L, D, FB, Fuse) use "1"/"2" which already match.
+    # For QFN/SOIC ICs, pad numbers are sequential; EPAD is "" or last+1.
+    PIN_MAPS: dict[str, dict[str, str]] = {
+        "IP5328P": {  # QFN-40+EPAD: pins 1-40, EPAD=41
+            "DPA2":"1","CC1":"2","CC2":"3","DMC":"4","DPC":"5","DMB":"6","DPB":"7",
+            "VSYS_1":"8","VSYS_2":"9","NTC":"10","L1":"11","L2":"12","L3":"13",
+            "LX_1":"14","LX_2":"15","LX_3":"16","LX_4":"17","LX_5":"18",
+            "BST":"19","LIGHT":"20","RSET":"21","VSYS_3":"22","VSYS_4":"23",
+            "VSP":"24","VSN":"25","KEY":"26","VREG":"27","BAT":"28","AGND":"29",
+            "VIN":"30","VING":"31","VBUS":"32","VBUSG":"33",
+            "VOUT2":"34","VOUT2G":"35","VOUT1G":"36","VOUT1":"37",
+            "DMA1":"38","DPA1":"39","DMA2":"40","EPAD":"41",
+        },
+        "SL2.1A": {  # SOIC-16: pins 1-16
+            "VDD5":"1","DP":"2","DM":"3","VDD33":"4","DP1":"5","DM1":"6","DP2":"7","DM2":"8",
+            "GND":"9","DP3":"10","DM3":"11","DP4":"12","DM4":"13","VDD18":"14","XIN":"15","XOUT":"16",
+        },
+        "RTL8152B": {  # QFN-24+EPAD
+            "AVDD33_1":"1","MDI0P":"2","MDIN0":"3","MDI1P":"4","MDIN1":"5","U2GND":"6",
+            "U2DM":"7","U2DP":"8","U2VDD10":"9","AVDD33_2":"10","VDD5":"11","DVDD10_UPS":"12",
+            "DVDD33":"13","GPIO":"14","LEDCSB":"15","DVDD10":"16","SPISCK":"17",
+            "XTALDET":"18","LANWAKEB":"19","SPISDO":"20","CKXTAL1":"21","CKXTAL2":"22",
+            "AVDD10":"23","RSET":"24","EPAD":"25",
+        },
+        "MAX98357A": {  # QFN-16+EPAD
+            "VDD":"1","GND_2":"2","~{SD_MODE}":"3","GAIN_SLOT":"4","GND_5":"5","DIN":"6",
+            "BCLK":"7","LRCLK":"8","GND_9":"9","GND_10":"10","GND_11":"11","GND_12":"12",
+            "OUTN":"13","GND_14":"14","OUTP":"15","GND_16":"16","EPAD":"17",
+        },
+        "CC1101": {  # QFN-20+EPAD
+            "SCLK":"1","SI":"2","SO":"3","CSN":"4","GDO2":"5","GDO0":"6",
+            "AVDD_1":"7","AVDD_2":"8","RF_N":"9","RF_P":"10","AVDD_3":"11","AVDD_4":"12",
+            "DCOUPL":"13","DGUARD":"14","GND_1":"15","GND_2":"16","XI":"17","XO":"18",
+            "DVDD":"19","RBIAS":"20","EPAD":"21",
+        },
+        "ISO1212": {  # SSOP-16
+            "VCC1":"1","OUT1":"2","OUT2":"3","EN":"4","GND1":"5","SUB1":"6","NC_7":"7","SUB2":"8",
+            "FGND2":"9","SENSE2":"10","IN2":"11","FGND1":"12","SENSE1":"13","IN1":"14",
+            "NC_15":"15","NC_16":"16",
+        },
+        "PCF8574": {  # SOIC-16
+            "A0":"1","A1":"2","A2":"3","P0":"4","P1":"5","P2":"6","P3":"7","VSS":"8",
+            "P4":"9","P5":"10","P6":"11","P7":"12","INT":"13","SCL":"14","SDA":"15","VCC":"16",
+        },
+        "NE555D": {  # SOIC-8
+            "GND":"1","TR":"2","Q":"3","R":"4","CV":"5","THR":"6","DIS":"7","VCC":"8",
+        },
+        "AP2112K-3.3": {  # SOT-23-5
+            "VIN":"1","GND":"2","EN":"3","NC":"4","VOUT":"5",
+        },
+        "SY6280AAC": {  # SOT-23-5
+            "IN":"1","GND":"2","EN":"3","OUT":"4","ISET":"5",
+        },
+        "SY6280AAAC": {  # SOT-23-5 (same pinout as AAC)
+            "IN":"1","GND":"2","EN":"3","OUT":"4","ISET":"5",
+        },
+        "74AHCT1G125": {  # SOT-23-5
+            "nOE":"1","A":"2","GND":"3","Y":"4","VCC":"5",
+        },
+        "USBLC6-2SC6": {  # SOT-23-6
+            "1":"1","2":"2","3":"3","4":"4","5":"5","6":"6",
+        },
+        "Q_PNP_EBC": {"E":"1","B":"2","C":"3"},  # BC857
+        "Q_NPN_GSD": {"G":"1","S":"2","D":"3"},
+        "BSS84": {"G":"1","S":"2","D":"3"},  # P-ch MOSFET SOT-23: G=1,S=2,D=3
+        "2N7002": {"G":"1","S":"2","D":"3"},  # N-ch MOSFET SOT-23: G=1,S=2,D=3
+        "D_Schottky": {"A":"1","K":"2"},  # SS34 SMA / BAT54 SOD-323
+        "D_TVS": {"A":"1","K":"2"},  # SMBJ5.0A, ESD5Z3.3
+        "Polyfuse": {"1":"1","2":"2"},
+        "Crystal": {"1":"1","2":"2","3":"3","4":"4"},
+        "Antenna_Chip": {"1":"1","2":"2"},
+        "INMP441": {"VDD":"1","GND":"2","SCK":"3","WS":"4","SD":"5","L/R":"6"},
+        "WS2812B-2020": {"VDD":"1","DOUT":"2","VSS":"3","DIN":"4"},
+        "RED_0402": {"A":"2","K":"1"},  # LED_0402: pad1=K, pad2=A
+        "GREEN_0402": {"A":"2","K":"1"},
+        "VSMB294008": {"A":"2","K":"1"},  # IR LED (0603)
+        "ESD9B5.0ST5G": {"A":"1","K":"2"},  # TVS diode
+        "USB_C_Plug_USB2.0": {"VBUS":"A4","CC":"A5","D+":"A6","D-":"A7","GND":"A1"},
+        "USB_C_Receptacle_USB2.0": {
+            "VBUS":"A4","D-":"A7","D+":"A6","CC1":"A5","CC2":"B5","GND":"A1",
+        },
+        "AudioJack4_Switch": {
+            # SJ2-2531X KiCad footprint pads: T, R1, R2, S, GND
+            # NC switch contacts (TS, R1S) share pads with main contacts in this footprint.
+            # Detect (CD) is not a separate pad — it's internal to the switch mechanism.
+            "Sleeve":"S","Tip":"T","Ring1":"R1",
+            "TipSwitch":"T","Ring1Switch":"R1",  # NC switch → same pad as main contact
+            "Detect":"GND",  # Detect NC to sleeve = GND pad
+        },
+        "Goobay-74446": {  # USB-C receptacle used as Goobay bridge
+            "VBUS":"A4","D-":"A7","D+":"A6","CC1":"A5","CC2":"B5","GND":"A1",
+        },
+        "D_TVS_x2_AAC": {"A1":"1","K":"2","A2":"3"},  # VCAN26A2 SC-70 3-pin dual TVS
+        "Q_NMOS_GSD": {"G":"1","S":"2","D":"3"},
+        "Q_NMOS_GDS": {"G":"1","D":"2","S":"3"},  # AO3400A SOT-23: G=1,D=2,S=3
+        "USB_A": {  # USB-A connector (both male and female): pad 1=VBUS, 2=D-, 3=D+, 4=GND, 5=shield
+            "VBUS":"1","D-":"2","D+":"3","GND":"4",
+        },
+        "RJ45_Hanrun_HR911105A_Horizontal": {
+            "1":"1","2":"2","3":"3","4":"4","5":"5","6":"6","8":"8","SH":"SH",
+        },
+    }
+
+    # Build pin name → pad number resolver
+    def resolve_pin(comp: dict, pin_name: str) -> str:
+        """Convert pin name to KiCad pad number."""
+        part = comp["part"]
+        # Check direct part match
+        if part in PIN_MAPS and pin_name in PIN_MAPS[part]:
+            return PIN_MAPS[part][pin_name]
+        # Check value match (for transistors etc.)
+        if comp["value"] in PIN_MAPS and pin_name in PIN_MAPS[comp["value"]]:
+            return PIN_MAPS[comp["value"]][pin_name]
+        # Simple parts: pin name IS the pad number (R, C, L use "1"/"2")
+        return pin_name
+
+    # Build reverse map: net_name -> [(ref, pad_number), ...]
     net_map: dict[str, list[tuple[str, str]]] = {}
     for net in NETS:
         resolved = resolve_net(net)
@@ -1237,7 +1354,8 @@ def _build_netlist() -> str:
             resolved = resolve_net(net_name)
             if resolved not in net_map:
                 net_map[resolved] = []
-            net_map[resolved].append((c["ref"], pin_name))
+            pad_num = resolve_pin(c, pin_name)
+            net_map[resolved].append((c["ref"], pad_num))
 
     lines.append("  (nets")
     for code, (net_name, nodes) in enumerate(net_map.items(), start=1):
