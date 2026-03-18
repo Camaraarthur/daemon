@@ -1,6 +1,6 @@
 """
 netlist/gen_golden_netlist.py
-Phase 4 – Golden Netlist Generator (CI artifact; no KiCad runtime required)
+Phase 4 -- Golden Netlist Generator (CI artifact; no KiCad runtime required)
 
 Generates a KiCad-format .net file (S-expression, compatible with KiCad 5/6/7)
 without requiring KiCad symbol libraries or a live SKiDL environment.
@@ -10,13 +10,13 @@ toolchain is not installed.  The component list and net connectivity are
 derived directly from the architecture defined in full_system.py; the output
 is a deterministic, diff-able artifact suitable for:
 
-  · Regression detection (git diff daemon_v0_full_system.net)
-  · Import into KiCad PCB editor once symbol libraries are available
-  · BOM extraction by downstream tooling
+  - Regression detection (git diff daemon_v0_full_system.net)
+  - Import into KiCad PCB editor once symbol libraries are available
+  - BOM extraction by downstream tooling
 
 Usage:
     python -m netlist.gen_golden_netlist
-    # → writes daemon_v0_full_system.net to the repo root
+    # -> writes daemon_v0_full_system.net to the repo root
 """
 
 from __future__ import annotations
@@ -28,228 +28,1183 @@ from pathlib import Path
 
 OUTPUT_FILE = Path(__file__).parent.parent / "daemon_v0_full_system.net"
 
-# ── Net definitions ───────────────────────────────────────────────────────────
-# All named nets in the Daemon V0 system. Used for the (nets ...) section.
+# -- Footprints (mirrored from full_system.py / audio_subsystem.py) ----------
+
+FP_IP5328P     = "Package_DFN_QFN:QFN-40-1EP_6x6mm_P0.5mm_EP4.6x4.6mm"
+FP_INDUCTOR_5A = "Inductor_SMD:L_Bourns_SRR1260"
+FP_LDO_SOT23_5 = "Package_TO_SOT_SMD:SOT-23-5"
+FP_SL2_1A      = "Package_SO:SOIC-16_3.9x9.9mm_P1.27mm"
+FP_XTAL_3225   = "Crystal:Crystal_SMD_3225-4Pin_3.2x2.5mm"
+FP_USB_A_FEMALE = "Connector_USB:USB_A_Molex_67643_Horizontal"
+FP_USB_A_MALE  = "Connector_USB:USB_A_CNCTech_1001-011-01101_Horizontal"
+FP_USB_C_PLUG  = "Daemon_V0:USB_C_Plug_GCT_USB4155"
+FP_SY6280      = "Package_TO_SOT_SMD:SOT-23-5"
+FP_USBLC6      = "Package_TO_SOT_SMD:SOT-23-6"
+FP_RADXA_HDR   = "Connector_PinSocket_2.54mm:PinSocket_2x20_P2.54mm_Vertical"
+FP_SCREEN_CONN = "Connector_PinSocket_2.54mm:PinSocket_1x08_P2.54mm_Vertical"
+FP_NAV_SW      = "Daemon_V0:SW_Alps_SKRHABE010"
+FP_BAT_CONN    = "Connector_JST:JST_PH_S2B-PH-K_1x02_P2.00mm_Horizontal"
+FP_TP_D15      = "TestPoint:TestPoint_Pad_D1.5mm"
+FP_TP_D10      = "TestPoint:TestPoint_Pad_D1.0mm"
+FP_R0402       = "Resistor_SMD:R_0402_1005Metric"
+FP_R0805       = "Resistor_SMD:R_0805_2012Metric"
+FP_C0402       = "Capacitor_SMD:C_0402_1005Metric"
+FP_C0805       = "Capacitor_SMD:C_0805_2012Metric"
+FP_TVS_SC70    = "Package_TO_SOT_SMD:SOT-323_SC-70"
+FP_TVS_SMB     = "Diode_SMD:D_SMB"
+FP_PTC_1206    = "Fuse:Fuse_1206_3216Metric"
+FP_SW_PUSH     = "Button_Switch_SMD:SW_Push_1P1T-MP_NO_Horizontal_Alps_SKRTLAE010"
+FP_JUMPER_1225 = "Resistor_SMD:R_1210_3225Metric"
+FP_TIMER_NE555 = "Package_SO:SOIC-8_3.9x4.9mm_P1.27mm"
+FP_BJT_SOT23   = "Package_TO_SOT_SMD:SOT-23"
+FP_C_TMR_TANT  = "Capacitor_Tantalum_SMD:CP_EIA-7343-31_Kemet-D"
+FP_CC1101      = "Package_DFN_QFN:QFN-20-1EP_4x4mm_P0.5mm_EP2.6x2.6mm"
+FP_ISO1212     = "Package_SO:SSOP-16_3.9x4.9mm_P0.635mm"  # TI ISO1212 DBQ = SSOP-16 (NOT SOIC-16W)
+FP_CONN_1X03   = "Connector_PinHeader_2.54mm:PinHeader_1x03_P2.54mm_Vertical"
+FP_CONN_2X04   = "Connector_PinSocket_2.54mm:PinSocket_2x04_P2.54mm_Vertical"
+FP_USB_C_RCPT  = "Connector_USB:USB_C_Receptacle_HRO_TYPE-C-31-M-12"
+FP_RTL8152B    = "Package_DFN_QFN:QFN-24-1EP_4x4mm_P0.5mm_EP2.6x2.6mm"
+FP_MAGJACK     = "Daemon_V0:RJ45_Hanrun_HR911105A_Horizontal"
+FP_WS2812B     = "LED_SMD:LED_WS2812B-2020_PLCC4_2.0x2.0mm"
+FP_IR_LED      = "LED_SMD:LED_0603_1608Metric_Pad1.05x0.95mm_HandSolder"
+FP_NFET_SOT23  = "Package_TO_SOT_SMD:SOT-23"
+FP_PMOS_SOT23  = "Package_TO_SOT_SMD:SOT-23"
+FP_WAGO_4P     = "Daemon_V0:TerminalBlock_WAGO_2060-404_1x04_P4.00mm_Horizontal"
+FP_CHIP_ANT    = "Daemon_V0:Antenna_Chip_Johanson_0915AT43A0026"
+FP_TANT_CASEB  = "Capacitor_Tantalum_SMD:CP_EIA-3528-21_Kemet-B"
+FP_NTC_0402    = "Resistor_SMD:R_0402_1005Metric"
+FP_L_0402      = "Inductor_SMD:L_0402_1005Metric"
+# Audio subsystem footprints
+FP_QFN16       = "Package_DFN_QFN:QFN-16-1EP_3x3mm_P0.5mm_EP1.75x1.75mm"
+FP_INMP441     = "Daemon_V0:InvenSense_INMP441_BottomPort"
+FP_TRRS        = "Daemon_V0:Jack_3.5mm_SJ2-2531X-SMT"
+FP_JST_SH2     = "Connector_JST:JST_SH_SM02B-SRSS-TB_1x02-1MP_P1.00mm_Horizontal"
+FP_FERRITE_0603 = "Inductor_SMD:L_0603_1608Metric"
+FP_LED_0402    = "LED_SMD:LED_0402_1005Metric"
+FP_SCHOTTKY_SMA    = "Diode_SMD:D_SMA"  # SS34: 3A 40V Schottky, SMA package
+FP_R_2512          = "Resistor_SMD:R_2512_6332Metric"  # 1W rated
+FP_PCF8574     = "Package_SO:SOIC-16_3.9x9.9mm_P1.27mm"
+FP_VSSOP10     = "Package_SO:VSSOP-10_3x3mm_P0.5mm"
+
+
+# -- Net definitions ---------------------------------------------------------
 
 NETS: list[str] = [
+    # Power rails
     "GND",
     "5V_SYS",
     "3V3_SYS",
     "3V3_CLEAN",
-    # Power management (A) – IP5328P
-    "BAT_P",
-    "IP5328P_SW",
-    # I2C buses – ECO #2026-03-H: I2C0 removed (pins 27/28 NC on Zero 3W)
+    # Power management (A) - IP5328P (full QFN-40 mapping)
+    "VIN", "BAT", "BAT_ISO", "PMIC_KEY", "IP5328P_NTC",
+    "LX", "IP5328P_VSYS", "IP5328P_BST",
+    "IP5328P_VBUS", "IP5328P_VBUSG", "IP5328P_VING",
+    "IP5328P_RSET", "IP5328P_VREG", "IP5328P_VSET", "IP5328P_LIGHT",
+    "IP5328P_VOUT1G", "IP5328P_VOUT2G",
+    # I2C buses
     "I2C1_SDA", "I2C1_SCL",
-    "I2C1_PMIC_SDA", "I2C1_PMIC_SCL",   # protected side of 470Ω series resistors
-    # SPI0 bus (display only – ST7789V2)
-    "SPI0_SCK", "SPI0_MOSI", "SPI0_MISO",
-    # RF SoftSPI bus (CC1101; ECO #2026-03-E: renamed RF_*; ECO #2026-03-F: safe GPIOs)
+    "I2C1_PMIC_SDA", "I2C1_PMIC_SCL",
+    # SPI3 bus (display)
+    "SPI3_CLK", "SPI3_MOSI",
+    # RF SoftSPI bus (CC1101)
     "RF_CLK", "RF_MOSI", "RF_MISO",
-    "RF_CS_N", "RF_GDO1", "RF_GDO2",
-    "RF_XI", "RF_XO", "RF_RBIAS",
+    "RF_CS_N", "RF_GDO0", "RF_GDO2",  # GDO1 = SO pin (shared with RF_MISO)
+    "RF_XI", "RF_XO", "RF_RBIAS", "RF_DCOUPL",
     "RF_ANT_P", "RF_ANT_N", "RF_ANT",
+    # CC1101 filterbalun internal nodes (TI DN017 / SWRA168A 3-stage diff→SE→T-filter)
+    "RF_BAL_P", "RF_BAL_N", "RF_SE_50", "RF_FILT_MID", "RF_ANT_PRE", "RF_NOTCH",
     # Screen control
-    "SCREEN_CS", "SCREEN_DC", "SCREEN_RST", "SCREEN_BL",
-    # Joystick + ADS1015 ADC
-    "JOY_VRX", "JOY_VRY", "JOY_SW", "ADC_ALERT",
-    # Stinger ports
-    "STINGER_EN_1", "STINGER_EN_2", "STINGER_EN_3",
-    "STINGER_FLAG_1", "STINGER_FLAG_2", "STINGER_FLAG_3",
-    "STINGER_ISET_1", "STINGER_ISET_2", "STINGER_ISET_3",
-    "USB_VBUS_1", "USB_VBUS_2", "USB_VBUS_3",
-    # Hub USB data pairs
-    "USB_DP_1", "USB_DM_1",
-    "USB_DP_2", "USB_DM_2",
-    "USB_DP_3", "USB_DM_3",
-    "USB_DP_4", "USB_DM_4",
-    "USB_DP_UP", "USB_DM_UP",
+    "SPI3_CS", "SCREEN_DC", "SCREEN_RST", "SCREEN_BL",
+    # Nav switch (Alps SKRHABE010)
+    "NAV_UP", "NAV_DOWN", "NAV_LEFT", "NAV_RIGHT", "NAV_CENTER",
+    # Stinger ports (5x; port 5 = female USB-C receptacle on Hub2 port 3)
+    "STINGER_EN_1", "STINGER_EN_2", "STINGER_EN_3", "STINGER_EN_4", "STINGER_EN_5",
+    # Note: SY6280AAC SOT-23-5 has no FLAG pin; SL2.1A has no OC_N pins.
+    "STINGER_ISET_1", "STINGER_ISET_2", "STINGER_ISET_3", "STINGER_ISET_4", "STINGER_ISET_5",
+    "USB_VBUS_1", "USB_VBUS_2", "USB_VBUS_3", "USB_VBUS_4", "USB_VBUS_5",
+    "STINGER5_CC1", "STINGER5_CC2",
+    # Hub 1 USB data pairs (upstream + 4 downstream)
+    "USB_UP_DP", "USB_UP_DM",
+    "HUB1_DN_DP_1", "HUB1_DN_DM_1",
+    "HUB1_DN_DP_2", "HUB1_DN_DM_2",
+    "HUB1_DN_DP_3", "HUB1_DN_DM_3",
+    "HUB1_DN_DP_4", "HUB1_DN_DM_4",  # port 4 = cascade to Hub 2
+    # Hub 1 internal nets (SL2.1A SOP-16: VDD5=5V input, VDD33/VDD18=internal LDO outputs)
+    "HUB1_XI", "HUB1_XO",
+    "HUB1_VDD33", "HUB1_VDD18",
+    # Hub 2 USB data pairs (4 downstream; upstream = HUB1_DN_DP/DM_4)
+    "HUB2_DN_DP_1", "HUB2_DN_DM_1",
+    "HUB2_DN_DP_2", "HUB2_DN_DM_2",
+    "HUB2_DN_DP_3", "HUB2_DN_DM_3",
+    "HUB2_DN_DP_4", "HUB2_DN_DM_4",
+    # Hub 2 internal nets (SL2.1A SOP-16: VDD5=5V input, VDD33/VDD18=internal LDO outputs)
+    "HUB2_XI", "HUB2_XO",
+    "HUB2_VDD33", "HUB2_VDD18",
+    # Ethernet (B2)
+    "ETH_MDI_TXP", "ETH_MDI_TXN", "ETH_MDI_RXP", "ETH_MDI_RXN",
+    "ETH_XI", "ETH_XO",
+    "RTL_U2VDD10", "RTL_AVDD10", "RTL_DVDD10", "RTL_DVDD10_UPS",
+    "RTL_RSET", "RTL_LANWAKEB",
     # I2S / audio
     "I2S_BCLK", "I2S_LRCLK", "I2S_DATA_IN", "I2S_DATA_OUT",
-    # ECO #2026-02-V2: WS2812B + IR blaster
-    "LED_DIN",
-    "IR_GPIO",
-    # ECO #2026-03-D: Advanced Power UX (A6)
-    "PMIC_KEY", "PMIC_KILL", "SW_PWR_GPIO",
+    # Audio subsystem (K)
+    "5V_AUDIO",
+    "AMP_OUT_P", "AMP_OUT_N",
+    "AMP_OUT_P_FILT", "AMP_OUT_N_FILT",
+    "AMP_SD", "TRRS_DETECT_RAW", "SPK_P", "SPK_N", "MIC_VDD", "MIC_LED_A",
+    # WS2812B + IR blaster
+    "MCU_LED_DIN",  # 3.3V Radxa GPIO → 74AHCT1G125 level shifter input
+    "LED_DIN",      # 5V output of level shifter → first WS2812B DIN
+    "WS2812B_DOUT_1", "WS2812B_DOUT_2", "WS2812B_DOUT_3",
+    "IR_GPIO", "IR_LED_P", "IR_LED_N",
+    # Power indicator LED
+    "PWR_LED_A",
+    # AUX GPIO expansion
+    "AUX_GPIO_1", "AUX_GPIO_2", "AUX_GPIO_3",  # AUX_GPIO_4 removed (sacrificed for STINGER_EN_3)
+    # PCF8574 interrupt line (open-drain, pulled to 3V3_SYS; connect to GPIO for IRQ-driven nav)
+    "PCF8574_INT",
+    # Power UX (A6)
+    "PMIC_KILL",
     # ISO1212 (J)
+    "ISO_VCC1", "ISO_GND1",
     "ISO_IN1_RAW", "ISO_IN2_RAW",
-    "ISO_IN1_PROT", "ISO_IN2_PROT",
+    "ISO_IN1_PTCA", "ISO_IN2_PTCA",
+    "ISO_IN1", "ISO_IN2",
+    "ISO_SENSE1", "ISO_SENSE2",  # SENSE pins: R_SENSE connects SENSE→FGND for threshold setting
+    "ISO_SUB1", "ISO_SUB2",      # SUB pins: floating copper islands (isolation barrier)
     "ISO_DO1", "ISO_DO2",
-    "ISO_GND1",
-    "ISO_ISET_1", "ISO_ISET_2",
-    # USB MUX hardening (A3)
-    "VBUS_A", "VBUS_C", "MUX_VIN", "MUX_SEL",
     # Heartbeat timer (G)
-    "NE555_OUT", "NE555_THRESH", "NE555_CTRL",
-    "BJT_BASE", "BJT_COLLECTOR",
-    # DFT test points
-    "TP_VBAT", "TP_VOUT", "TP_SW", "TP_GND",
+    "HB_TMR_OUT", "HB_TMR_THR", "HB_TMR_CTRL", "HB_TMR_NODE_A",
+    # Goobay bridge CC nets
+    "GOOBAY_CC1", "GOOBAY_CC2",
+    # USB-C plug CC net (stinger port 1 / Radxa power key)
+    # Rp pull-up (DFP host mode) — Daemon is the power source; Radxa boots only when bridge inserted
+    "STINGER1_CC",
+    # Radxa GPIO 5V rail (pins 2,4) — intentionally NOT connected to 5V_SYS.
+    # Radxa outputs its own 5V here once running; we isolate it from Daemon's rail.
+    "RADXA_GPIO_5V",
 ]
 
-# ── Component definitions ─────────────────────────────────────────────────────
+# -- Component definitions ---------------------------------------------------
 # Each entry: (ref, value, footprint, libsource_lib, libsource_part, pins)
 # pins: list of (pin_name, net_name)
+#
+# Reference designators are assigned sequentially; the actual SKiDL-generated
+# refs may differ but the netlist connectivity is equivalent.
 
-COMPONENTS: list[dict] = [
-    # ── A: IP5328P Power Management ──────────────────────────────────────────
-    # ECO #2026-03-H: I2C moved to I2C1 (via 470Ω, simplified here as I2C1_PMIC_SDA/SCL)
-    # ECO #2026-03-E: LED1/LED2/LED3 REMOVED (I2C bus clamping conflict)
-    dict(ref="U1",  value="IP5328P",     fp="Package_DFN_QFN:QFN-40-1EP_6x6mm_P0.5mm_EP4.6x4.6mm", lib="Daemon_V0",         part="IP5328P",
-         pins=[("BAT","BAT_P"),("SW","IP5328P_SW"),("VIN","5V_SYS"),("VOUT","5V_SYS"),
-               ("SDA","I2C1_PMIC_SDA"),("SCL","I2C1_PMIC_SCL"),("GND","GND")]),
-    dict(ref="L1",  value="4u7",         fp="Inductor_SMD:L_Bourns_SRR1260",                         lib="Device",           part="L",
-         pins=[("~","IP5328P_SW"),("~","5V_SYS")]),
-    dict(ref="J1",  value="0R",          fp="Resistor_SMD:R_1210_3225Metric",                         lib="Device",           part="R",
-         pins=[("~","GND"),("~","GND")]),
-    dict(ref="J2",  value="0R",          fp="Resistor_SMD:R_1210_3225Metric",                         lib="Device",           part="R",
-         pins=[("~","5V_SYS"),("~","5V_SYS")]),
-    dict(ref="BAT1",value="Li-ion",      fp="Connector_JST:JST_PH_S2B-PH-K_1x02_P2.00mm_Horizontal", lib="Connector_JST",    part="JST_PH_2",
-         pins=[("1","BAT_P"),("2","GND")]),
-    dict(ref="TP1", value="TP_VBAT",     fp="TestPoint:TestPoint_Pad_D1.5mm",                         lib="TestPoint",        part="TestPoint",
-         pins=[("1","BAT_P")]),
-    dict(ref="TP2", value="TP_VOUT",     fp="TestPoint:TestPoint_Pad_D1.5mm",                         lib="TestPoint",        part="TestPoint",
-         pins=[("1","5V_SYS")]),
-    dict(ref="TP3", value="TP_SW",       fp="TestPoint:TestPoint_Pad_D1.0mm",                         lib="TestPoint",        part="TestPoint",
-         pins=[("1","IP5328P_SW")]),
-    dict(ref="TP4", value="TP_GND",      fp="TestPoint:TestPoint_Pad_D1.0mm",                         lib="TestPoint",        part="TestPoint",
-         pins=[("1","GND")]),
+# Refs that are hardcoded (not auto-incremented) in _build_components().
+# _next_ref() must skip these to avoid duplicate ref designators.
+_HARDCODED_REFS = {
+    "U1", "U2", "U3", "U4", "U5", "U6", "U7", "U8", "U9", "U10",
+    "U11", "U13", "U14", "U15", "U21", "U22",
+    "L1", "Q1",
+    "J1", "J2", "J3", "J4", "J5", "J6",  # J5 reserved (PWR_MGMT removed)
+    "BAT1",
+    "TP1", "TP2", "TP3", "TP4",
+}
 
-    # ── A2: AP2112K-3.3 Clean 3.3V Rail ─────────────────────────────────────
-    # ECO #2026-03-GOLD: LM1117-3.3 → AP2112K-3.3 (250mV dropout; keeps RF alive during 5V sag)
-    dict(ref="U2",  value="AP2112K-3.3", fp="Package_TO_SOT_SMD:SOT-23-5",                             lib="Regulator_Linear", part="AP2112K-3.3",
-         pins=[("VIN","5V_SYS"),("VOUT","3V3_CLEAN"),("GND","GND"),("EN","5V_SYS")]),
-
-    # ── A3: USB MUX Hardening ─────────────────────────────────────────────────
-    dict(ref="D1",  value="SS14",        fp="Diode_SMD:D_SMA",                                         lib="Device",           part="D_Schottky",
-         pins=[("A","VBUS_A"),("K","MUX_VIN")]),
-    dict(ref="D2",  value="SS14",        fp="Diode_SMD:D_SMA",                                         lib="Device",           part="D_Schottky",
-         pins=[("A","VBUS_C"),("K","MUX_VIN")]),
-    dict(ref="R1",  value="430k",        fp="Resistor_SMD:R_0402_1005Metric",                          lib="Device",           part="R",
-         pins=[("~","5V_SYS"),("~","MUX_SEL")]),
-    dict(ref="R2",  value="620k",        fp="Resistor_SMD:R_0402_1005Metric",                          lib="Device",           part="R",
-         pins=[("~","MUX_SEL"),("~","GND")]),
-
-    # A4 (hardware reset switch) REMOVED per ECO #2026-03-D; replaced by A6 power UX.
-
-    # ── B: SL2.1A USB 2.0 Hub ────────────────────────────────────────────────
-    dict(ref="U3",  value="SL2.1A",      fp="Package_DFN_QFN:QFN-28-1EP_5x5mm_P0.5mm_EP3.35x3.35mm", lib="Daemon_V0",        part="SL2.1A",
-         pins=[("VDD","5V_SYS"),("GND","GND"),
-               ("DP_UP","USB_DP_UP"),("DM_UP","USB_DM_UP"),
-               ("DP1","USB_DP_1"),("DM1","USB_DM_1"),
-               ("DP2","USB_DP_2"),("DM2","USB_DM_2"),
-               ("DP3","USB_DP_3"),("DM3","USB_DM_3"),
-               ("DP4","USB_DP_4"),("DM4","USB_DM_4")]),
-    dict(ref="X1",  value="12MHz",       fp="Crystal:Crystal_SMD_3225-4Pin_3.2x2.5mm",                lib="Device",           part="Crystal",
-         pins=[("1","GND"),("2","GND"),("3","GND"),("4","GND")]),
-
-    # ── C: Stinger Ports (3× SY6280AAC) ──────────────────────────────────────
-    dict(ref="U4",  value="SY6280AAC",   fp="Package_TO_SOT_SMD:SOT-23-5",                             lib="Daemon_V0",        part="SY6280AAC",
-         pins=[("IN","5V_SYS"),("OUT","USB_VBUS_1"),("EN","STINGER_EN_1"),("FLAG","STINGER_FLAG_1"),("GND","GND"),("ISET","STINGER_ISET_1")]),
-    dict(ref="U5",  value="SY6280AAC",   fp="Package_TO_SOT_SMD:SOT-23-5",                             lib="Daemon_V0",        part="SY6280AAC",
-         pins=[("IN","5V_SYS"),("OUT","USB_VBUS_2"),("EN","STINGER_EN_2"),("FLAG","STINGER_FLAG_2"),("GND","GND"),("ISET","STINGER_ISET_2")]),
-    dict(ref="U6",  value="SY6280AAC",   fp="Package_TO_SOT_SMD:SOT-23-5",                             lib="Daemon_V0",        part="SY6280AAC",
-         pins=[("IN","5V_SYS"),("OUT","USB_VBUS_3"),("EN","STINGER_EN_3"),("FLAG","STINGER_FLAG_3"),("GND","GND"),("ISET","STINGER_ISET_3")]),
-
-    # ── G: NE555 Heartbeat ────────────────────────────────────────────────────
-    dict(ref="U7",  value="NE555",       fp="Package_DIP:DIP-8_W7.62mm",                               lib="Timer",            part="NE555",
-         pins=[("GND","GND"),("VCC","5V_SYS"),("OUT","NE555_OUT"),("THR","NE555_THRESH"),("CV","NE555_CTRL"),("TR","NE555_THRESH"),("DIS","NE555_THRESH"),("RST","5V_SYS")]),
-    dict(ref="Q1",  value="BC857",       fp="Package_TO_SOT_SMD:SOT-23",                               lib="Device",           part="Q_PNP_EBC",
-         pins=[("E","5V_SYS"),("B","BJT_BASE"),("C","BJT_COLLECTOR")]),
-
-    # ── H: CC1101 RF Transceiver ──────────────────────────────────────────────
-    dict(ref="U8",  value="CC1101",      fp="Package_DFN_QFN:QFN-20-1EP_4x4mm_P0.5mm_EP2.6x2.6mm",    lib="RF_Transceiver",   part="CC1101",
-         pins=[("VDD","3V3_CLEAN"),("GND","GND"),
-               ("SCLK","SOFT_SPI_SCK"),("SI","SOFT_SPI_MOSI"),("SO","SOFT_SPI_MISO"),
-               ("CSN","RF_CS_N"),("GDO0","RF_GDO0"),("GDO1","RF_GDO1"),("GDO2","RF_GDO2"),
-               ("XI","RF_XI"),("XO","RF_XO"),("RBIAS","RF_RBIAS"),
-               ("RF_P","RF_ANT_P"),("RF_N","RF_ANT_N")]),
-    dict(ref="X2",  value="26MHz",       fp="Crystal:Crystal_SMD_3225-4Pin_3.2x2.5mm",                lib="Device",           part="Crystal",
-         pins=[("1","RF_XI"),("2","RF_XO"),("3","GND"),("4","GND")]),
-
-    # CAN bus (MCP2515 + MCP2551) REMOVED per ECO #2026-02-V2.
-
-    # ── J: ISO1212 Industrial Isolation ──────────────────────────────────────
-    dict(ref="U11", value="ISO1212",     fp="Package_SO:SOIC-16W_7.5x10.3mm_P1.27mm",                 lib="Interface_Isolation",part="ISO1212",
-         pins=[("VCC","3V3_SYS"),("GND","GND"),("GND1","ISO_GND1"),
-               ("IN1","ISO_IN1_PROT"),("IN2","ISO_IN2_PROT"),
-               ("DO1","ISO_DO1"),("DO2","ISO_DO2")]),
-
-    # ── F: 40-Pin Radxa Expansion Header ─────────────────────────────────────
-    # Updated per ECO #2026-03-F (RF migration), ECO #2026-03-H (I2C migration)
-    dict(ref="J3",  value="Radxa-40Pin", fp="Connector_PinHeader_2.54mm:PinHeader_2x20_P2.54mm_Vertical", lib="Connector_Generic", part="Conn_02x20_Odd_Even",
-         pins=[("1","3V3_SYS"),  ("2","5V_SYS"),
-               ("3","I2C1_SDA"), ("4","5V_SYS"),
-               ("5","I2C1_SCL"), ("6","GND"),
-               ("7","SCREEN_BL"),("8","STINGER_FLAG_2"),     # ECO-F: FLAGS→8/10; RF_MOSI→13
-               ("9","GND"),      ("10","STINGER_FLAG_3"),
-               ("11","STINGER_FLAG_1"),("12","I2S_BCLK"),
-               ("13","RF_MOSI"), ("14","GND"),               # ECO-F: RF_MOSI on safe GPIO
-               ("15","RF_MISO"), ("16","RF_CLK"),            # ECO-F: RF_MISO/CLK safe GPIOs
-               ("17","3V3_SYS"), ("18","RF_CS_N"),           # ECO-F: RF_CS_N→18
-               ("19","SPI0_MOSI"),("20","GND"),
-               ("21","SPI0_MISO"),("22","SCREEN_RST"),
-               ("23","SPI0_SCK"),("24","SCREEN_CS"),
-               ("25","GND"),     ("26","GND"),               # ECO-F: pin 26 NC/GND
-               ("27","GND"),     ("28","GND"),               # ECO-H: pins 27/28 NC/GND
-               ("29","STINGER_EN_1"),("30","GND"),
-               ("31","STINGER_EN_2"),("32","SCREEN_DC"),     # ECO-F: SCREEN_DC→32
-               ("33","STINGER_EN_3"),("34","GND"),
-               ("35","I2S_LRCLK"),("36","LED_DIN"),          # ECO-02-V2: LED_DIN (WS2812B)
-               ("37","JOY_SW"),  ("38","I2S_DATA_IN"),
-               ("39","GND"),     ("40","I2S_DATA_OUT")]),
-
-    # ── Auxiliary 4-pin GPIO header ───────────────────────────────────────────
-    # ECO #2026-02-V2: pin 1 ISO_DO1, pin 2 ISO_DO2, pin 3 IR_GPIO (CAN_INT_N removed)
-    dict(ref="J4",  value="AUX-GPIO",    fp="Connector_PinHeader_2.54mm:PinHeader_1x04_P2.54mm_Vertical", lib="Connector_Generic", part="Conn_01x04",
-         pins=[("1","ISO_DO1"),("2","ISO_DO2"),("3","IR_GPIO"),("4","GND")]),
-
-    # ── E: Joystick + ADS1015 ────────────────────────────────────────────────
-    dict(ref="J5",  value="Joystick",    fp="Connector_PinHeader_2.54mm:PinHeader_1x05_P2.54mm_Vertical", lib="Connector_Generic", part="Conn_01x05",
-         pins=[("1","GND"),("2","3V3_SYS"),("3","JOY_VRX"),("4","JOY_VRY"),("5","JOY_SW")]),
-    dict(ref="U12", value="ADS1015",     fp="Package_SO:VSSOP-10_3x3mm_P0.5mm",                       lib="Analog_ADC",       part="ADS1015IDGS",
-         pins=[("VDD","3V3_SYS"),("GND","GND"),("SDA","I2C1_SDA"),("SCL","I2C1_SCL"),
-               ("ADDR","GND"),("AIN0","JOY_VRX"),("AIN1","JOY_VRY"),
-               ("AIN2","GND"),("AIN3","GND"),("ALERT/RDY","ADC_ALERT")]),
-
-    # ── D: SPI Display connector ──────────────────────────────────────────────
-    dict(ref="J6",  value="ST7789V2",    fp="Connector_PinHeader_2.54mm:PinHeader_1x08_P2.54mm_Vertical", lib="Connector_Generic", part="Conn_01x08",
-         pins=[("1","3V3_SYS"),("2","GND"),("3","SPI0_SCK"),("4","SPI0_MOSI"),
-               ("5","SCREEN_CS"),("6","SCREEN_DC"),("7","SCREEN_RST"),("8","SCREEN_BL")]),
-]
+_ref_counter = {}
+def _next_ref(prefix: str) -> str:
+    """Auto-increment reference designator, skipping hardcoded refs."""
+    _ref_counter[prefix] = _ref_counter.get(prefix, 0) + 1
+    while f"{prefix}{_ref_counter[prefix]}" in _HARDCODED_REFS:
+        _ref_counter[prefix] += 1
+    return f"{prefix}{_ref_counter[prefix]}"
 
 
-# ── KiCad netlist S-expression builder ───────────────────────────────────────
+def _build_components() -> list[dict]:
+    """Build the complete component list matching full_system.py architecture."""
+    global _ref_counter
+    _ref_counter = {}
+    comps: list[dict] = []
+
+    def add(ref, value, fp, lib, part, pins):
+        comps.append(dict(ref=ref, value=value, fp=fp, lib=lib, part=part, pins=pins))
+
+    # ======================================================================
+    # A: IP5328P Power Management (full QFN-40+EPAD mapping per datasheet)
+    # Pin mapping from IP5328P V1.0 datasheet (Injoinic):
+    #   Pins 1-7:   USB data/CC (DPA2, CC1, CC2, DMC, DPC, DMB, DPB)
+    #   Pins 8,9,22,23: VSYS (system rail)
+    #   Pin 10:     NTC
+    #   Pins 11-13: L1/L2/L3 (LED or I2C1 SCK/SDA/WAKE)
+    #   Pins 14-18: LX (switch node, 5 pins)
+    #   Pin 19:     BST (bootstrap)
+    #   Pin 20:     LIGHT (charge indicator)
+    #   Pin 21:     RSET (battery resistance comp)
+    #   Pins 24,25: VSP/VSN (current sense)
+    #   Pin 26:     KEY (button)
+    #   Pin 27:     VREG (internal 3.1V LDO)
+    #   Pin 28:     BAT (battery)
+    #   Pin 29:     AGND (analog ground)
+    #   Pin 30:     VIN (micro-USB input detect)
+    #   Pin 31:     VING (VIN PMOS gate)
+    #   Pin 32:     VBUS (USB-C input detect)
+    #   Pin 33:     VBUSG (VBUS PMOS gate)
+    #   Pins 34-37: VOUT2/VOUT2G/VOUT1G/VOUT1 (USB-A output switches)
+    #   Pins 38-40: DMA1/DPA1/DMA2 (USB-A port data)
+    #   Pin 41:     EPAD (thermal ground)
+    # ======================================================================
+    add("U1", "IP5328P", FP_IP5328P, "Daemon_V0", "IP5328P",
+        [# USB-C charging input (Goobay bridge VBUS → IP5328P for charging)
+         ("CC1","GOOBAY_CC1"),("CC2","GOOBAY_CC2"),
+         ("VBUS","IP5328P_VBUS"),("VBUSG","IP5328P_VBUSG"),
+         # USB-C data pins — NC (hub handles USB data, not PMIC)
+         ("DMC","GND"),("DPC","GND"),
+         # Micro-USB input — unused (no micro-USB on Daemon)
+         ("VIN","VIN"),("VING","IP5328P_VING"),
+         ("DMB","GND"),("DPB","GND"),
+         # VSYS — boosted system rail (4 pins)
+         ("VSYS_1","IP5328P_VSYS"),("VSYS_2","IP5328P_VSYS"),
+         ("VSYS_3","IP5328P_VSYS"),("VSYS_4","IP5328P_VSYS"),
+         # Current sense: VSP on VSYS side, VSN on 5V_SYS side of shunt
+         ("VSP","IP5328P_VSYS"),("VSN","5V_SYS"),
+         # Battery
+         ("BAT","BAT_ISO"),("NTC","IP5328P_NTC"),
+         # Boost converter — LX (switch node, 5 pins) + bootstrap
+         ("LX_1","LX"),("LX_2","LX"),("LX_3","LX"),
+         ("LX_4","LX"),("LX_5","LX"),
+         ("BST","IP5328P_BST"),
+         # Control
+         ("KEY","PMIC_KEY"),
+         ("RSET","IP5328P_RSET"),
+         ("LIGHT","IP5328P_LIGHT"),
+         # I2C1 mode: L1=SCK, L2=SDA, L3=VSET/MCU_WAKE
+         ("L1","I2C1_PMIC_SCL"),("L2","I2C1_PMIC_SDA"),
+         ("L3","IP5328P_VSET"),
+         # Internal 3.1V LDO output
+         ("VREG","IP5328P_VREG"),
+         # USB-A output switches — unused (Daemon uses SY6280 switches)
+         # VOUT1/VOUT2 tied to VSYS (no load detect needed)
+         ("VOUT1","IP5328P_VSYS"),("VOUT2","IP5328P_VSYS"),
+         # VOUT1G/VOUT2G are active gate driver outputs — do NOT hard-short to GND.
+         # Float with external 100k pull-down (weak hold-off, driver can still swing).
+         ("VOUT1G","IP5328P_VOUT1G"),("VOUT2G","IP5328P_VOUT2G"),
+         # USB-A port data — unused, tie to GND to prevent floating
+         ("DPA1","GND"),("DMA1","GND"),("DPA2","GND"),("DMA2","GND"),
+         # Ground
+         ("AGND","GND"),("EPAD","GND")])
+
+    # Boost inductor: BAT_ISO ←→ LX (single-inductor buck-boost topology)
+    add("L1", "2u2", FP_INDUCTOR_5A, "Device", "L",
+        [("1","LX"),("2","BAT_ISO")])
+
+    # Bootstrap capacitor: BST to LX (100nF, high-side gate driver)
+    add(_next_ref("C"), "100n", FP_C0402, "Device", "C",
+        [("1","IP5328P_BST"),("2","LX")])
+
+    # Battery connector (JST-PH 2-pin)
+    add("BAT1", "Li-ion", FP_BAT_CONN, "Connector_Generic", "Conn_01x02",
+        [("1","BAT"),("2","GND")])
+
+    # DFT test points
+    add("TP1", "TP_VIN",  FP_TP_D15, "Connector", "TestPoint", [("1","VIN")])
+    add("TP2", "TP_BAT",  FP_TP_D15, "Connector", "TestPoint", [("1","BAT")])
+    add("TP3", "TP_LX",   FP_TP_D10, "Connector", "TestPoint", [("1","LX")])
+    add("TP4", "TP_VSYS", FP_TP_D15, "Connector", "TestPoint", [("1","IP5328P_VSYS")])
+
+    # Battery PTC resettable fuse (was 0Ω jumper — no short-circuit protection).
+    # 1210 PTC, 2A hold / 4A trip. Protects against cell short-circuit through
+    # the boost inductor or failed IP5328P. Bare Li-ion cells may lack internal protection.
+    add("J1", "PTC_2A", FP_JUMPER_1225, "Device", "Polyfuse",
+        [("1","BAT"),("2","BAT_ISO")])
+    # Current sense / isolation jumper (VSYS→5V_SYS) — 10mΩ shunt
+    # Also serves as VSP/VSN measurement path for IP5328P battery gauge
+    add("J2", "10m", FP_JUMPER_1225, "Device", "R",
+        [("1","IP5328P_VSYS"),("2","5V_SYS")])
+
+    # VIN decoupling and overvoltage protection
+    add(_next_ref("C"), "10u", FP_C0805, "Device", "C", [("1","VIN"),("2","GND")])
+    add(_next_ref("C"), "100n", FP_C0402, "Device", "C", [("1","VIN"),("2","GND")])
+    # VIN pull-down (100k) — keep VIN low when no external power on this path
+    add(_next_ref("R"), "100k", FP_R0402, "Device", "R", [("1","VIN"),("2","GND")])
+    # SMBJ5.0A TVS on VIN: clamps at 6.4V (below IP5328P VIN abs max ~6V).
+    # Protects against 12V/20V USB-PD chargers or dumb wall warts on any chargeable port.
+    # The SS34 Schottky diodes route external VBUS to VIN; without this clamp, >5.5V kills the PMIC.
+    add(_next_ref("D"), "SMBJ5.0A", FP_TVS_SMB, "Device", "D_TVS",
+        [("A","GND"),("K","VIN")])
+
+    # BAT decoupling
+    add(_next_ref("C"), "10u", FP_C0805, "Device", "C", [("1","BAT"),("2","GND")])
+    add(_next_ref("C"), "100n", FP_C0402, "Device", "C", [("1","BAT"),("2","GND")])
+
+    # VSYS decoupling (boost output rail, before 10mΩ sense to 5V_SYS)
+    add(_next_ref("C"), "22u", FP_C0805, "Device", "C", [("1","IP5328P_VSYS"),("2","GND")])
+    add(_next_ref("C"), "100n", FP_C0402, "Device", "C", [("1","IP5328P_VSYS"),("2","GND")])
+
+    # IP5328P_VBUS decoupling (USB-C charging input)
+    add(_next_ref("C"), "10u", FP_C0805, "Device", "C", [("1","IP5328P_VBUS"),("2","GND")])
+    add(_next_ref("C"), "100n", FP_C0402, "Device", "C", [("1","IP5328P_VBUS"),("2","GND")])
+
+    # VBUSG gate cap (100nF to GND)
+    add(_next_ref("C"), "100n", FP_C0402, "Device", "C", [("1","IP5328P_VBUSG"),("2","GND")])
+    # VING gate cap (100nF to GND — VIN path unused but prevent floating)
+    add(_next_ref("C"), "100n", FP_C0402, "Device", "C", [("1","IP5328P_VING"),("2","GND")])
+
+    # VREG internal 3.3V LDO decoupling (IP5328P datasheet: 4.7µF; 100nF insufficient for LDO stability)
+    add(_next_ref("C"), "4u7", FP_C0402, "Device", "C", [("1","IP5328P_VREG"),("2","GND")])
+
+    # RSET resistor (10k to GND — battery internal resistance compensation)
+    add(_next_ref("R"), "10k", FP_R0402, "Device", "R",
+        [("1","IP5328P_RSET"),("2","GND")])
+
+    # VSET: NC = 4.2V standard Li-ion charge target (IP5328P datasheet p18).
+    # 100k was undocumented; valid values are NC/120k/68k/10k only.
+    # L3/VSET left floating (no resistor) → 4.2V cutoff.
+
+    # LIGHT pull-down (100k to GND — charge indicator output, prevent float)
+    add(_next_ref("R"), "100k", FP_R0402, "Device", "R",
+        [("1","IP5328P_LIGHT"),("2","GND")])
+
+    # VOUT1G/VOUT2G: active gate driver outputs — 100k pull-down (weak hold-off,
+    # doesn't fight driver; no external FET connected so gate drives nothing)
+    add(_next_ref("R"), "100k", FP_R0402, "Device", "R",
+        [("1","IP5328P_VOUT1G"),("2","GND")])
+    add(_next_ref("R"), "100k", FP_R0402, "Device", "R",
+        [("1","IP5328P_VOUT2G"),("2","GND")])
+
+    # 100uF tantalum power tank on 5V_SYS (Case-D for low ESR at 4A transients)
+    # Specify 10V-rated tantalum (2x derating at 5V for reliability)
+    add(_next_ref("C"), "100u", FP_C_TMR_TANT, "Device", "C_Polarized",
+        [("1","5V_SYS"),("2","GND")])
+    # SMBJ5.0A TVS on 5V_SYS: last-resort clamp against SY6280 body diode backfeed.
+    # If a >5V source appears on any USB VBUS, the SY6280 body diode conducts to 5V_SYS.
+    # This TVS clamps 5V_SYS at 6.4V, protecting downstream ICs (AP2112K max 6V, SL2.1A max 6V).
+    add(_next_ref("D"), "SMBJ5.0A", FP_TVS_SMB, "Device", "D_TVS",
+        [("A","GND"),("K","5V_SYS")])
+
+    # NTC bypass resistor on IP5328P NTC pin
+    # IP5328P sources 20µA into NTC pin; 10kΩ→0.2V triggers false overtemperature (HT threshold 0.43V).
+    # 51kΩ: 20µA × 51kΩ = 1.02V → normal operating range; no real NTC fitted (no battery with NTC wire).
+    add(_next_ref("R"), "51k", FP_NTC_0402, "Device", "R",
+        [("1","IP5328P_NTC"),("2","GND")])
+
+    # I2C1 bus pull-up resistors (4.7k to 3V3_SYS)
+    # Required: I2C is open-drain — without pull-ups the bus floats
+    # Both PCF8574 (0x20) and IP5328P (0x75) share this bus
+    add(_next_ref("R"), "4.7k", FP_R0402, "Device", "R",
+        [("1","3V3_SYS"),("2","I2C1_SDA")])
+    add(_next_ref("R"), "4.7k", FP_R0402, "Device", "R",
+        [("1","3V3_SYS"),("2","I2C1_SCL")])
+
+    # I2C protection resistors (470 ohm series — isolate IP5328P segment)
+    add(_next_ref("R"), "470", FP_R0402, "Device", "R",
+        [("1","I2C1_SDA"),("2","I2C1_PMIC_SDA")])
+    add(_next_ref("R"), "470", FP_R0402, "Device", "R",
+        [("1","I2C1_SCL"),("2","I2C1_PMIC_SCL")])
+
+    # ======================================================================
+    # A2: AP2112K-3.3 Clean 3.3V Rail
+    # ======================================================================
+    # AP2112K SOT-23-5: Pin1=VIN, Pin2=GND, Pin3=EN, Pin4=NC, Pin5=VOUT
+    add("U2", "AP2112K-3.3", FP_LDO_SOT23_5, "Regulator_Linear", "AP2112K-3.3",
+        [("VIN","5V_SYS"),("VOUT","3V3_CLEAN"),("GND","GND"),("EN","5V_SYS"),("NC","NC")])
+    # LDO input decoupling
+    add(_next_ref("C"), "10u",  FP_C0805, "Device", "C", [("1","5V_SYS"),("2","GND")])
+    add(_next_ref("C"), "100n", FP_C0402, "Device", "C", [("1","5V_SYS"),("2","GND")])
+    # LDO output decoupling
+    add(_next_ref("C"), "10u",  FP_C0805, "Device", "C", [("1","3V3_CLEAN"),("2","GND")])
+    add(_next_ref("C"), "100n", FP_C0402, "Device", "C", [("1","3V3_CLEAN"),("2","GND")])
+
+    # ======================================================================
+    # A6: Advanced Power UX
+    # ======================================================================
+    # BSS84 PMOS wake-blocker
+    add(_next_ref("Q"), "BSS84", FP_PMOS_SOT23, "Device", "Q_PMOS_GSD",
+        [("G","5V_SYS"),("S","PMIC_KEY"),("D","NAV_CENTER")])
+    # 5V_SYS rail bleed resistor (10k): when PMIC shuts down, discharges 5V_SYS
+    # rail so BSS84 gate goes low → PMOS conducts → nav switch can wake PMIC
+    # ~2s discharge with typical rail capacitance
+    add(_next_ref("R"), "10k", FP_R0402, "Device", "R",
+        [("1","5V_SYS"),("2","GND")])
+    # 2N7002 NMOS software kill
+    add(_next_ref("Q"), "2N7002", FP_NFET_SOT23, "Device", "Q_NMOS_GDS",
+        [("G","PMIC_KILL"),("D","PMIC_KEY"),("S","GND")])
+    # PMIC_KILL pull-down (10k) — must reliably hold gate low during
+    # Radxa boot (~2s GPIO float). 100k was insufficient; 10k holds
+    # gate below Vth even with leakage.
+    add(_next_ref("R"), "10k", FP_R0402, "Device", "R",
+        [("1","PMIC_KILL"),("2","GND")])
+    # Physical power button
+    add(_next_ref("SW"), "SW_PWR", FP_SW_PUSH, "Switch", "SW_Push",
+        [("1","PMIC_KEY"),("2","GND")])
+    # J5 (PWR_MGMT header) removed — PMIC_KILL now routed via J3 pin 37
+    # Software reboot: `sudo reboot` (warm SoC reset, no PMIC needed)
+    # Software shutdown: drive J3.37 HIGH → Q3 pulls PMIC_KEY → IP5328P off
+
+    # ======================================================================
+    # B: Cascaded SL2.1A USB 2.0 Hubs
+    # ======================================================================
+
+    # --- Hub 1 (primary) ---
+    # SL2.1A SOP-16: VDD5=5V input; VDD33/VDD18=internal LDO outputs (bypass only).
+    # No RBIAS, RST_N, SUSP_N, OC_N, or CFG pins on this IC.
+    # Upstream pins are named DP/DM (not DP_U/DM_U).
+    add("U3", "SL2.1A", FP_SL2_1A, "Daemon_V0", "SL2.1A",
+        [("VDD5","5V_SYS"),("GND","GND"),
+         ("VDD33","HUB1_VDD33"),("VDD18","HUB1_VDD18"),
+         ("DP","USB_UP_DP"),("DM","USB_UP_DM"),
+         ("DP1","HUB1_DN_DP_1"),("DM1","HUB1_DN_DM_1"),
+         ("DP2","HUB1_DN_DP_2"),("DM2","HUB1_DN_DM_2"),
+         ("DP3","HUB1_DN_DP_3"),("DM3","HUB1_DN_DM_3"),
+         ("DP4","HUB1_DN_DP_4"),("DM4","HUB1_DN_DM_4"),
+         ("XIN","HUB1_XI"),("XOUT","HUB1_XO")])
+
+    # Hub 1 crystal (12MHz)
+    add(_next_ref("Y"), "12MHz", FP_XTAL_3225, "Device", "Crystal",
+        [("1","HUB1_XI"),("2","HUB1_XO"),("3","GND"),("4","GND")])
+    # Hub 1 crystal load caps
+    add(_next_ref("C"), "22p", FP_C0402, "Device", "C", [("1","HUB1_XI"),("2","GND")])
+    add(_next_ref("C"), "22p", FP_C0402, "Device", "C", [("1","HUB1_XO"),("2","GND")])
+    # Hub 1 VDD5 input decoupling
+    add(_next_ref("C"), "10u",  FP_C0805, "Device", "C", [("1","5V_SYS"),("2","GND")])
+    add(_next_ref("C"), "100n", FP_C0402, "Device", "C", [("1","5V_SYS"),("2","GND")])
+    # Hub 1 internal LDO output bypass (VDD33 and VDD18 are outputs of SL2.1A)
+    add(_next_ref("C"), "100n", FP_C0402, "Device", "C", [("1","HUB1_VDD33"),("2","GND")])
+    add(_next_ref("C"), "100n", FP_C0402, "Device", "C", [("1","HUB1_VDD18"),("2","GND")])
+
+    # --- Hub 2 (cascade; upstream = Hub 1 port 4) ---
+    # SL2.1A SOP-16: same minimal pin set as Hub 1.
+    add("U14", "SL2.1A", FP_SL2_1A, "Daemon_V0", "SL2.1A",
+        [("VDD5","5V_SYS"),("GND","GND"),
+         ("VDD33","HUB2_VDD33"),("VDD18","HUB2_VDD18"),
+         ("DP","HUB1_DN_DP_4"),("DM","HUB1_DN_DM_4"),
+         ("DP1","HUB2_DN_DP_1"),("DM1","HUB2_DN_DM_1"),
+         ("DP2","HUB2_DN_DP_2"),("DM2","HUB2_DN_DM_2"),
+         ("DP3","HUB2_DN_DP_3"),("DM3","HUB2_DN_DM_3"),
+         ("DP4","HUB2_DN_DP_4"),("DM4","HUB2_DN_DM_4"),
+         ("XIN","HUB2_XI"),("XOUT","HUB2_XO")])
+
+    # Hub 2 crystal (12MHz)
+    add(_next_ref("Y"), "12MHz", FP_XTAL_3225, "Device", "Crystal",
+        [("1","HUB2_XI"),("2","HUB2_XO"),("3","GND"),("4","GND")])
+    # Hub 2 crystal load caps
+    add(_next_ref("C"), "22p", FP_C0402, "Device", "C", [("1","HUB2_XI"),("2","GND")])
+    add(_next_ref("C"), "22p", FP_C0402, "Device", "C", [("1","HUB2_XO"),("2","GND")])
+    # Hub 2 VDD5 input decoupling
+    add(_next_ref("C"), "10u",  FP_C0805, "Device", "C", [("1","5V_SYS"),("2","GND")])
+    add(_next_ref("C"), "100n", FP_C0402, "Device", "C", [("1","5V_SYS"),("2","GND")])
+    # Hub 2 internal LDO output bypass
+    add(_next_ref("C"), "100n", FP_C0402, "Device", "C", [("1","HUB2_VDD33"),("2","GND")])
+    add(_next_ref("C"), "100n", FP_C0402, "Device", "C", [("1","HUB2_VDD18"),("2","GND")])
+    # Hub 2 unused port termination (port 4 only; port 3 now used for stinger 5)
+    add(_next_ref("R"), "15k", FP_R0402, "Device", "R", [("1","HUB2_DN_DP_4"),("2","GND")])
+    add(_next_ref("R"), "15k", FP_R0402, "Device", "R", [("1","HUB2_DN_DM_4"),("2","GND")])
 
 
-def _sexp(tag: str, *children, **attrs) -> str:
-    """Build a single-level S-expression string."""
-    parts = [f"({tag}"]
-    for k, v in attrs.items():
-        parts.append(f' ({k} "{v}")')
-    for child in children:
-        parts.append(f" {child}")
-    parts.append(")")
-    return "".join(parts)
+    # ======================================================================
+    # C: Stinger Ports (4x SY6280AAC + USBLC6-2SC6 ESD)
+    # ======================================================================
+    stinger_configs = [
+        # Port 1: USB-C plug → Radxa OTG (POWER KEY)
+        # DFP host: Rp pull-up (12k → 1.5A per USB-C Table 4-25) + higher ISET (3.3k → 2.06A)
+        # D+/D- → Hub1 port 1 downstream: Radxa appears as USB device to laptop via Goobay.
+        # Removing this plug from the Radxa cuts all power to the SBC — physical key.
+        # Stinger GPIOs (STINGER_EN_1-5 via J3) control power switches — no USB host needed.
+        ("U4",  1, FP_USB_C_PLUG,   "Connector", "USB_C_Plug_USB2.0",
+         "HUB1_DN_DP_1", "HUB1_DN_DM_1", True,  "Rp", "3.3k"),
+        ("U5",  2, FP_USB_A_FEMALE, "Connector", "USB_A",
+         "HUB1_DN_DP_2", "HUB1_DN_DM_2", False, None, "13k"),
+        ("U6",  3, FP_USB_A_FEMALE, "Connector", "USB_A",
+         "HUB1_DN_DP_3", "HUB1_DN_DM_3", False, None, "13k"),
+        ("U15", 4, FP_USB_A_MALE,   "Connector", "USB_A",
+         "HUB2_DN_DP_1", "HUB2_DN_DM_1", False, None, "13k"),
+    ]
+
+    for sy_ref, port, conn_fp, conn_lib, conn_part, dp_net, dm_net, has_cc, cc_mode, iset_r in stinger_configs:
+        vbus_net = f"USB_VBUS_{port}"
+        iset_net = f"STINGER_ISET_{port}"
+        en_net   = f"STINGER_EN_{port}"
+
+        # SY6280 power switch — Ilim = 6800/Rset
+        # Port 1: SY6280AAAC (2A rated) with 3.3k → 2.06A for Radxa 1.5A peak
+        # Ports 2-4: SY6280AAC (1A rated) with 13k → 0.52A (USB 2.0 500mA)
+        sy_part = "SY6280AAAC" if iset_r == "3.3k" else "SY6280AAC"
+        add(sy_ref, sy_part, FP_SY6280, "Daemon_V0", sy_part,
+            [("IN","5V_SYS"),("OUT",vbus_net),("EN",en_net),
+             ("GND","GND"),("ISET",iset_net)])
+
+        # USB connector
+        conn_ref = _next_ref("J")
+        conn_pins = [("VBUS",vbus_net),("D+",dp_net),("D-",dm_net),("GND","GND")]
+        if has_cc:
+            cc_net = f"STINGER{port}_CC"
+            conn_pins.append(("CC", cc_net))
+        add(conn_ref, conn_part, conn_fp, conn_lib, conn_part, conn_pins)
+
+        if has_cc:
+            cc_net = f"STINGER{port}_CC"
+            if cc_mode == "Rp":
+                # DFP host — Rp pull-up. Use 5V_SYS (not 3V3_SYS) so CC is valid
+                # during boot before Radxa provides 3.3V. At 5V: 12k gives 417µA ≈ 3A
+                # advertisement (USB-C Table 4-25). SY6280 limits actual current to 2A.
+                add(_next_ref("R"), "12k", FP_R0402, "Device", "R",
+                    [("1","5V_SYS"),("2",cc_net)])
+            else:
+                # UFP device — Rd 5.1k to GND
+                add(_next_ref("R"), "5.1k", FP_R0402, "Device", "R",
+                    [("1",cc_net),("2","GND")])
+            # ESD protection on CC line
+            add(_next_ref("D"), "ESD5Z3.3", "Diode_SMD:D_SOD-523", "Device", "D_TVS",
+                [("A","GND"),("K",cc_net)])
+
+        # USBLC6-2SC6 ESD protection (ST: pins 1,3=I/O1; pins 4,6=I/O2)
+        add(_next_ref("U"), "USBLC6-2SC6", FP_USBLC6, "Power_Protection", "USBLC6-2SC6",
+            [("1",dm_net),("2","GND"),("3",dm_net),
+             ("4",dp_net),("5",vbus_net),("6",dp_net)])
+
+        # EN pull-up: Port 1 uses 5V_SYS so Radxa can boot (3V3_SYS doesn't exist
+        # until Radxa is running — chicken-and-egg). Other ports use 3V3_SYS.
+        en_rail = "5V_SYS" if port == 1 else "3V3_SYS"
+        add(_next_ref("R"), "10k", FP_R0402, "Device", "R",
+            [("1",en_rail),("2",en_net)])
+
+        # Input decoupling (5V_SYS side)
+        add(_next_ref("C"), "10u",  FP_C0805, "Device", "C", [("1","5V_SYS"),("2","GND")])
+        add(_next_ref("C"), "100n", FP_C0402, "Device", "C", [("1","5V_SYS"),("2","GND")])
+        # Output decoupling (VBUS side)
+        add(_next_ref("C"), "10u",  FP_C0805, "Device", "C", [("1",vbus_net),("2","GND")])
+        add(_next_ref("C"), "100n", FP_C0402, "Device", "C", [("1",vbus_net),("2","GND")])
+
+        # ISET resistor (value per port)
+        add(_next_ref("R"), iset_r, FP_R0402, "Device", "R",
+            [("1",iset_net),("2","GND")])
+
+
+    # ======================================================================
+    # C2: Stinger Port 5 — Female USB-C Receptacle (Hub 2 port 3)
+    # ======================================================================
+    # SY6280AAC power switch (same current limit as other ports: 13k → 0.52A)
+    add("U22", "SY6280AAC", FP_SY6280, "Daemon_V0", "SY6280AAC",
+        [("IN","5V_SYS"),("OUT","USB_VBUS_5"),("EN","STINGER_EN_5"),
+         ("GND","GND"),("ISET","STINGER_ISET_5")])
+    # USB-C female receptacle — host port (provides 5V to connected devices)
+    add(_next_ref("J"), "USB_C_Receptacle", FP_USB_C_RCPT, "Connector", "USB_C_Receptacle_USB2.0",
+        [("VBUS","USB_VBUS_5"),("D+","HUB2_DN_DP_3"),("D-","HUB2_DN_DM_3"),
+         ("GND","GND"),("CC1","STINGER5_CC1"),("CC2","STINGER5_CC2")])
+    # CC1/CC2 pull-UPS (56k Rp to 3V3_SYS — DFP host advertising 5V/900mA)
+    # USB PD spec: Rp=56k→3.3V = 900mA source; Rd=5.1k→GND = sink/device. This is a HOST port.
+    add(_next_ref("R"), "56k", FP_R0402, "Device", "R", [("1","3V3_SYS"),("2","STINGER5_CC1")])
+    add(_next_ref("R"), "56k", FP_R0402, "Device", "R", [("1","3V3_SYS"),("2","STINGER5_CC2")])
+    # ESD protection on port 5 CC lines
+    add(_next_ref("D"), "ESD5Z3.3", "Diode_SMD:D_SOD-523", "Device", "D_TVS",
+        [("A","GND"),("K","STINGER5_CC1")])
+    add(_next_ref("D"), "ESD5Z3.3", "Diode_SMD:D_SOD-523", "Device", "D_TVS",
+        [("A","GND"),("K","STINGER5_CC2")])
+    # USBLC6-2SC6 ESD protection (ST: pins 1,3=I/O1; pins 4,6=I/O2)
+    add(_next_ref("U"), "USBLC6-2SC6", FP_USBLC6, "Power_Protection", "USBLC6-2SC6",
+        [("1","HUB2_DN_DM_3"),("2","GND"),("3","HUB2_DN_DM_3"),
+         ("4","HUB2_DN_DP_3"),("5","USB_VBUS_5"),("6","HUB2_DN_DP_3")])
+    # EN pull-up (10k to 3V3; Radxa GPIO can pull low to disable)
+    add(_next_ref("R"), "10k", FP_R0402, "Device", "R", [("1","3V3_SYS"),("2","STINGER_EN_5")])
+    # Input decoupling
+    add(_next_ref("C"), "10u",  FP_C0805, "Device", "C", [("1","5V_SYS"),("2","GND")])
+    add(_next_ref("C"), "100n", FP_C0402, "Device", "C", [("1","5V_SYS"),("2","GND")])
+    # Output (VBUS) decoupling
+    add(_next_ref("C"), "10u",  FP_C0805, "Device", "C", [("1","USB_VBUS_5"),("2","GND")])
+    add(_next_ref("C"), "100n", FP_C0402, "Device", "C", [("1","USB_VBUS_5"),("2","GND")])
+    # ISET resistor (13k → 0.52A)
+    add(_next_ref("R"), "13k", FP_R0402, "Device", "R", [("1","STINGER_ISET_5"),("2","GND")])
+
+    # NOTE: Port 5 CC has Rp 56k only (host/DFP). Rd 5.1k was removed because
+    # simultaneous Rp+Rd creates a 0.275V voltage divider, not valid DRP.
+    # Proper DRP requires a FUSB302 or similar toggling IC.
+    # Charging through port 5 still works: the SS34 Schottky diode routes external VBUS
+    # to IP5328P VIN regardless of CC state — it's a pure electrical path.
+
+    # ======================================================================
+    # C3: Battery Charging Path — Schottky diodes from chargeable ports to IP5328P VIN
+    # ======================================================================
+    # When external power appears on any chargeable port's VBUS, the BAT54 Schottky
+    # (Vf~0.3V) conducts to IP5328P VIN → charges battery. SY6280 independently
+    # controls whether the HAT provides power on that port (host mode).
+    # Chargeable ports: USB-C male (key, port 1), USB-A male (port 4), USB-C female (port 5)
+    # SS34: 3A 40V Schottky (SMA) — IP5328P can draw up to 2A on VIN for charging.
+    # BAT54 (200mA) was severely undersized. SS34 Vf~0.45V at 2A.
+    add(_next_ref("D"), "SS34", FP_SCHOTTKY_SMA, "Device", "D_Schottky",
+        [("A","USB_VBUS_1"),("K","VIN")])   # USB-C male (key) → can charge from computer
+    add(_next_ref("D"), "SS34", FP_SCHOTTKY_SMA, "Device", "D_Schottky",
+        [("A","USB_VBUS_4"),("K","VIN")])   # USB-A male → can charge from battery pack
+    add(_next_ref("D"), "SS34", FP_SCHOTTKY_SMA, "Device", "D_Schottky",
+        [("A","USB_VBUS_5"),("K","VIN")])   # USB-C female (main) → main charging port
+
+    # ======================================================================
+    # G: NE555 Heartbeat (SOIC-8)
+    # ======================================================================
+    add("U7", "NE555DR", FP_TIMER_NE555, "Timer", "NE555D",
+        [("VCC","5V_SYS"),("GND","GND"),("Q","HB_TMR_OUT"),
+         ("THR","HB_TMR_THR"),("TR","HB_TMR_THR"),
+         ("DIS","HB_TMR_NODE_A"),
+         ("CV","HB_TMR_CTRL"),("R","5V_SYS")])
+    # NE555 VCC local bypass cap (mandatory for timing stability)
+    add(_next_ref("C"), "100n", FP_C0402, "Device", "C", [("1","5V_SYS"),("2","GND")])
+
+    # PNP BJT dummy-load switch (BC857)
+    # NE555 Q=HIGH → PNP OFF (base high). Q=LOW → PNP ON (base pulled low via 10k).
+    add("Q1", "BC857", FP_BJT_SOT23, "Device", "Q_PNP_EBC",
+        [("E","5V_SYS"),("B","BJT_BASE"),("C","BJT_COLLECTOR")])
+
+    # NE555 astable timing:
+    #   t_high = 0.693*(R1+R2)*C  (PNP OFF, dummy load off)
+    #   t_low  = 0.693*R2*C       (PNP ON, dummy load draws current)
+    # R1=47k, R2=150Ω, C=100µF:
+    #   t_high = 0.693*47150*0.0001 = 3.27s
+    #   t_low  = 0.693*150*0.0001  = 10.4ms
+    # IP5328P no-load timeout is ~32s. At 3.3s period = ~10 pulses per timeout. Safe.
+    add(_next_ref("R"), "47k", FP_R0402, "Device", "R",
+        [("1","5V_SYS"),("2","HB_TMR_NODE_A")])
+    add(_next_ref("R"), "150", FP_R0402, "Device", "R",
+        [("1","HB_TMR_NODE_A"),("2","HB_TMR_THR")])
+    # Base resistor: 10k (NE555 Q → PNP base)
+    add(_next_ref("R"), "10k", FP_R0402, "Device", "R",
+        [("1","HB_TMR_OUT"),("2","BJT_BASE")])
+    # Dummy load: 82Ω → I=61mA per pulse (above IP5328P 50mA threshold).
+    # Peak P=0.3W but only 10ms every 3.3s (0.3% duty), so average P=0.9mW.
+    # Even 0805 (0.125W continuous) handles this easily — thermal pulse is ~6°C rise.
+    add(_next_ref("R"), "82", FP_R0805, "Device", "R",
+        [("1","BJT_COLLECTOR"),("2","GND")])
+
+    # Timing capacitor: 100uF tantalum
+    add(_next_ref("C"), "100u", FP_C_TMR_TANT, "Device", "C_Polarized",
+        [("1","HB_TMR_THR"),("2","GND")])
+    # Control voltage bypass: 10nF
+    add(_next_ref("C"), "10n", FP_C0402, "Device", "C",
+        [("1","HB_TMR_CTRL"),("2","GND")])
+
+    # ======================================================================
+    # H: CC1101 RF Transceiver
+    # ======================================================================
+    add("U8", "CC1101", FP_CC1101, "Daemon_V0", "CC1101",
+        [# Power: DVDD (digital) + AVDD (analog, 4 pins)
+         ("DVDD","3V3_CLEAN"),
+         ("AVDD_1","3V3_CLEAN"),("AVDD_2","3V3_CLEAN"),
+         ("AVDD_3","3V3_CLEAN"),("AVDD_4","3V3_CLEAN"),
+         # Digital core decoupling (internal 1.8V, bypass to GND)
+         ("DCOUPL","RF_DCOUPL"),
+         # Ground
+         ("GND_1","GND"),("GND_2","GND"),("DGUARD","GND"),("EPAD","GND"),
+         # SPI interface
+         ("SCLK","RF_CLK"),("SI","RF_MOSI"),("SO","RF_MISO"),
+         ("CSN","RF_CS_N"),
+         # General-purpose digital outputs (GDO1 = SO/pin 2; shares MISO, not separate)
+         ("GDO0","RF_GDO0"),("GDO2","RF_GDO2"),
+         # Crystal
+         ("XI","RF_XI"),("XO","RF_XO"),
+         # Bias resistor
+         ("RBIAS","RF_RBIAS"),
+         # RF differential output
+         ("RF_P","RF_ANT_P"),("RF_N","RF_ANT_N")])
+
+    # 27 MHz crystal (TI SWRS061I Table 21: 27 MHz recommended for 915 MHz / EN 300 220)
+    add(_next_ref("Y"), "27MHz", FP_XTAL_3225, "Device", "Crystal",
+        [("1","RF_XI"),("2","RF_XO"),("3","GND"),("4","GND")])
+    # Crystal load caps — 27 pF per TI reference design (Table 21: C81, C101 = 27 pF ±5% NP0)
+    add(_next_ref("C"), "27p", FP_C0402, "Device", "C", [("1","RF_XI"),("2","GND")])
+    add(_next_ref("C"), "27p", FP_C0402, "Device", "C", [("1","RF_XO"),("2","GND")])
+    # RBIAS 56k (CC1101 datasheet SWRS061I Table 27: 56.2k ±1%)
+    add(_next_ref("R"), "56k", FP_R0402, "Device", "R", [("1","RF_RBIAS"),("2","GND")])
+    # GDO pins — TI does not recommend external pull-downs; CC1101 GDOs have configurable
+    # internal pull-downs. Leave unloaded; firmware configures GDO0 as sync-word interrupt.
+    # RF_CS_N pull-up (10k to 3V3_CLEAN — keep CC1101 deselected during boot)
+    add(_next_ref("R"), "10k", FP_R0402, "Device", "R", [("1","3V3_CLEAN"),("2","RF_CS_N")])
+    # DCOUPL internal 1.8V decoupling (100nF to GND per datasheet)
+    add(_next_ref("C"), "100n", FP_C0402, "Device", "C", [("1","RF_DCOUPL"),("2","GND")])
+    # DVDD / bulk decoupling (100nF + 100nF)
+    add(_next_ref("C"), "100n", FP_C0402, "Device", "C", [("1","3V3_CLEAN"),("2","GND")])
+    add(_next_ref("C"), "100n", FP_C0402, "Device", "C", [("1","3V3_CLEAN"),("2","GND")])
+    # AVDD per-pin NP0 decoupling (TI SWRS061I §8.4: 100pF NP0 on each AVDD pin)
+    add(_next_ref("C"), "100p", FP_C0402, "Device", "C", [("1","3V3_CLEAN"),("2","GND")])  # AVDD_1
+    add(_next_ref("C"), "100p", FP_C0402, "Device", "C", [("1","3V3_CLEAN"),("2","GND")])  # AVDD_2
+    add(_next_ref("C"), "100p", FP_C0402, "Device", "C", [("1","3V3_CLEAN"),("2","GND")])  # AVDD_3
+    add(_next_ref("C"), "100p", FP_C0402, "Device", "C", [("1","3V3_CLEAN"),("2","GND")])  # AVDD_4
+
+    # TI DN017 / SWRA168A filterbalun (replaces single-ended pi-network)
+    # Stage 1: Differential LPF (diff → RF_BAL_P/N)
+    #   L121/L131: 12nH series on each diff line
+    #   C121/C131: 1.0pF/1.5pF shunt caps (asymmetric — compensates CC1101 RF_N internal load)
+    add(_next_ref("L"), "12n",  FP_L_0402, "Device", "L", [("1","RF_ANT_P"),("2","RF_BAL_P")])   # L121
+    add(_next_ref("L"), "12n",  FP_L_0402, "Device", "L", [("1","RF_ANT_N"),("2","RF_BAL_N")])   # L131
+    add(_next_ref("C"), "1p0",  FP_C0402, "Device", "C", [("1","RF_BAL_P"),("2","GND")])         # C121
+    add(_next_ref("C"), "1p5",  FP_C0402, "Device", "C", [("1","RF_BAL_N"),("2","GND")])         # C131
+    # Stage 2: Balun (diff → single-ended RF_SE_50)
+    #   L122/L132: 18nH, both diff lines merge to SE node
+    #   C122: 1.5pF series across L122 (resonance tuning)
+    add(_next_ref("L"), "18n",  FP_L_0402, "Device", "L", [("1","RF_BAL_P"),("2","RF_SE_50")])   # L122
+    add(_next_ref("L"), "18n",  FP_L_0402, "Device", "L", [("1","RF_BAL_N"),("2","RF_SE_50")])   # L132
+    add(_next_ref("C"), "1p5",  FP_C0402, "Device", "C", [("1","RF_BAL_P"),("2","RF_SE_50")])    # C122
+    # Stage 3: Single-ended T-filter + DC block + antenna matching
+    #   L123: 12nH series (RF_SE_50 → RF_FILT_MID)
+    #   C123: 3.3pF shunt (RF_FILT_MID → GND)
+    #   L124: 12nH series (RF_FILT_MID → RF_ANT_PRE)
+    #   C124: 100pF DC block (RF_ANT_PRE → RF_ANT)
+    #   C125: 12pF antenna matching shunt (RF_ANT → GND)
+    #   C126+L125: 47pF+3.3nH notch at 2nd harmonic ~1830 MHz (RF_ANT → RF_NOTCH → GND)
+    add(_next_ref("L"), "12n",  FP_L_0402, "Device", "L", [("1","RF_SE_50"),("2","RF_FILT_MID")])   # L123
+    add(_next_ref("C"), "3p3",  FP_C0402, "Device", "C", [("1","RF_FILT_MID"),("2","GND")])         # C123
+    add(_next_ref("L"), "12n",  FP_L_0402, "Device", "L", [("1","RF_FILT_MID"),("2","RF_ANT_PRE")]) # L124
+    add(_next_ref("C"), "100p", FP_C0402, "Device", "C", [("1","RF_ANT_PRE"),("2","RF_ANT")])       # C124 DC block
+    add(_next_ref("C"), "12p",  FP_C0402, "Device", "C", [("1","RF_ANT"),("2","GND")])              # C125 antenna shunt
+    add(_next_ref("C"), "47p",  FP_C0402, "Device", "C", [("1","RF_ANT"),("2","RF_NOTCH")])         # C126 notch
+    add(_next_ref("L"), "3n3",  FP_L_0402, "Device", "L", [("1","RF_NOTCH"),("2","GND")])           # L125 notch
+
+    add(_next_ref("ANT"), "0915AT43A0026", FP_CHIP_ANT, "Device", "Antenna_Chip",
+        [("1","RF_ANT"),("2","GND")])
+
+    # ======================================================================
+    # J: ISO1212 Industrial Isolation
+    # ======================================================================
+    # ISO1212 DBQ SSOP-16 pin map (TI SLLA588):
+    #   Pin 1:  VCC1    Pin 9:  FGND2
+    #   Pin 2:  OUT1    Pin 10: SENSE2
+    #   Pin 3:  OUT2    Pin 11: IN2
+    #   Pin 4:  EN      Pin 12: FGND1
+    #   Pin 5:  GND1    Pin 13: SENSE1
+    #   Pin 6:  SUB1    Pin 14: IN1
+    #   Pin 7:  NC      Pin 15: NC
+    #   Pin 8:  SUB2    Pin 16: NC
+    # All 16 physical pads declared for KiCad footprint mapping.
+    add("U11", "ISO1212", FP_ISO1212, "Daemon_V0", "ISO1212",
+        [("VCC1","3V3_SYS"),("GND1","GND"),
+         ("IN1","ISO_IN1"),("IN2","ISO_IN2"),
+         ("SENSE1","ISO_SENSE1"),("SENSE2","ISO_SENSE2"),
+         ("FGND1","ISO_GND1"),("FGND2","ISO_GND1"),
+         ("SUB1","ISO_SUB1"),("SUB2","ISO_SUB2"),
+         ("EN","3V3_SYS"),           # Enable tied high (always-on)
+         ("OUT1","ISO_DO1"),("OUT2","ISO_DO2"),
+         ("NC_7","NC"),("NC_15","NC"),("NC_16","NC")])
+
+    # WAGO field connector
+    add(_next_ref("J"), "WAGO-2060-404", FP_WAGO_4P, "Connector_Generic", "Conn_01x04",
+        [("1","ISO_GND1"),("2","ISO_VCC1"),("3","ISO_IN1_RAW"),("4","ISO_IN2_RAW")])
+
+    # Channel 1 protection chain
+    add(_next_ref("F"), "60R", FP_PTC_1206, "Device", "Polyfuse",
+        [("1","ISO_IN1_RAW"),("2","ISO_IN1_PTCA")])
+    # Input series R: at 24V, I=24/(60+562)=38.6mA, P=0.84W → 2512 (1W rated)
+    add(_next_ref("R"), "562", FP_R_2512, "Device", "R",
+        [("1","ISO_IN1_PTCA"),("2","ISO_IN1")])
+    add(_next_ref("C"), "10n", FP_C0402, "Device", "C",
+        [("1","ISO_IN1"),("2","ISO_GND1")])
+    # R_SENSE ch1 (controller-side threshold, low current → 0402 fine)
+    add(_next_ref("R"), "562", FP_R0402, "Device", "R",
+        [("1","ISO_SENSE1"),("2","ISO_GND1")])
+
+    # Channel 2 protection chain
+    add(_next_ref("F"), "60R", FP_PTC_1206, "Device", "Polyfuse",
+        [("1","ISO_IN2_RAW"),("2","ISO_IN2_PTCA")])
+    # Input series R ch2: same → 2512
+    add(_next_ref("R"), "562", FP_R_2512, "Device", "R",
+        [("1","ISO_IN2_PTCA"),("2","ISO_IN2")])
+    add(_next_ref("C"), "10n", FP_C0402, "Device", "C",
+        [("1","ISO_IN2"),("2","ISO_GND1")])
+    # R_SENSE ch2
+    add(_next_ref("R"), "562", FP_R0402, "Device", "R",
+        [("1","ISO_SENSE2"),("2","ISO_GND1")])
+
+    # VCAN26A2-03G dual TVS (SOT-323, 3 pins: A1=ch1, Cathode=GND, A2=ch2)
+    # Protects both ISO input channels in one device
+    add(_next_ref("D"), "VCAN26A2", FP_TVS_SC70, "Device", "D_TVS_x2_AAC",
+        [("A1","ISO_IN1_PTCA"),("K","ISO_GND1"),("A2","ISO_IN2_PTCA")])
+
+    # Field-side decoupling (referenced to ISO_GND1)
+    add(_next_ref("C"), "10u",  FP_C0805, "Device", "C", [("1","ISO_VCC1"),("2","ISO_GND1")])
+    add(_next_ref("C"), "100n", FP_C0402, "Device", "C", [("1","ISO_VCC1"),("2","ISO_GND1")])
+    # Logic-side decoupling
+    add(_next_ref("C"), "100n", FP_C0402, "Device", "C", [("1","3V3_SYS"),("2","GND")])
+
+    # ======================================================================
+    # A5: Goobay 74446 USB-C Bridge
+    # ======================================================================
+    # VBUS → IP5328P_VBUS for charging (NOT directly to 5V_SYS!)
+    # CC1/CC2 → IP5328P internal CC detection (DRP with Try.SRC)
+    # D+/D- → Hub 1 upstream: laptop/host PC connects here, sees Radxa+stingers+ETH as hub
+    add(_next_ref("J"), "Goobay-74446", FP_USB_C_RCPT, "Connector", "USB_C_Receptacle",
+        [("VBUS","IP5328P_VBUS"),("GND","GND"),
+         ("D+","USB_UP_DP"),("D-","USB_UP_DM"),
+         ("CC1","GOOBAY_CC1"),("CC2","GOOBAY_CC2")])
+    # CC1/CC2: IP5328P has internal 5.1K Rd pull-downs + Rp for DRP.
+    # No external CC resistors needed — IP5328P handles UFP/DFP detection.
+    # ESD protection on CC lines (direct path to IP5328P — vulnerable to ESD)
+    add(_next_ref("D"), "ESD5Z3.3", "Diode_SMD:D_SOD-523", "Device", "D_TVS",
+        [("A","GND"),("K","GOOBAY_CC1")])
+    add(_next_ref("D"), "ESD5Z3.3", "Diode_SMD:D_SOD-523", "Device", "D_TVS",
+        [("A","GND"),("K","GOOBAY_CC2")])
+
+    # Upstream USB ESD protection (Goobay bridge → Hub 1 upstream)
+    # VBUS clamp = IP5328P_VBUS (Goobay bridge cable VBUS)
+    # USBLC6-2SC6 ESD protection (ST: pins 1,3=I/O1; pins 4,6=I/O2)
+    add(_next_ref("U"), "USBLC6-2SC6", FP_USBLC6, "Power_Protection", "USBLC6-2SC6",
+        [("1","USB_UP_DM"),("2","GND"),("3","USB_UP_DM"),
+         ("4","USB_UP_DP"),("5","IP5328P_VBUS"),("6","USB_UP_DP")])
+
+    # ======================================================================
+    # B2: RTL8152B USB-Ethernet (QFN-24+EPAD per Realtek datasheet)
+    # Pin mapping: RTL8152B-VB-CG QFN-24 (4x4mm, 0.5mm pitch)
+    #   Pin 1:  AVDD33    Pin 13: DVDD33
+    #   Pin 2:  MDI0P     Pin 14: GPIO
+    #   Pin 3:  MDIN0     Pin 15: LEDCSB
+    #   Pin 4:  MDI1P     Pin 16: DVDD10
+    #   Pin 5:  MDIN1     Pin 17: SPISCK
+    #   Pin 6:  U2GND     Pin 18: XTALDET/SPISDI
+    #   Pin 7:  U2DM      Pin 19: LANWAKEB
+    #   Pin 8:  U2DP      Pin 20: SPISDO
+    #   Pin 9:  U2VDD10   Pin 21: CKXTAL1
+    #   Pin 10: AVDD33    Pin 22: CKXTAL2
+    #   Pin 11: VDD5      Pin 23: AVDD10
+    #   Pin 12: DVDD10_UPS Pin 24: RSET
+    #   Pin 25: EPAD (GND)
+    # ======================================================================
+    add("U9", "RTL8152B", FP_RTL8152B, "Daemon_V0", "RTL8152B",
+        [# Power (external supply)
+         ("AVDD33_1","3V3_CLEAN"),("AVDD33_2","3V3_CLEAN"),
+         ("DVDD33","3V3_CLEAN"),("VDD5","5V_SYS"),
+         # Power (internal LDO outputs — bypass caps only)
+         ("U2VDD10","RTL_U2VDD10"),("DVDD10_UPS","RTL_DVDD10_UPS"),
+         ("DVDD10","RTL_DVDD10"),("AVDD10","RTL_AVDD10"),
+         # Ground
+         ("U2GND","GND"),("EPAD","GND"),
+         # USB 2.0 interface
+         ("U2DP","HUB2_DN_DP_2"),("U2DM","HUB2_DN_DM_2"),
+         # Ethernet PHY (MDI pairs)
+         ("MDI0P","ETH_MDI_TXP"),("MDIN0","ETH_MDI_TXN"),
+         ("MDI1P","ETH_MDI_RXP"),("MDIN1","ETH_MDI_RXN"),
+         # Crystal
+         ("CKXTAL1","ETH_XI"),("CKXTAL2","ETH_XO"),
+         # Strapping pins
+         ("XTALDET","3V3_CLEAN"),  # High = external 25MHz crystal
+         # PSELF does not exist on QFN-24 VB variant (bus-powered only)
+         # Reference resistor
+         ("RSET","RTL_RSET"),
+         # LANWAKEB pulled high = wake-on-LAN disabled (no spurious wake events)
+         ("LANWAKEB","RTL_LANWAKEB"),
+         # Unused SPI EEPROM interface — tie inputs low to prevent floating
+         ("SPISCK","GND"),       # Pin 17: SPI clock input — must not float
+         ("SPISDO","GND"),       # Pin 20: SPI data output — safe to ground (tristate when CS inactive)
+         # Unused outputs — tie to GND (they'll be driven but no load)
+         ("GPIO","GND"),         # Pin 14: GPIO output
+         ("LEDCSB","GND"),       # Pin 15: LED control strobe output
+        ])
+
+    # RTL8152B RSET reference resistor (12.1k to GND per datasheet)
+    add(_next_ref("R"), "12.1k", FP_R0402, "Device", "R",
+        [("1","RTL_RSET"),("2","GND")])
+
+    # Internal LDO bypass caps (4.7µF + 100nF each; 100nF alone insufficient for LDO stability.
+    # Orange Pi R1 ref design uses 4.7µF C0603 on each 1.0V rail.)
+    add(_next_ref("C"), "4u7", FP_C0402, "Device", "C", [("1","RTL_U2VDD10"),("2","GND")])
+    add(_next_ref("C"), "100n", FP_C0402, "Device", "C", [("1","RTL_U2VDD10"),("2","GND")])
+    add(_next_ref("C"), "4u7", FP_C0402, "Device", "C", [("1","RTL_DVDD10_UPS"),("2","GND")])
+    add(_next_ref("C"), "100n", FP_C0402, "Device", "C", [("1","RTL_DVDD10_UPS"),("2","GND")])
+    add(_next_ref("C"), "4u7", FP_C0402, "Device", "C", [("1","RTL_DVDD10"),("2","GND")])
+    add(_next_ref("C"), "100n", FP_C0402, "Device", "C", [("1","RTL_DVDD10"),("2","GND")])
+    add(_next_ref("C"), "4u7", FP_C0402, "Device", "C", [("1","RTL_AVDD10"),("2","GND")])
+    add(_next_ref("C"), "100n", FP_C0402, "Device", "C", [("1","RTL_AVDD10"),("2","GND")])
+
+    # 25 MHz crystal
+    add(_next_ref("Y"), "25MHz", FP_XTAL_3225, "Device", "Crystal",
+        [("1","ETH_XI"),("2","ETH_XO"),("3","GND"),("4","GND")])
+    # Crystal load caps (RTL8152B Table 19: 27pF for 16-20pF load crystal; confirmed by Orange Pi R1)
+    add(_next_ref("C"), "27p", FP_C0402, "Device", "C", [("1","ETH_XI"),("2","GND")])
+    add(_next_ref("C"), "27p", FP_C0402, "Device", "C", [("1","ETH_XO"),("2","GND")])
+    # RTL8152B LANWAKEB pull-up (10k to 3V3_CLEAN — disables wake-on-LAN)
+    add(_next_ref("R"), "10k", FP_R0402, "Device", "R",
+        [("1","3V3_CLEAN"),("2","RTL_LANWAKEB")])
+
+    # HanRun HR911105A MagJack (pins 4,5=center tap 3V3, pin 8=GND, 9-12=LEDs NC, SH=shield)
+    add(_next_ref("J"), "HR911105A", FP_MAGJACK, "Connector", "RJ45_Hanrun_HR911105A_Horizontal",
+        [("1","ETH_MDI_TXP"),("2","ETH_MDI_TXN"),("3","ETH_MDI_RXP"),
+         ("4","3V3_CLEAN"),("5","3V3_CLEAN"),("6","ETH_MDI_RXN"),
+         ("8","GND"),("SH","GND")])
+
+    # RTL8152B external supply decoupling
+    add(_next_ref("C"), "100n", FP_C0402, "Device", "C", [("1","3V3_CLEAN"),("2","GND")])
+    add(_next_ref("C"), "100n", FP_C0402, "Device", "C", [("1","3V3_CLEAN"),("2","GND")])
+    add(_next_ref("C"), "10u",  FP_C0805, "Device", "C", [("1","3V3_CLEAN"),("2","GND")])
+    # VDD5 decoupling
+    add(_next_ref("C"), "100n", FP_C0402, "Device", "C", [("1","5V_SYS"),("2","GND")])
+
+    # ======================================================================
+    # D: SPI Display (8-pin connector)
+    # ======================================================================
+    add("J6", "ST7789V2", FP_SCREEN_CONN, "Connector_Generic", "Conn_01x08",
+        [("1","GND"),("2","3V3_SYS"),("3","SPI3_CLK"),("4","SPI3_MOSI"),
+         ("5","SCREEN_RST"),("6","SCREEN_DC"),("7","SPI3_CS"),("8","SCREEN_BL")])
+    # Display bypass cap
+    add(_next_ref("C"), "100n", FP_C0402, "Device", "C", [("1","3V3_SYS"),("2","GND")])
+    # SPI3_CS pull-up (10k to 3V3_SYS — keep display deselected during boot)
+    add(_next_ref("R"), "10k", FP_R0402, "Device", "R", [("1","3V3_SYS"),("2","SPI3_CS")])
+
+    # ======================================================================
+    # E: Alps SKRHABE010 5-Way Nav Switch (ECO #2026-03-NAV)
+    # ======================================================================
+    add(_next_ref("SW"), "SKRHABE010", FP_NAV_SW, "Daemon_V0", "SKRHABE010",
+        [("A","NAV_UP"),("B","NAV_LEFT"),("C","NAV_DOWN"),
+         ("D","NAV_RIGHT"),("Center","NAV_CENTER"),("Common","GND")])
+
+    # Nav switch pull-up resistors (10k to 3V3_SYS, one per direction + center)
+    # These pull to 3V3_SYS; PCF8574 reads them via I2C (see E1 section below)
+    add(_next_ref("R"), "10k", FP_R0402, "Device", "R", [("1","3V3_SYS"),("2","NAV_UP")])
+    add(_next_ref("R"), "10k", FP_R0402, "Device", "R", [("1","3V3_SYS"),("2","NAV_DOWN")])
+    add(_next_ref("R"), "10k", FP_R0402, "Device", "R", [("1","3V3_SYS"),("2","NAV_LEFT")])
+    add(_next_ref("R"), "10k", FP_R0402, "Device", "R", [("1","3V3_SYS"),("2","NAV_RIGHT")])
+    add(_next_ref("R"), "10k", FP_R0402, "Device", "R", [("1","3V3_SYS"),("2","NAV_CENTER")])
+
+    # ======================================================================
+    # E1: PCF8574 I2C GPIO Expander (nav switch interface)
+    # ======================================================================
+    # Moves nav switch off Radxa GPIOs → frees pins 8,10,11,33 for AUX_GPIO.
+    # NAV_CENTER also on BSS84 drain for hardware wake-up (works when PCF8574
+    # is unpowered during shutdown — pins go high-Z, switch still pulls
+    # PMIC_KEY to GND through conducting BSS84).
+    # Address 0x20 (A0=A1=A2=GND), shares I2C1 bus with IP5328P (0x75).
+    add("U21", "PCF8574", FP_PCF8574, "Interface_Expansion", "PCF8574",
+        [("VCC","3V3_SYS"),("VSS","GND"),
+         ("SDA","I2C1_SDA"),("SCL","I2C1_SCL"),
+         ("A0","GND"),("A1","GND"),("A2","GND"),
+         ("P0","NAV_UP"),("P1","NAV_DOWN"),("P2","NAV_LEFT"),("P3","NAV_RIGHT"),
+         ("P4","NAV_CENTER"),
+         ("P5","STINGER_EN_5"),  # GPIO-controlled USB-C female port 5 enable
+         ("P6","RF_GDO0"),      # CC1101 interrupt (sync word / RX ready)
+         ("P7","GND"),          # spare
+         ("INT","PCF8574_INT")])
+    # PCF8574 bypass cap
+    add(_next_ref("C"), "100n", FP_C0402, "Device", "C", [("1","3V3_SYS"),("2","GND")])
+    # PCF8574 INT pull-up (10k to 3V3_SYS) — open-drain; keeps INT high (inactive) when no nav
+    # event. Wire PCF8574_INT to a Radxa GPIO to enable interrupt-driven nav detection.
+    add(_next_ref("R"), "10k", FP_R0402, "Device", "R", [("1","3V3_SYS"),("2","PCF8574_INT")])
+
+    # ======================================================================
+    # E2: WS2812B x4 LEDs
+    # ======================================================================
+    # 74AHCT1G125 single-gate 3.3V→5V level shifter for WS2812B data line.
+    # WS2812B VIH_min = 0.65×VDD = 3.25V at 5V supply; Radxa GPIO max = 3.3V → 50mV margin.
+    # 74AHCT1G125: VCC=5V, VIH(in)=2.0V (HCT threshold) → safely driven by 3.3V GPIO.
+    add(_next_ref("U"), "74AHCT1G125", FP_LDO_SOT23_5, "Logic_Buffer", "74AHCT1G125",
+        [("A","MCU_LED_DIN"),("nOE","GND"),("Y","LED_DIN"),
+         ("VCC","5V_SYS"),("GND","GND")])
+    add(_next_ref("C"), "100n", FP_C0402, "Device", "C", [("1","5V_SYS"),("2","GND")])
+
+    for i in range(1, 5):
+        din = "LED_DIN" if i == 1 else f"WS2812B_DOUT_{i-1}"
+        dout_pins = []
+        if i < 4:
+            dout_pins = [("DOUT", f"WS2812B_DOUT_{i}")]
+        add(_next_ref("LED"), "WS2812B-2020", FP_WS2812B, "LED", "WS2812B-2020",
+            [("VDD","5V_SYS"),("VSS","GND"),("DIN",din)] + dout_pins)
+        add(_next_ref("C"), "100n", FP_C0402, "Device", "C", [("1","5V_SYS"),("2","GND")])
+
+    # ======================================================================
+    # E3: IR Blaster
+    # ======================================================================
+    add(_next_ref("LED"), "VSMB294008", FP_IR_LED, "Device", "LED",
+        [("A","IR_LED_P"),("K","IR_LED_N")])
+    add(_next_ref("Q"), "AO3400A", FP_NFET_SOT23, "Device", "Q_NMOS_GDS",
+        [("G","IR_GPIO"),("D","IR_LED_N"),("S","GND")])
+    # IR LED current limit: need to stay within resistor rating for worst-case DC stuck-on.
+    # 100Ω → I=38mA, P=0.14W → use 1206 (0.25W, ample margin). 38mA is still good for IR blast.
+    add(_next_ref("R"), "100", "Resistor_SMD:R_1206_3216Metric", "Device", "R",
+        [("1","5V_SYS"),("2","IR_LED_P")])
+    # IR_GPIO pull-down (100k) — prevent spurious IR flash during Radxa boot
+    add(_next_ref("R"), "100k", FP_R0402, "Device", "R",
+        [("1","IR_GPIO"),("2","GND")])
+
+    # ======================================================================
+    # F: 40-Pin Radxa Expansion Header (PinSocket)
+    # ======================================================================
+    add("J3", "Radxa-40Pin", FP_RADXA_HDR, "Connector_Generic", "Conn_02x20_Odd_Even",
+        [("1","3V3_SYS"),        ("2","RADXA_GPIO_5V"),
+         ("3","I2C1_SDA"),       ("4","RADXA_GPIO_5V"),
+         ("5","I2C1_SCL"),  ("6","GND"),
+         ("7","SCREEN_BL"), ("8","AUX_GPIO_1"),   # was NAV_UP (→ PCF8574)
+         ("9","GND"),       ("10","AUX_GPIO_2"),   # was NAV_DOWN (→ PCF8574)
+         ("11","AUX_GPIO_3"),("12","RF_MOSI"),      # GPIO3_A2/I2S3_MCLK — soft SPI (not BCLK!)
+         ("13","I2S_BCLK"),  ("14","GND"),         # GPIO3_A3/I2S3_SCLK_M0 — HW I2S bit clock
+         ("15","RF_MISO"),  ("16","RF_CLK"),
+         ("17","3V3_SYS"),  ("18","RF_CS_N"),
+         ("19","SPI3_MOSI"),("20","GND"),
+         ("21","STINGER_EN_4"),("22","SCREEN_RST"),
+         ("23","SPI3_CLK"), ("24","SPI3_CS"),
+         ("25","GND"),      ("26","GND"),              # Pin 26 = NC on Radxa Zero 3W
+         ("27","PCF8574_INT"),("28","GND"),  # Pin 27=I2C2_SDA repurposed as PCF8574 IRQ
+         ("29","STINGER_EN_1"),("30","GND"),
+         ("31","STINGER_EN_2"),("32","SCREEN_DC"),
+         ("33","STINGER_EN_3"),("34","GND"),          # was AUX_GPIO_4; sacrificed for EN_3
+         ("35","I2S_LRCLK"),("36","MCU_LED_DIN"),  # 3.3V → level shifter input
+         ("37","PMIC_KILL"),("38","I2S_DATA_IN"),   # was NAV_CENTER (→ PCF8574+BSS84)
+         ("39","GND"),      ("40","I2S_DATA_OUT")])
+
+    # ======================================================================
+    # Auxiliary GPIO header (2x4 female socket for breadboard jumpers)
+    # ======================================================================
+    add("J4", "AUX-GPIO", FP_CONN_2X04, "Connector_Generic", "Conn_02x04_Odd_Even",
+        [("1","ISO_DO1"),("2","ISO_DO2"),
+         ("3","IR_GPIO"),("4","AUX_GPIO_1"),
+         ("5","AUX_GPIO_2"),("6","AUX_GPIO_3"),
+         ("7","GND"),("8","GND")])  # AUX_GPIO_4 sacrificed for STINGER_EN_3
+    # ISO1212 OUT1/OUT2 are push-pull (not open-drain) — no pull-ups needed.
+
+    # ======================================================================
+    # 3V3_SYS bulk decoupling at header (sourced from Radxa pin 1/17, no on-board regulator)
+    add(_next_ref("C"), "10u",  FP_C0805, "Device", "C", [("1","3V3_SYS"),("2","GND")])
+    add(_next_ref("C"), "100n", FP_C0402, "Device", "C", [("1","3V3_SYS"),("2","GND")])
+
+    # K: Audio Subsystem (MAX98357A + INMP441 + TRRS + Speaker)
+    # ECO #2026-03-MERGE: merged from audio_subsystem.py into unified netlist
+    # ======================================================================
+    # 5V_AUDIO supply filter: BLM18AG601SN1 rated 300mA but MAX98357A draws 640mA avg.
+    # Replace with 1Ω 0805 series resistor — low enough to not drop significant voltage
+    # (1Ω × 0.64A = 0.64V drop... too much). Use 0.22Ω 1206 instead (0.14V drop, P=0.09W).
+    # Actually: just use a 1206 ferrite rated >1A (BLM31PG601SN1L = 1.5A, 0.08Ω)
+    add(_next_ref("FB"), "BLM31PG601SN1L", "Inductor_SMD:L_1206_3216Metric", "Device", "FerriteBead",
+        [("1","5V_SYS"),("2","5V_AUDIO")])
+    # 5V_AUDIO bulk decoupling (10u, 0805)
+    add(_next_ref("C"), "10u", FP_C0805, "Device", "C", [("1","5V_AUDIO"),("2","GND")])
+
+    # MAX98357A QFN-16+EPAD pin map (all physical pads declared for KiCad):
+    #   1:VDD  2:GND  3:~SD  4:GAIN  5:GND  6:DIN  7:BCLK  8:LRCLK
+    #   9:GND 10:GND 11:GND 12:GND 13:OUTN 14:GND 15:OUTP 16:GND  EPAD:GND
+    add("U10", "MAX98357A", FP_QFN16, "Audio", "MAX98357A",
+        [("VDD","5V_AUDIO"),
+         ("GND_2","GND"),("GND_5","GND"),("GND_9","GND"),("GND_10","GND"),
+         ("GND_11","GND"),("GND_12","GND"),("GND_14","GND"),("GND_16","GND"),
+         ("EPAD","GND"),
+         ("BCLK","I2S_BCLK"),("LRCLK","I2S_LRCLK"),("DIN","I2S_DATA_OUT"),
+         ("OUTP","AMP_OUT_P"),("OUTN","AMP_OUT_N"),
+         ("~{SD_MODE}","AMP_SD"),
+         ("GAIN_SLOT","GND"),  # GND = +12dB gain, left channel
+         ("EPAD","GND")])
+
+    # Dual INMP441 microphones — bottom-port (sound hole through PCB)
+    # Both powered from MIC_VDD (switched via mic LED → always-on together)
+    # Mic 1: L/R=GND (left channel), Mic 2: L/R=VDD (right channel)
+    # Radxa mixes both channels in software for improved SNR
+    add("U13", "INMP441", FP_INMP441, "Daemon_V0", "INMP441",
+        [("VDD","MIC_VDD"),("GND","GND"),
+         ("SCK","I2S_BCLK"),("WS","I2S_LRCLK"),("SD","I2S_DATA_IN"),
+         ("L/R","GND")])  # Left channel
+
+    add(_next_ref("U"), "INMP441", FP_INMP441, "Daemon_V0", "INMP441",
+        [("VDD","MIC_VDD"),("GND","GND"),
+         ("SCK","I2S_BCLK"),("WS","I2S_LRCLK"),("SD","I2S_DATA_IN"),
+         ("L/R","MIC_VDD")])
+
+    # I2S_DATA_IN bus discharge resistor (INMP441 datasheet: 100k to GND required
+    # when multiple mics share SD line — prevents floating during tristate intervals)
+    add(_next_ref("R"), "100k", FP_R0402, "Device", "R",
+        [("1","I2S_DATA_IN"),("2","GND")])
+
+    # TRRS jack — NC switch topology:
+    #   TipSwitch (NC input)   ← AMP_OUT_P_FILT (from ferrite bead)
+    #   Tip (wiper/output)     → SPK_P (to speaker connector)
+    #   Ring1Switch (NC input) ← AMP_OUT_N_FILT
+    #   Ring1 (wiper/output)   → SPK_N (to speaker connector)
+    # When plug absent: NC closed → amp drives speaker.
+    # When plug inserted: NC opens → speaker disconnected.
+    # SJ2-2531X-SMT TRRS jack with NC switches
+    # KiCad symbol pin names: Sleeve, Detect, Tip, TipSwitch, Ring1, Ring1Switch
+    # NC switches: closed when no plug → amp drives speaker; open when inserted
+    add(_next_ref("J"), "SJ2-2531X", FP_TRRS, "Connector", "AudioJack4_Switch",
+        [("Sleeve","GND"),("Detect","TRRS_DETECT_RAW"),
+         ("Tip","SPK_P"),("TipSwitch","AMP_OUT_P_FILT"),
+         ("Ring1","SPK_N"),("Ring1Switch","AMP_OUT_N_FILT")])
+
+    # Speaker connector (JST-SH 2-pin) — wired to wiper side of NC switch
+    add(_next_ref("J"), "Speaker", FP_JST_SH2, "Connector_Generic", "Conn_01x02",
+        [("1","SPK_P"),("2","SPK_N")])
+
+    # SD_MODE pull-up to 3V3_SYS. MAX98357A has internal 100k pull-down on SD_MODE.
+    # SJ2-2531X detect pin: NC to Sleeve(GND) when no plug; floats when plug inserted.
+    # With 47k pull-up, 10k detect-to-SD, internal 100k pull-down:
+    #   No plug (speaker): V = 3.3 × (10k||100k)/(47k+10k||100k) = 0.535V → left channel ✓
+    #   Plug in (headphones): V = 3.3 × 100k/(47k+100k) = 2.24V → right channel
+    # Both states: amp ON. NC switches mechanically disconnect speaker when plug inserted.
+    # Power waste with headphones is ~5mA — acceptable for V0.
+    add(_next_ref("R"), "47k", FP_R0402, "Device", "R",
+        [("1","3V3_SYS"),("2","AMP_SD")])
+
+    # TVS diodes on BTL outputs
+    add(_next_ref("U"), "ESD9B5.0ST5G", FP_TVS_SC70, "Daemon_V0", "ESD9B5.0ST5G",
+        [("A","AMP_OUT_P"),("K","GND")])
+    add(_next_ref("U"), "ESD9B5.0ST5G", FP_TVS_SC70, "Daemon_V0", "ESD9B5.0ST5G",
+        [("A","AMP_OUT_N"),("K","GND")])
+
+    # BTL output series resistors (replaces ferrite beads — MAX98357A is filterless Class D;
+    # speaker coil IS the filter. Ferrites create resonance and exceed 500mA rating at 3.2W/4Ω peak.
+    # 10Ω 0805 ≥0.5W: limits peak current, EMI-safe, no resonance. Ref: MAX98357A datasheet §9.2)
+    add(_next_ref("R"), "10R", FP_R0805, "Device", "R",
+        [("1","AMP_OUT_P"),("2","AMP_OUT_P_FILT")])
+    add(_next_ref("R"), "10R", FP_R0805, "Device", "R",
+        [("1","AMP_OUT_N"),("2","AMP_OUT_N_FILT")])
+    # Post-bead shunt caps (1nF)
+    add(_next_ref("C"), "1n", FP_C0402, "Device", "C", [("1","AMP_OUT_P_FILT"),("2","GND")])
+    add(_next_ref("C"), "1n", FP_C0402, "Device", "C", [("1","AMP_OUT_N_FILT"),("2","GND")])
+
+    # TRRS detect → AMP_SD: 10k resistor + 100nF RC debounce
+    # SJ2-2531X: Detect NC to Sleeve(GND). No plug = detect LOW. Plug inserted = detect FLOATS.
+    # This pulls AMP_SD lower when no plug (speaker connected), raising it when headphones in.
+    # Not a shutdown mechanism — just shifts SD_MODE voltage for channel selection.
+    add(_next_ref("R"), "10k", FP_R0402, "Device", "R",
+        [("1","TRRS_DETECT_RAW"),("2","AMP_SD")])
+    # AMP_SD bypass cap (100nF to GND — RC debounce with the 10k above)
+    add(_next_ref("C"), "100n", FP_C0402, "Device", "C",
+        [("1","AMP_SD"),("2","GND")])
+
+    # Amplifier decoupling
+    add(_next_ref("C"), "100n", FP_C0402, "Device", "C", [("1","5V_AUDIO"),("2","GND")])
+    add(_next_ref("C"), "100n", FP_C0402, "Device", "C", [("1","5V_AUDIO"),("2","GND")])
+    # Microphone decoupling (one per mic, on MIC_VDD rail)
+    add(_next_ref("C"), "100n", FP_C0402, "Device", "C", [("1","MIC_VDD"),("2","GND")])
+    add(_next_ref("C"), "100n", FP_C0402, "Device", "C", [("1","MIC_VDD"),("2","GND")])
+
+    # Mic power rail: 3V3_SYS → current-limit resistor → red LED → MIC_VDD
+    # LED is in the mic power path: glows whenever mics are powered (hardware indicator)
+    # INMP441 draws ~1.4mA each (2.8mA total), LED Vf ~1.8V → headroom fine at 3.3V
+    # Series resistor sized for LED brightness: (3.3V - 1.8V - 1.8V_mic) ≈ too tight
+    # Actually: LED in shunt, not series — use a low-side indicator instead:
+    # 3V3_SYS → BLM18AG601SN1 ferrite bead → MIC_VDD (EMI-filtered clean mic power)
+    # MIC_VDD → 1k → LED → GND (shunt indicator, ~1.5mA)
+    add(_next_ref("FB"), "BLM18AG601SN1", FP_FERRITE_0603, "Device", "FerriteBead",
+        [("1","3V3_SYS"),("2","MIC_VDD")])
+    add(_next_ref("R"), "1k", FP_R0402, "Device", "R",
+        [("1","MIC_VDD"),("2","MIC_LED_A")])
+    add(_next_ref("LED"), "RED_0402", FP_LED_0402, "Device", "LED",
+        [("A","MIC_LED_A"),("K","GND")])
+    add(_next_ref("LED"), "RED_0402", FP_LED_0402, "Device", "LED",
+        [("A","MIC_LED_A"),("K","GND")])
+
+    # Power indicator LED (green 0402): 3V3_SYS → 1k → LED → GND
+    # Always on when system has power — hardwired, no GPIO control
+    add(_next_ref("R"), "1k", FP_R0402, "Device", "R",
+        [("1","3V3_SYS"),("2","PWR_LED_A")])
+    add(_next_ref("LED"), "GREEN_0402", FP_LED_0402, "Device", "LED",
+        [("A","PWR_LED_A"),("K","GND")])
+
+    return comps
+
+
+# Add BJT intermediate nets (not in original NETS list)
+NETS.extend(["BJT_BASE", "BJT_COLLECTOR", "NC"])
+
+# Build components
+COMPONENTS = _build_components()
+
+
+# -- KiCad netlist S-expression builder ---------------------------------------
 
 
 def _build_netlist() -> str:
-    """
-    Render the full KiCad netlist S-expression.
-
-    Format follows KiCad 5 export (version "E").  KiCad 6/7 can import
-    this format directly.
-    """
+    """Render the full KiCad netlist S-expression."""
     now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
     lines: list[str] = []
 
     lines.append('(export (version "E")')
     lines.append("  (design")
-    lines.append(f'    (source "netlist/full_system.py")')
+    lines.append('    (source "netlist/full_system.py")')
     lines.append(f'    (date "{now}")')
-    lines.append('    (tool "Daemon V0 Phase 4 — gen_golden_netlist.py")')
+    lines.append('    (tool "Daemon V0 Phase 4 -- gen_golden_netlist.py")')
     lines.append("  )")
 
-    # ── components section ────────────────────────────────────────────────────
+    # -- components section --
     lines.append("  (components")
     for c in COMPONENTS:
         lines.append(f'    (comp (ref "{c["ref"]}")')
@@ -259,16 +1214,30 @@ def _build_netlist() -> str:
         lines.append("    )")
     lines.append("  )")
 
-    # ── nets section ─────────────────────────────────────────────────────────
-    # Build reverse map: net_name → [(ref, pin_name), ...]
+    # -- nets section --
+    # Merge net aliases (connected in the real design)
+    net_aliases: dict[str, str] = {
+        # HUB1/HUB2 SUSP_N and OC_N removed — SL2.1A SOP-16 has no such pins
+    }
+
+    def resolve_net(name: str) -> str:
+        while name in net_aliases:
+            name = net_aliases[name]
+        return name
+
+    # Build reverse map: net_name -> [(ref, pin_name), ...]
     net_map: dict[str, list[tuple[str, str]]] = {}
     for net in NETS:
-        net_map[net] = []
+        resolved = resolve_net(net)
+        if resolved not in net_map:
+            net_map[resolved] = []
+
     for c in COMPONENTS:
         for pin_name, net_name in c["pins"]:
-            if net_name not in net_map:
-                net_map[net_name] = []
-            net_map[net_name].append((c["ref"], pin_name))
+            resolved = resolve_net(net_name)
+            if resolved not in net_map:
+                net_map[resolved] = []
+            net_map[resolved].append((c["ref"], pin_name))
 
     lines.append("  (nets")
     for code, (net_name, nodes) in enumerate(net_map.items(), start=1):
@@ -285,15 +1254,10 @@ def _build_netlist() -> str:
 def generate_golden_netlist() -> None:
     content = _build_netlist()
     OUTPUT_FILE.write_text(content, encoding="utf-8")
-    first_lines = content.splitlines()[:20]
-    print(f"Golden netlist written → {OUTPUT_FILE}")
+    print(f"Golden netlist written -> {OUTPUT_FILE}")
     print(f"  Components : {len(COMPONENTS)}")
-    print(f"  Nets       : {len(NETS)}")
+    print(f"  Nets       : {len(set(NETS))}")
     print()
-    print("── First 20 lines ──────────────────────────────────────")
-    for line in first_lines:
-        print(line)
-    print("────────────────────────────────────────────────────────")
 
 
 if __name__ == "__main__":
