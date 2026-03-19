@@ -85,6 +85,12 @@ FP_SCHOTTKY_SMA    = "Diode_SMD:D_SMA"  # SS34: 3A 40V Schottky, SMA package
 FP_R_2512          = "Resistor_SMD:R_2512_6332Metric"  # 1W rated
 FP_PCF8574     = "Package_SO:SOIC-16_3.9x9.9mm_P1.27mm"
 FP_VSSOP10     = "Package_SO:VSSOP-10_3x3mm_P0.5mm"
+# New V0 additions
+FP_NAU88C22    = "Package_DFN_QFN:QFN-32-1EP_5x5mm_P0.5mm_EP3.45x3.45mm"
+FP_ADS1115     = "Package_SO:MSOP-10_3x3mm_P0.5mm"
+FP_SP3485      = "Package_SO:SOIC-8_3.9x4.9mm_P1.27mm"
+FP_TSOP38238   = "OptoDevice:Vishay_MINICAST-3Pin"
+FP_CONN_1X04   = "Connector_PinHeader_2.54mm:PinHeader_1x04_P2.54mm_Vertical"
 
 
 # -- Net definitions ---------------------------------------------------------
@@ -183,6 +189,21 @@ NETS: list[str] = [
     # Radxa GPIO 5V rail (pins 2,4) — intentionally NOT connected to 5V_SYS.
     # Radxa outputs its own 5V here once running; we isolate it from Daemon's rail.
     "RADXA_GPIO_5V",
+    # NAU88C22 audio codec (L)
+    "CODEC_LHPOUT", "CODEC_RHPOUT", "CODEC_LSPKOUT", "CODEC_RSPKOUT",
+    "CODEC_LMICP", "CODEC_LMICN", "CODEC_RMICP", "CODEC_RMICN",
+    "CODEC_LAUX", "CODEC_RAUX",
+    "CODEC_AVDD", "CODEC_DVDD", "CODEC_VREF",
+    "CODEC_MICBIAS",
+    "TRRS_RING2",  # TRRS Ring2 = headset mic / line-in → codec input
+    # ADS1115 ADC (M)
+    "ADC_AIN0", "ADC_AIN1", "ADC_AIN2", "ADC_AIN3", "ADC_ADDR", "ADC_ALRT",
+    # SP3485 RS-485 (N)
+    "RS485_A", "RS485_B", "RS485_DE",
+    # IR Receiver
+    "IR_RX",
+    # PMIC charge indicator
+    "PMIC_LIGHT_LED",
 ]
 
 # -- Component definitions ---------------------------------------------------
@@ -965,7 +986,7 @@ def _build_components() -> list[dict]:
          ("P4","NAV_CENTER"),
          ("P5","STINGER_EN_5"),  # GPIO-controlled USB-C female port 5 enable
          ("P6","RF_GDO0"),      # CC1101 interrupt (sync word / RX ready)
-         ("P7","GND"),          # spare
+         ("P7","IR_RX"),         # IR receiver (TSOP38238) demodulated output
          ("INT","PCF8574_INT")])
     # PCF8574 bypass cap
     add(_next_ref("C"), "100n", FP_C0402, "Device", "C", [("1","3V3_SYS"),("2","GND")])
@@ -1071,7 +1092,7 @@ def _build_components() -> list[dict]:
          ("BCLK","I2S_BCLK"),("LRCLK","I2S_LRCLK"),("DIN","I2S_DATA_OUT"),
          ("OUTP","AMP_OUT_P"),("OUTN","AMP_OUT_N"),
          ("~{SD_MODE}","AMP_SD"),
-         ("GAIN_SLOT","GND"),  # GND = +12dB gain, left channel
+         ("GAIN_SLOT","NC"),   # Float = +15dB gain, mono mix (L+R)/2 — best for single speaker
          ("EPAD","GND")])
 
     # Dual INMP441 microphones — bottom-port (sound hole through PCB)
@@ -1106,7 +1127,8 @@ def _build_components() -> list[dict]:
     add(_next_ref("J"), "SJ2-2531X", FP_TRRS, "Connector", "AudioJack4_Switch",
         [("Sleeve","GND"),("Detect","TRRS_DETECT_RAW"),
          ("Tip","SPK_P"),("TipSwitch","AMP_OUT_P_FILT"),
-         ("Ring1","SPK_N"),("Ring1Switch","AMP_OUT_N_FILT")])
+         ("Ring1","SPK_N"),("Ring1Switch","AMP_OUT_N_FILT"),
+         ("Ring2","TRRS_RING2")])  # Ring2 = headset mic / line-in → NAU88C22 codec
 
     # Speaker connector (JST-SH 2-pin) — wired to wiper side of NC switch
     add(_next_ref("J"), "Speaker", FP_JST_SH2, "Connector_Generic", "Conn_01x02",
@@ -1178,6 +1200,145 @@ def _build_components() -> list[dict]:
         [("1","3V3_SYS"),("2","PWR_LED_A")])
     add(_next_ref("LED"), "GREEN_0402", FP_LED_0402, "Device", "LED",
         [("A","PWR_LED_A"),("K","GND")])
+
+    # ==== ZERO-COST FIX: PMIC charge indicator LED on IP5328P LIGHT pin ====
+    # LIGHT pin (pin 20) pulses during charging, steady when full.
+    # Was wasted (100k pull-down only). Now drives a visible LED.
+    add(_next_ref("R"), "1k", FP_R0402, "Device", "R",
+        [("1","IP5328P_LIGHT"),("2","PMIC_LIGHT_LED")])
+    add(_next_ref("LED"), "AMBER_0402", FP_LED_0402, "Device", "LED",
+        [("A","PMIC_LIGHT_LED"),("K","GND")])
+
+    # ======================================================================
+    # L: NAU88C22 Audio Codec — Full-Duplex I2S Audio I/O
+    # ======================================================================
+    # Enables: guitar pedal, headset mic, line-in, stereo headphone out
+    # Shares I2S bus with INMP441 mics (TDM mode) and MAX98357A
+    # Controlled via I2C1 at address 0x1A
+    # NAU88C22YG QFN-32 pin map:
+    #   1:LHPOUT 2:RHPOUT 3:LSPKOUT 4:RSPKOUT 5:AVDD 6:LMICN 7:LMICP 8:RMICN
+    #   9:RMICP 10:LAUX 11:RAUX 12:VREF 13:MICBIAS 14:AGND 15:R2P 16:R2N
+    #   17:L2P 18:L2N 19:DGND 20:DVDD 21:MCLK 22:BCLK 23:FS 24:ADCOUT
+    #   25:DACIN 26:CSB/GPIO1 27:SCLK 28:SDIN 29:MODE 30:GPIO2/CLKOUT 31:GPIO3/SMPLRT 32:GPIO4
+    #   33:EPAD
+    add("U27", "NAU88C22", FP_NAU88C22, "Audio", "NAU88C22",
+        [("LHPOUT","CODEC_LHPOUT"),("RHPOUT","CODEC_RHPOUT"),
+         ("LSPKOUT","CODEC_LSPKOUT"),("RSPKOUT","CODEC_RSPKOUT"),
+         ("AVDD","CODEC_AVDD"),("LMICN","CODEC_LMICN"),("LMICP","CODEC_LMICP"),
+         ("RMICN","CODEC_RMICN"),("RMICP","CODEC_RMICP"),
+         ("LAUX","CODEC_LAUX"),("RAUX","CODEC_RAUX"),
+         ("VREF","CODEC_VREF"),("MICBIAS","CODEC_MICBIAS"),
+         ("AGND","GND"),("R2P","GND"),("R2N","GND"),("L2P","GND"),("L2N","GND"),
+         ("DGND","GND"),("DVDD","CODEC_DVDD"),
+         ("MCLK","GND"),        # No MCLK — NAU88C22 can derive from BCLK (PLL mode)
+         ("BCLK","I2S_BCLK"),("FS","I2S_LRCLK"),
+         ("ADCOUT","I2S_DATA_IN"),  # Codec ADC output → Radxa I2S input (TDM slots 2-3)
+         ("DACIN","I2S_DATA_OUT"),  # Radxa I2S output → Codec DAC input
+         ("CSB","GND"),         # I2C address = 0x1A (CSB low)
+         ("SCLK","I2C1_SCL"),("SDIN","I2C1_SDA"),
+         ("MODE","3V3_SYS"),    # MODE high = I2C mode
+         ("GPIO2","GND"),("GPIO3","GND"),("GPIO4","GND"),  # unused GPIOs
+         ("EPAD","GND")])
+    # AVDD decoupling (analog 3.3V)
+    add(_next_ref("C"), "10u", FP_C0805, "Device", "C", [("1","CODEC_AVDD"),("2","GND")])
+    add(_next_ref("C"), "100n", FP_C0402, "Device", "C", [("1","CODEC_AVDD"),("2","GND")])
+    # DVDD decoupling (digital 1.8V internal LDO)
+    add(_next_ref("C"), "10u", FP_C0805, "Device", "C", [("1","CODEC_DVDD"),("2","GND")])
+    add(_next_ref("C"), "100n", FP_C0402, "Device", "C", [("1","CODEC_DVDD"),("2","GND")])
+    # VREF decoupling (reference voltage)
+    add(_next_ref("C"), "100u", FP_TANT_CASEB, "Device", "C_Polarized",
+        [("1","CODEC_VREF"),("2","GND")])
+    add(_next_ref("C"), "100n", FP_C0402, "Device", "C", [("1","CODEC_VREF"),("2","GND")])
+    # AVDD supply from 3V3_SYS via ferrite bead (clean analog supply)
+    add(_next_ref("FB"), "BLM18AG601SN1", FP_FERRITE_0603, "Device", "FerriteBead",
+        [("1","3V3_SYS"),("2","CODEC_AVDD")])
+    # MICBIAS decoupling (provides bias voltage for electret headset mics)
+    add(_next_ref("C"), "1u", FP_C0402, "Device", "C", [("1","CODEC_MICBIAS"),("2","GND")])
+
+    # TRRS Ring2 → Codec left mic input (headset mic / line-in)
+    # DC-blocking cap + bias from MICBIAS for electret headset mics
+    add(_next_ref("C"), "1u", FP_C0402, "Device", "C",
+        [("1","TRRS_RING2"),("2","CODEC_LMICP")])
+    # LMICN to GND for single-ended mic input
+    add(_next_ref("R"), "10k", FP_R0402, "Device", "R",
+        [("1","CODEC_LMICN"),("2","GND")])
+    # MICBIAS to Ring2 via 2.2k (powers electret headset mic)
+    add(_next_ref("R"), "2.2k", FP_R0402, "Device", "R",
+        [("1","CODEC_MICBIAS"),("2","TRRS_RING2")])
+
+    # Codec headphone output → TRRS Tip/Ring1 via DC-blocking caps
+    # These connect in parallel with the MAX98357A BTL outputs (through the NC switches).
+    # When headphones are plugged in: NC switches open (disconnect amp from speaker),
+    # and codec drives headphones via Tip/Ring1 directly.
+    add(_next_ref("C"), "100u", FP_TANT_CASEB, "Device", "C_Polarized",
+        [("1","CODEC_LHPOUT"),("2","AMP_OUT_P_FILT")])
+    add(_next_ref("C"), "100u", FP_TANT_CASEB, "Device", "C_Polarized",
+        [("1","CODEC_RHPOUT"),("2","AMP_OUT_N_FILT")])
+
+    # ======================================================================
+    # M: ADS1115 — 4-Channel 16-bit I2C ADC
+    # ======================================================================
+    # Analog inputs for sensors, expression pedal, voltage monitoring, 4-20mA
+    # I2C address 0x48 (ADDR pin to GND)
+    # ADS1115 MSOP-10 pin map:
+    #   1:ADDR 2:ALRT 3:GND 4:AIN0 5:AIN1 6:AIN2 7:AIN3 8:VDD 9:SDA 10:SCL
+    add("U28", "ADS1115", FP_ADS1115, "Analog_ADC", "ADS1115",
+        [("ADDR","ADC_ADDR"),("ALRT","ADC_ALRT"),("GND","GND"),
+         ("AIN0","ADC_AIN0"),("AIN1","ADC_AIN1"),("AIN2","ADC_AIN2"),("AIN3","ADC_AIN3"),
+         ("VDD","3V3_SYS"),("SDA","I2C1_SDA"),("SCL","I2C1_SCL")])
+    # ADDR to GND = I2C address 0x48
+    add(_next_ref("R"), "0", FP_R0402, "Device", "R", [("1","ADC_ADDR"),("2","GND")])
+    # ALRT open-drain interrupt (10k pull-up, optional — for threshold alerts)
+    add(_next_ref("R"), "10k", FP_R0402, "Device", "R", [("1","3V3_SYS"),("2","ADC_ALRT")])
+    # VDD decoupling
+    add(_next_ref("C"), "100n", FP_C0402, "Device", "C", [("1","3V3_SYS"),("2","GND")])
+    # Analog input header (1x4): AIN0-AIN3 broken out for external sensors
+    add("J17", "Analog-In", FP_CONN_1X04, "Connector_Generic", "Conn_01x04",
+        [("1","ADC_AIN0"),("2","ADC_AIN1"),("3","ADC_AIN2"),("4","ADC_AIN3")])
+
+    # ======================================================================
+    # N: SP3485 — RS-485 Transceiver (Modbus / DMX-512)
+    # ======================================================================
+    # Half-duplex RS-485. UART2 TX/RX on AUX_GPIO_1/2, DE on AUX_GPIO_3.
+    # SP3485EN SOIC-8 pin map:
+    #   1:RO 2:RE 3:DE 4:DI 5:GND 6:A 7:B 8:VCC
+    add("U29", "SP3485", FP_SP3485, "Interface_UART", "SP3485",
+        [("RO","AUX_GPIO_2"),  # Receiver output → UART2_RX (Radxa pin 10)
+         ("RE","RS485_DE"),     # Receiver enable (active low) — tied to DE for half-duplex
+         ("DE","RS485_DE"),     # Driver enable (active high)
+         ("DI","AUX_GPIO_1"),   # Driver input → UART2_TX (Radxa pin 8)
+         ("GND","GND"),("A","RS485_A"),("B","RS485_B"),("VCC","3V3_SYS")])
+    # DE/RE control from AUX_GPIO_3 (Radxa pin 11)
+    add(_next_ref("R"), "10k", FP_R0402, "Device", "R",
+        [("1","AUX_GPIO_3"),("2","RS485_DE")])
+    # Bus termination resistor (120Ω between A and B, solder jumper — populate if end-of-line)
+    add(_next_ref("R"), "120", FP_R0402, "Device", "R", [("1","RS485_A"),("2","RS485_B")])
+    # VCC decoupling
+    add(_next_ref("C"), "100n", FP_C0402, "Device", "C", [("1","3V3_SYS"),("2","GND")])
+    # RS-485 terminal (3-pin header: A, B, GND)
+    add("J18", "RS485-Bus", FP_CONN_1X03, "Connector_Generic", "Conn_01x03",
+        [("1","RS485_A"),("2","RS485_B"),("3","GND")])
+
+    # ======================================================================
+    # O: TSOP38238 — IR Receiver (38kHz demodulated output)
+    # ======================================================================
+    # Learns any IR remote (NEC, RC5, RC6, SIRC, raw protocols)
+    # Output → PCF8574 P7 (was tied to GND, now IR receiver)
+    # TSOP38238 pinout: 1:OUT 2:GND 3:VS
+    add("U30", "TSOP38238", FP_TSOP38238, "Sensor_Optical", "TSOP38238",
+        [("OUT","IR_RX"),("GND","GND"),("VS","3V3_SYS")])
+    # VCC filtering per Vishay datasheet: 100R series + 100nF + 4.7uF
+    add(_next_ref("R"), "100", FP_R0402, "Device", "R", [("1","3V3_SYS"),("2","IR_RX")])
+    add(_next_ref("C"), "100n", FP_C0402, "Device", "C", [("1","3V3_SYS"),("2","GND")])
+    add(_next_ref("C"), "4u7", FP_C0402, "Device", "C", [("1","3V3_SYS"),("2","GND")])
+
+    # ======================================================================
+    # P: UART Header — Serial Debug / Legacy Device Interface
+    # ======================================================================
+    # AUX_GPIO_1 = UART2_TX, AUX_GPIO_2 = UART2_RX (shared with RS-485)
+    # When RS-485 DE is low (receive mode), UART is available for direct serial.
+    add("J19", "UART-Debug", FP_CONN_1X04, "Connector_Generic", "Conn_01x04",
+        [("1","GND"),("2","AUX_GPIO_1"),("3","AUX_GPIO_2"),("4","3V3_SYS")])
 
     return comps
 
@@ -1309,15 +1470,31 @@ def _build_netlist() -> str:
         },
         "AudioJack4_Switch": {
             # SJ2-2531X KiCad footprint pads: T, R1, R2, S, GND
-            # NC switch contacts (TS, R1S) share pads with main contacts in this footprint.
-            # Detect (CD) is not a separate pad — it's internal to the switch mechanism.
-            "Sleeve":"S","Tip":"T","Ring1":"R1",
+            "Sleeve":"S","Tip":"T","Ring1":"R1","Ring2":"R2",
             "TipSwitch":"T","Ring1Switch":"R1",  # NC switch → same pad as main contact
             "Detect":"GND",  # Detect NC to sleeve = GND pad
         },
         "Goobay-74446": {  # USB-C receptacle used as Goobay bridge
             "VBUS":"A4","D-":"A7","D+":"A6","CC1":"A5","CC2":"B5","GND":"A1",
         },
+        "NAU88C22": {  # QFN-32+EPAD
+            "LHPOUT":"1","RHPOUT":"2","LSPKOUT":"3","RSPKOUT":"4","AVDD":"5",
+            "LMICN":"6","LMICP":"7","RMICN":"8","RMICP":"9","LAUX":"10","RAUX":"11",
+            "VREF":"12","MICBIAS":"13","AGND":"14","R2P":"15","R2N":"16",
+            "L2P":"17","L2N":"18","DGND":"19","DVDD":"20",
+            "MCLK":"21","BCLK":"22","FS":"23","ADCOUT":"24","DACIN":"25",
+            "CSB":"26","SCLK":"27","SDIN":"28","MODE":"29",
+            "GPIO2":"30","GPIO3":"31","GPIO4":"32","EPAD":"33",
+        },
+        "ADS1115": {  # MSOP-10
+            "ADDR":"1","ALRT":"2","GND":"3","AIN0":"4","AIN1":"5",
+            "AIN2":"6","AIN3":"7","VDD":"8","SDA":"9","SCL":"10",
+        },
+        "SP3485": {  # SOIC-8
+            "RO":"1","RE":"2","DE":"3","DI":"4","GND":"5","A":"6","B":"7","VCC":"8",
+        },
+        "TSOP38238": {"OUT":"1","GND":"2","VS":"3"},
+        "AMBER_0402": {"A":"2","K":"1"},  # charge indicator LED
         "D_TVS_x2_AAC": {"A1":"1","K":"2","A2":"3"},  # VCAN26A2 SC-70 3-pin dual TVS
         "Q_NMOS_GSD": {"G":"1","S":"2","D":"3"},
         "Q_NMOS_GDS": {"G":"1","D":"2","S":"3"},  # AO3400A SOT-23: G=1,D=2,S=3
