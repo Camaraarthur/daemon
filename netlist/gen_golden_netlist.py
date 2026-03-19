@@ -201,7 +201,9 @@ NETS: list[str] = [
     # SP3485 RS-485 (N)
     "RS485_A", "RS485_B", "RS485_DE",
     # IR Receiver
-    "IR_RX",
+    "IR_RX", "IR_VS_FILT",
+    # Codec ADC output (separate from I2S_DATA_IN to prevent bus fight)
+    "CODEC_ADCOUT",
     # PMIC charge indicator
     "PMIC_LIGHT_LED",
 ]
@@ -1202,12 +1204,12 @@ def _build_components() -> list[dict]:
         [("A","PWR_LED_A"),("K","GND")])
 
     # ==== ZERO-COST FIX: PMIC charge indicator LED on IP5328P LIGHT pin ====
-    # LIGHT pin (pin 20) pulses during charging, steady when full.
-    # Was wasted (100k pull-down only). Now drives a visible LED.
+    # LIGHT is open-drain — sinks current when active (charging/full).
+    # Circuit: 3V3_SYS → 1k → LED_A → LED_K → LIGHT(open-drain) → GND
     add(_next_ref("R"), "1k", FP_R0402, "Device", "R",
-        [("1","IP5328P_LIGHT"),("2","PMIC_LIGHT_LED")])
+        [("1","3V3_SYS"),("2","PMIC_LIGHT_LED")])
     add(_next_ref("LED"), "AMBER_0402", FP_LED_0402, "Device", "LED",
-        [("A","PMIC_LIGHT_LED"),("K","GND")])
+        [("A","PMIC_LIGHT_LED"),("K","IP5328P_LIGHT")])
 
     # ======================================================================
     # L: NAU88C22 Audio Codec — Full-Duplex I2S Audio I/O
@@ -1232,7 +1234,7 @@ def _build_components() -> list[dict]:
          ("DGND","GND"),("DVDD","CODEC_DVDD"),
          ("MCLK","GND"),        # No MCLK — NAU88C22 can derive from BCLK (PLL mode)
          ("BCLK","I2S_BCLK"),("FS","I2S_LRCLK"),
-         ("ADCOUT","I2S_DATA_IN"),  # Codec ADC output → Radxa I2S input (TDM slots 2-3)
+         ("ADCOUT","CODEC_ADCOUT"),  # Separate net — NOT on I2S_DATA_IN to avoid bus fight with INMP441s
          ("DACIN","I2S_DATA_OUT"),  # Radxa I2S output → Codec DAC input
          ("CSB","GND"),         # I2C address = 0x1A (CSB low)
          ("SCLK","I2C1_SCL"),("SDIN","I2C1_SDA"),
@@ -1262,6 +1264,11 @@ def _build_components() -> list[dict]:
     # LMICN to GND for single-ended mic input
     add(_next_ref("R"), "10k", FP_R0402, "Device", "R",
         [("1","CODEC_LMICN"),("2","GND")])
+    # Codec ADC → I2S_DATA_IN solder jumper (0Ω, DNP by default).
+    # Populate ONLY when using codec ADC input instead of INMP441 mics.
+    # Both cannot drive I2S_DATA_IN simultaneously — firmware must disable the other.
+    add(_next_ref("R"), "0R_DNP", FP_R0402, "Device", "R",
+        [("1","CODEC_ADCOUT"),("2","I2S_DATA_IN")])
     # MICBIAS to Ring2 via 2.2k (powers electret headset mic)
     add(_next_ref("R"), "2.2k", FP_R0402, "Device", "R",
         [("1","CODEC_MICBIAS"),("2","TRRS_RING2")])
@@ -1311,6 +1318,9 @@ def _build_components() -> list[dict]:
     # DE/RE control from AUX_GPIO_3 (Radxa pin 11)
     add(_next_ref("R"), "10k", FP_R0402, "Device", "R",
         [("1","AUX_GPIO_3"),("2","RS485_DE")])
+    # Pull-down ensures DE=LOW (receive mode) during boot before GPIO is configured
+    add(_next_ref("R"), "100k", FP_R0402, "Device", "R",
+        [("1","RS485_DE"),("2","GND")])
     # Bus termination resistor (120Ω between A and B, solder jumper — populate if end-of-line)
     add(_next_ref("R"), "120", FP_R0402, "Device", "R", [("1","RS485_A"),("2","RS485_B")])
     # VCC decoupling
@@ -1325,12 +1335,12 @@ def _build_components() -> list[dict]:
     # Learns any IR remote (NEC, RC5, RC6, SIRC, raw protocols)
     # Output → PCF8574 P7 (was tied to GND, now IR receiver)
     # TSOP38238 pinout: 1:OUT 2:GND 3:VS
+    # VCC filtering per Vishay datasheet: 3V3_SYS → 100R → IR_VS_FILT → VS pin
+    add(_next_ref("R"), "100", FP_R0402, "Device", "R", [("1","3V3_SYS"),("2","IR_VS_FILT")])
+    add(_next_ref("C"), "100n", FP_C0402, "Device", "C", [("1","IR_VS_FILT"),("2","GND")])
+    add(_next_ref("C"), "4u7", FP_C0402, "Device", "C", [("1","IR_VS_FILT"),("2","GND")])
     add("U30", "TSOP38238", FP_TSOP38238, "Sensor_Optical", "TSOP38238",
-        [("OUT","IR_RX"),("GND","GND"),("VS","3V3_SYS")])
-    # VCC filtering per Vishay datasheet: 100R series + 100nF + 4.7uF
-    add(_next_ref("R"), "100", FP_R0402, "Device", "R", [("1","3V3_SYS"),("2","IR_RX")])
-    add(_next_ref("C"), "100n", FP_C0402, "Device", "C", [("1","3V3_SYS"),("2","GND")])
-    add(_next_ref("C"), "4u7", FP_C0402, "Device", "C", [("1","3V3_SYS"),("2","GND")])
+        [("OUT","IR_RX"),("GND","GND"),("VS","IR_VS_FILT")])
 
     # ======================================================================
     # P: UART Header — Serial Debug / Legacy Device Interface
