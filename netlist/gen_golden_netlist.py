@@ -41,7 +41,7 @@ FP_USB_C_PLUG  = "Daemon_V0:USB_C_Plug_GCT_USB4155"
 FP_SY6280      = "Package_TO_SOT_SMD:SOT-23-5"
 FP_USBLC6      = "Package_TO_SOT_SMD:SOT-23-6"
 FP_RADXA_HDR   = "Connector_PinSocket_2.54mm:PinSocket_2x20_P2.54mm_Vertical"
-FP_SCREEN_CONN = "Connector_PinSocket_2.54mm:PinSocket_1x08_P2.54mm_Vertical"
+FP_SCREEN_CONN = "Connector_PinHeader_2.54mm:PinHeader_1x08_P2.54mm_Vertical"  # Through-hole: solder from bottom, screen sits flush
 FP_NAV_SW      = "Daemon_V0:SW_Alps_SKRHABE010"
 FP_BAT_CONN    = "Connector_JST:JST_PH_S2B-PH-K_1x02_P2.00mm_Horizontal"
 FP_TP_D15      = "TestPoint:TestPoint_Pad_D1.5mm"
@@ -90,7 +90,8 @@ FP_NAU88C22    = "Package_DFN_QFN:QFN-32-1EP_5x5mm_P0.5mm_EP3.45x3.45mm"
 FP_ADS1115     = "Package_SO:MSOP-10_3x3mm_P0.5mm"
 FP_SP3485      = "Package_SO:SOIC-8_3.9x4.9mm_P1.27mm"
 FP_TSOP38238   = "OptoDevice:Vishay_MINICAST-3Pin"
-FP_CONN_1X04   = "Connector_PinHeader_2.54mm:PinHeader_1x04_P2.54mm_Vertical"
+FP_CONN_1X04_F = "Connector_PinSocket_2.54mm:PinSocket_1x04_P2.54mm_Vertical"  # Female
+FP_CONN_1X03_F = "Connector_PinSocket_2.54mm:PinSocket_1x03_P2.54mm_Vertical"  # Female
 
 
 # -- Net definitions ---------------------------------------------------------
@@ -1300,7 +1301,7 @@ def _build_components() -> list[dict]:
     # VDD decoupling
     add(_next_ref("C"), "100n", FP_C0402, "Device", "C", [("1","3V3_SYS"),("2","GND")])
     # Analog input header (1x4): AIN0-AIN3 broken out for external sensors
-    add("J17", "Analog-In", FP_CONN_1X04, "Connector_Generic", "Conn_01x04",
+    add("J17", "Analog-In", FP_CONN_1X04_F, "Connector_Generic", "Conn_01x04",
         [("1","ADC_AIN0"),("2","ADC_AIN1"),("3","ADC_AIN2"),("4","ADC_AIN3")])
 
     # ======================================================================
@@ -1326,7 +1327,7 @@ def _build_components() -> list[dict]:
     # VCC decoupling
     add(_next_ref("C"), "100n", FP_C0402, "Device", "C", [("1","3V3_SYS"),("2","GND")])
     # RS-485 terminal (3-pin header: A, B, GND)
-    add("J18", "RS485-Bus", FP_CONN_1X03, "Connector_Generic", "Conn_01x03",
+    add("J18", "RS485-Bus", FP_CONN_1X03_F, "Connector_Generic", "Conn_01x03",
         [("1","RS485_A"),("2","RS485_B"),("3","GND")])
 
     # ======================================================================
@@ -1347,7 +1348,7 @@ def _build_components() -> list[dict]:
     # ======================================================================
     # AUX_GPIO_1 = UART2_TX, AUX_GPIO_2 = UART2_RX (shared with RS-485)
     # When RS-485 DE is low (receive mode), UART is available for direct serial.
-    add("J19", "UART-Debug", FP_CONN_1X04, "Connector_Generic", "Conn_01x04",
+    add("J19", "UART-Debug", FP_CONN_1X04_F, "Connector_Generic", "Conn_01x04",
         [("1","GND"),("2","AUX_GPIO_1"),("3","AUX_GPIO_2"),("4","3V3_SYS")])
 
     return comps
