@@ -101,6 +101,7 @@ FP_PTC_0805    = "Fuse:Fuse_0805_2012Metric"
 FP_ESD_SOD523  = "Diode_SMD:D_SOD-523"
 FP_RELAY_G6K   = "Relay_SMD:Relay_DPDT_Omron_G6K-2F-Y"
 FP_SOD123      = "Diode_SMD:D_SOD-123"
+FP_HEX_INV     = "Package_SO:TSSOP-14_4.4x5mm_P0.65mm"  # 74LVC04A hex inverter
 
 
 # -- Net definitions ---------------------------------------------------------
@@ -228,13 +229,16 @@ NETS: list[str] = [
     "SPK_P_FUSED", "SPK_N_FUSED", "TRRS_RING2_P",
     # Ethernet protected
     "ETH_MDI_TXP_P", "ETH_MDI_TXN_P", "ETH_MDI_RXP_P", "ETH_MDI_RXN_P",
-    # USB data switch nets
-    "USB_DP_1_SW", "USB_DM_1_SW",  # Stinger port 1 data after switch
-    "USB_DP_2_SW", "USB_DM_2_SW",  # Stinger port 2
-    "USB_DP_3_SW", "USB_DM_3_SW",  # Stinger port 3
-    "USB_DP_4_SW", "USB_DM_4_SW",  # Stinger port 4
+    # USB data switch nets (connector side, after TS3USB221)
+    "HUB1_DN_DP_1_SW", "HUB1_DN_DM_1_SW",
+    "HUB1_DN_DP_2_SW", "HUB1_DN_DM_2_SW",
+    "HUB1_DN_DP_3_SW", "HUB1_DN_DM_3_SW",
+    "HUB2_DN_DP_1_SW", "HUB2_DN_DM_1_SW",
+    "HUB2_DN_DP_3_SW", "HUB2_DN_DM_3_SW",
     # Security
     "ATECC_SDA", "ATECC_SCL",
+    # USB data switch inverted enable signals
+    "STINGER_OE_1", "STINGER_OE_2", "STINGER_OE_3", "STINGER_OE_4", "STINGER_OE_5",
     # J4 fused power outputs
     "3V3_J4_OUT", "5V_J4_OUT",
     # WAGO switchable bypass
@@ -583,9 +587,12 @@ def _build_components() -> list[dict]:
             [("IN","5V_SYS"),("OUT",vbus_net),("EN",en_net),
              ("GND","GND"),("ISET",iset_net)])
 
-        # USB connector
+        # USB connector — D+/D- go through TS3USB221 data switch (section S).
+        # Connector uses _SW nets (switched side), hub uses direct nets.
         conn_ref = _next_ref("J")
-        conn_pins = [("VBUS",vbus_net),("D+",dp_net),("D-",dm_net),("GND","GND")]
+        dp_sw = dp_net + "_SW"
+        dm_sw = dm_net + "_SW"
+        conn_pins = [("VBUS",vbus_net),("D+",dp_sw),("D-",dm_sw),("GND","GND")]
         if has_cc:
             cc_net = f"STINGER{port}_CC"
             conn_pins.append(("CC", cc_net))
@@ -607,10 +614,10 @@ def _build_components() -> list[dict]:
             add(_next_ref("D"), "ESD5Z3.3", "Diode_SMD:D_SOD-523", "Device", "D_TVS",
                 [("A","GND"),("K",cc_net)])
 
-        # USBLC6-2SC6 ESD protection (ST: pins 1,3=I/O1; pins 4,6=I/O2)
+        # USBLC6-2SC6 ESD protection on connector side (after data switch)
         add(_next_ref("U"), "USBLC6-2SC6", FP_USBLC6, "Power_Protection", "USBLC6-2SC6",
-            [("1",dm_net),("2","GND"),("3",dm_net),
-             ("4",dp_net),("5",vbus_net),("6",dp_net)])
+            [("1",dm_sw),("2","GND"),("3",dm_sw),
+             ("4",dp_sw),("5",vbus_net),("6",dp_sw)])
 
         # EN pull-up: Port 1 uses 5V_SYS so Radxa can boot (3V3_SYS doesn't exist
         # until Radxa is running — chicken-and-egg). Other ports use 3V3_SYS.
@@ -639,7 +646,7 @@ def _build_components() -> list[dict]:
          ("GND","GND"),("ISET","STINGER_ISET_5")])
     # USB-C female receptacle — host port (provides 5V to connected devices)
     add(_next_ref("J"), "USB_C_Receptacle", FP_USB_C_RCPT, "Connector", "USB_C_Receptacle_USB2.0",
-        [("VBUS","USB_VBUS_5"),("D+","HUB2_DN_DP_3"),("D-","HUB2_DN_DM_3"),
+        [("VBUS","USB_VBUS_5"),("D+","HUB2_DN_DP_3_SW"),("D-","HUB2_DN_DM_3_SW"),
          ("GND","GND"),("CC1","STINGER5_CC1"),("CC2","STINGER5_CC2")])
     # CC1/CC2 pull-UPS (56k Rp to 3V3_SYS — DFP host advertising 5V/900mA)
     # USB PD spec: Rp=56k→3.3V = 900mA source; Rd=5.1k→GND = sink/device. This is a HOST port.
@@ -652,8 +659,8 @@ def _build_components() -> list[dict]:
         [("A","GND"),("K","STINGER5_CC2")])
     # USBLC6-2SC6 ESD protection (ST: pins 1,3=I/O1; pins 4,6=I/O2)
     add(_next_ref("U"), "USBLC6-2SC6", FP_USBLC6, "Power_Protection", "USBLC6-2SC6",
-        [("1","HUB2_DN_DM_3"),("2","GND"),("3","HUB2_DN_DM_3"),
-         ("4","HUB2_DN_DP_3"),("5","USB_VBUS_5"),("6","HUB2_DN_DP_3")])
+        [("1","HUB2_DN_DM_3_SW"),("2","GND"),("3","HUB2_DN_DM_3_SW"),
+         ("4","HUB2_DN_DP_3_SW"),("5","USB_VBUS_5"),("6","HUB2_DN_DP_3_SW")])
     # EN pull-up (10k to 3V3; Radxa GPIO can pull low to disable)
     add(_next_ref("R"), "10k", FP_R0402, "Device", "R", [("1","3V3_SYS"),("2","STINGER_EN_5")])
     # Input decoupling
@@ -1495,6 +1502,50 @@ def _build_components() -> list[dict]:
     # NO reverse-polarity diode here — it would backfeed 24V field power into 3V3_SYS
     # and defeat the ISO1212 galvanic isolation. The field side must stay isolated.
 
+    # ======================================================================
+    # S: USB Data Switches — True Security Disconnect on All Stinger Ports
+    # ======================================================================
+    # SY6280 only cuts VBUS power. A self-powered device still has full D+/D-.
+    # TS3USB221 switches cut BOTH data lines when port is disabled.
+    # OE is active-LOW but STINGER_EN is active-HIGH → need inverter.
+    # 74LVC04A hex inverter: 6 channels, TSSOP-14. Use 5 for ports 1-5.
+    add("U32", "74LVC04A", FP_HEX_INV, "Logic", "74LVC04A",
+        [("1A","STINGER_EN_1"),("1Y","STINGER_OE_1"),
+         ("2A","STINGER_EN_2"),("2Y","STINGER_OE_2"),
+         ("3A","STINGER_EN_3"),("3Y","STINGER_OE_3"),
+         ("4A","STINGER_EN_4"),("4Y","STINGER_OE_4"),
+         ("5A","STINGER_EN_5"),("5Y","STINGER_OE_5"),
+         ("6A","GND"),("6Y","NC"),  # Unused channel — tie input to GND
+         ("VCC","3V3_SYS"),("GND","GND")])
+    add(_next_ref("C"), "100n", FP_C0402, "Device", "C", [("1","3V3_SYS"),("2","GND")])
+
+    # TS3USB221 per stinger port: SEL=GND (use channel 1 only), OE from inverter
+    # Hub D+/D- on channel 1 (D1+/D1-), connector D+/D- on COM+/COM-
+    usb_switch_configs = [
+        ("U33", "HUB1_DN_DP_1", "HUB1_DN_DM_1", "STINGER_OE_1"),  # Port 1 (USB-C male)
+        ("U34", "HUB1_DN_DP_2", "HUB1_DN_DM_2", "STINGER_OE_2"),  # Port 2 (USB-A female)
+        ("U35", "HUB1_DN_DP_3", "HUB1_DN_DM_3", "STINGER_OE_3"),  # Port 3 (USB-A female)
+        ("U36", "HUB2_DN_DP_1", "HUB2_DN_DM_1", "STINGER_OE_4"),  # Port 4 (USB-A male)
+    ]
+    for ref, dp_hub, dm_hub, oe_net in usb_switch_configs:
+        add(ref, "TS3USB221", FP_TS3USB221, "Analog_Switch", "TS3USB221",
+            [("OE",oe_net),("GND","GND"),
+             ("D1+",dp_hub),("D1-",dm_hub),  # Hub side
+             ("SEL","GND"),  # Select channel 1
+             ("D2+","NC"),("D2-","NC"),  # Channel 2 unused
+             ("COM+",dp_hub+"_SW"),("COM-",dm_hub+"_SW"),  # Connector side (switched)
+             ("VCC","3V3_SYS")])
+        add(_next_ref("C"), "100n", FP_C0402, "Device", "C", [("1","3V3_SYS"),("2","GND")])
+
+    # Port 5 (USB-C female, Hub2 port 3) — same treatment
+    add("U37", "TS3USB221", FP_TS3USB221, "Analog_Switch", "TS3USB221",
+        [("OE","STINGER_OE_5"),("GND","GND"),
+         ("D1+","HUB2_DN_DP_3"),("D1-","HUB2_DN_DM_3"),
+         ("SEL","GND"),("D2+","NC"),("D2-","NC"),
+         ("COM+","HUB2_DN_DP_3_SW"),("COM-","HUB2_DN_DM_3_SW"),
+         ("VCC","3V3_SYS")])
+    add(_next_ref("C"), "100n", FP_C0402, "Device", "C", [("1","3V3_SYS"),("2","GND")])
+
     # --- J6 Display connector protection ---
     # SPI signals go directly to Radxa GPIO — add TVS clamping
     add(_next_ref("D"), "ESD5Z3.3", FP_ESD_SOD523, "Device", "D_TVS",
@@ -1686,6 +1737,14 @@ def _build_netlist() -> str:
         },
         "1N4148W": {"A":"1","K":"2"},
         "BSS138": {"G":"1","S":"2","D":"3"},
+        "74LVC04A": {  # Hex inverter TSSOP-14
+            "1A":"1","1Y":"2","2A":"3","2Y":"4","3A":"5","3Y":"6","GND":"7",
+            "4Y":"8","4A":"9","5Y":"10","5A":"11","6Y":"12","6A":"13","VCC":"14",
+        },
+        "TS3USB221": {  # USB 2.0 DPDT switch VSSOP-10
+            "OE":"1","GND":"2","D1+":"3","D1-":"4","SEL":"5",
+            "D2+":"6","D2-":"7","COM+":"8","COM-":"9","VCC":"10",
+        },
         "Q_NMOS_GSD": {"G":"1","S":"2","D":"3"},
         "Q_NMOS_GDS": {"G":"1","D":"2","S":"3"},  # AO3400A SOT-23: G=1,D=2,S=3
         "USB_A": {  # USB-A connector (both male and female): pad 1=VBUS, 2=D-, 3=D+, 4=GND, 5=shield
