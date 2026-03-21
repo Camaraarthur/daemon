@@ -1435,6 +1435,15 @@ def _build_components() -> list[dict]:
     add(_next_ref("D"), "SMBJ5.0A", FP_TVS_SMB, "Device", "D_TVS",
         [("A","GND"),("K","IP5328P_VBUS")])
 
+    # --- USB-A host ports backfeed protection (SY6280 body diode path) ---
+    # Ports 2/3 are host-only (no charging Schottky) but SY6280 body diode
+    # can still backfeed overvoltage from connector to 5V_SYS.
+    # TVS directly on USB_VBUS_2/3 clamps before SY6280 body diode conducts.
+    add(_next_ref("D"), "SMBJ5.0A", FP_TVS_SMB, "Device", "D_TVS",
+        [("A","GND"),("K","USB_VBUS_2")])
+    add(_next_ref("D"), "SMBJ5.0A", FP_TVS_SMB, "Device", "D_TVS",
+        [("A","GND"),("K","USB_VBUS_3")])
+
     # --- USB charging port PTC fuses (sustained overvoltage protection) ---
     # These sit between the SS34 Schottky anodes and the connector VBUS.
     # At normal operation: SY6280 output passes through. At overvoltage: PTC trips.
