@@ -33,7 +33,7 @@
   (pad "4" smd rect (at 12.0 0) (size 2.0 3.0) (layers "F.Cu" "F.Paste" "F.Mask")
     (uuid "10000000-0000-0000-0000-000000000029")
   )
-  (model "${KIPRJMOD}/lib/3dmodels/WAGO_2060-404.step"
+  (model "${KIPRJMOD}/lib/3dmodels/WAGO_2060-403.stl"
     (offset (xyz -6 0 0))
     (scale (xyz 1 1 1))
     (rotate (xyz 0 0 0))
