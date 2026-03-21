@@ -235,6 +235,8 @@ NETS: list[str] = [
     "USB_DP_4_SW", "USB_DM_4_SW",  # Stinger port 4
     # Security
     "ATECC_SDA", "ATECC_SCL",
+    # J4 fused power outputs
+    "3V3_J4_OUT", "5V_J4_OUT",
     # WAGO switchable bypass
     "WAGO_COM1", "WAGO_COM2",  # Relay common pins (from WAGO pins 3/4)
     "WAGO_MODE",               # GPIO: LOW=industrial, HIGH=RS-485
@@ -362,8 +364,9 @@ def _build_components() -> list[dict]:
     # Battery PTC resettable fuse (was 0Ω jumper — no short-circuit protection).
     # 1210 PTC, 2A hold / 4A trip. Protects against cell short-circuit through
     # the boost inductor or failed IP5328P. Bare Li-ion cells may lack internal protection.
+    # Battery path: BAT1 → BAT → SS34 (reverse protection) → BAT_PROTECTED → PTC → BAT_ISO
     add("J1", "PTC_2A", FP_JUMPER_1225, "Device", "Polyfuse",
-        [("1","BAT"),("2","BAT_ISO")])
+        [("1","BAT_PROTECTED"),("2","BAT_ISO")])
     # Current sense / isolation jumper (VSYS→5V_SYS) — 10mΩ shunt
     # Also serves as VSP/VSN measurement path for IP5328P battery gauge
     add("J2", "10m", FP_JUMPER_1225, "Device", "R",
@@ -677,12 +680,14 @@ def _build_components() -> list[dict]:
     # Chargeable ports: USB-C male (key, port 1), USB-A male (port 4), USB-C female (port 5)
     # SS34: 3A 40V Schottky (SMA) — IP5328P can draw up to 2A on VIN for charging.
     # BAT54 (200mA) was severely undersized. SS34 Vf~0.45V at 2A.
+    # Charging path: connector VBUS → PTC fuse → SS34 → VIN → IP5328P
+    # PTC limits sustained overvoltage current so SMBJ5.0A TVS on VIN survives.
     add(_next_ref("D"), "SS34", FP_SCHOTTKY_SMA, "Device", "D_Schottky",
-        [("A","USB_VBUS_1"),("K","VIN")])   # USB-C male (key) → can charge from computer
+        [("A","USB_VBUS_1_FUSED"),("K","VIN")])   # Through PTC → charge from computer
     add(_next_ref("D"), "SS34", FP_SCHOTTKY_SMA, "Device", "D_Schottky",
-        [("A","USB_VBUS_4"),("K","VIN")])   # USB-A male → can charge from battery pack
+        [("A","USB_VBUS_4_FUSED"),("K","VIN")])   # Through PTC → charge from battery pack
     add(_next_ref("D"), "SS34", FP_SCHOTTKY_SMA, "Device", "D_Schottky",
-        [("A","USB_VBUS_5"),("K","VIN")])   # USB-C female (main) → main charging port
+        [("A","USB_VBUS_5_FUSED"),("K","VIN")])   # Through PTC → main charging port
 
     # ======================================================================
     # G: NE555 Heartbeat (SOIC-8)
@@ -1101,7 +1106,7 @@ def _build_components() -> list[dict]:
          ("21","STINGER_EN_4"),("22","SCREEN_RST"),
          ("23","SPI3_CLK"), ("24","SPI3_CS"),
          ("25","GND"),      ("26","GND"),              # Pin 26 = NC on Radxa Zero 3W
-         ("27","PCF8574_INT"),("28","GND"),  # Pin 27=I2C2_SDA repurposed as PCF8574 IRQ
+         ("27","PCF8574_INT"),("28","ISO_DO1"),  # Pin 27=PCF8574 IRQ, Pin 28=ISO1212 output 1
          ("29","STINGER_EN_1"),("30","GND"),
          ("31","STINGER_EN_2"),("32","SCREEN_DC"),
          ("33","STINGER_EN_3"),("34","WAGO_MODE"),     # GPIO: LOW=industrial, HIGH=RS-485 relay
@@ -1116,11 +1121,11 @@ def _build_components() -> list[dict]:
     # Internal connections (SP3485, IR MOSFET, ISO1212) are abstracted by software.
     # The daemon agent decides what each pin does at runtime.
     add("J4", "DAEMON-IO", FP_CONN_2X05, "Connector_Generic", "Conn_02x05_Odd_Even",
-        [("1","3V3_SYS"),   ("2","5V_SYS"),      # Power out
-         ("3","AUX_GPIO_1"), ("4","AUX_GPIO_2"),  # GPIO (UART2 TX/RX, PWM, etc.)
-         ("5","AUX_GPIO_3"), ("6","IR_GPIO"),     # GPIO (RS485 DE, IR TX, etc.)
-         ("7","RS485_A"),    ("8","RS485_B"),      # Differential bus
-         ("9","GND"),        ("10","GND")])
+        [("1","3V3_J4_OUT"),   ("2","5V_J4_OUT"),    # PTC-fused power out
+         ("3","AUX_GPIO_1_P"), ("4","AUX_GPIO_2_P"), # Protected GPIO
+         ("5","AUX_GPIO_3_P"), ("6","IR_GPIO_P"),    # Protected GPIO
+         ("7","RS485_A"),      ("8","RS485_B"),       # SM712 TVS protected
+         ("9","GND"),          ("10","GND")])
 
     # ======================================================================
     # 3V3_SYS bulk decoupling at header (sourced from Radxa pin 1/17, no on-board regulator)
@@ -1184,8 +1189,8 @@ def _build_components() -> list[dict]:
     # NC switches: closed when no plug → amp drives speaker; open when inserted
     add(_next_ref("J"), "SJ2-2531X", FP_TRRS, "Connector", "AudioJack4_Switch",
         [("Sleeve","GND"),("Detect","TRRS_DETECT_RAW"),
-         ("Tip","SPK_P"),("TipSwitch","AMP_OUT_P_FILT"),
-         ("Ring1","SPK_N"),("Ring1Switch","AMP_OUT_N_FILT"),
+         ("Tip","SPK_P_FUSED"),("TipSwitch","AMP_OUT_P_FILT"),
+         ("Ring1","SPK_N_FUSED"),("Ring1Switch","AMP_OUT_N_FILT"),
          ("Ring2","TRRS_RING2")])  # Ring2 = headset mic / line-in → NAU88C22 codec
 
     # Speaker connector (JST-SH 2-pin) — wired to wiper side of NC switch
@@ -1357,7 +1362,7 @@ def _build_components() -> list[dict]:
     add(_next_ref("C"), "100n", FP_C0402, "Device", "C", [("1","3V3_SYS"),("2","GND")])
     # Analog input header (1x4): AIN0-AIN3 broken out for external sensors
     add("J17", "Analog-In", FP_CONN_1X05_F, "Connector_Generic", "Conn_01x05",
-        [("1","ADC_AIN0"),("2","ADC_AIN1"),("3","ADC_AIN2"),("4","ADC_AIN3"),("5","GND")])
+        [("1","ADC_AIN0_P"),("2","ADC_AIN1_P"),("3","ADC_AIN2_P"),("4","ADC_AIN3_P"),("5","GND")])
 
     # ======================================================================
     # N: SP3485 — RS-485 Transceiver (Modbus / DMX-512)
@@ -1486,9 +1491,34 @@ def _build_components() -> list[dict]:
     add(_next_ref("D"), "SM712", FP_SOT236, "Device", "D_TVS_x2_AAC",
         [("1","ETH_MDI_RXP"),("2","GND"),("3","ETH_MDI_RXN")])
 
-    # --- WAGO field power reverse polarity protection ---
-    add(_next_ref("D"), "SS14", FP_SCHOTTKY_SMA, "Device", "D_Schottky",
-        [("A","ISO_VCC1"),("K","3V3_SYS")])
+    # WAGO field power: ISO_VCC1 is powered from 3V3_SYS via ISO1212 VCC1 pin.
+    # NO reverse-polarity diode here — it would backfeed 24V field power into 3V3_SYS
+    # and defeat the ISO1212 galvanic isolation. The field side must stay isolated.
+
+    # --- J6 Display connector protection ---
+    # SPI signals go directly to Radxa GPIO — add TVS clamping
+    add(_next_ref("D"), "ESD5Z3.3", FP_ESD_SOD523, "Device", "D_TVS",
+        [("A","GND"),("K","SPI3_CLK")])
+    add(_next_ref("D"), "ESD5Z3.3", FP_ESD_SOD523, "Device", "D_TVS",
+        [("A","GND"),("K","SPI3_MOSI")])
+    add(_next_ref("D"), "ESD5Z3.3", FP_ESD_SOD523, "Device", "D_TVS",
+        [("A","GND"),("K","SCREEN_RST")])
+    add(_next_ref("D"), "ESD5Z3.3", FP_ESD_SOD523, "Device", "D_TVS",
+        [("A","GND"),("K","SCREEN_DC")])
+
+    # --- I2C bus protection ---
+    # I2C1_SDA/SCL go to Radxa + all I2C devices — add TVS
+    add(_next_ref("D"), "ESD5Z3.3", FP_ESD_SOD523, "Device", "D_TVS",
+        [("A","GND"),("K","I2C1_SDA")])
+    add(_next_ref("D"), "ESD5Z3.3", FP_ESD_SOD523, "Device", "D_TVS",
+        [("A","GND"),("K","I2C1_SCL")])
+
+    # --- J4 power pin protection ---
+    # PTC fuses on 3V3 and 5V outputs to prevent backfeed/short damage
+    add(_next_ref("F"), "PTC_500mA", FP_PTC_0805, "Device", "Polyfuse",
+        [("1","3V3_SYS"),("2","3V3_J4_OUT")])
+    add(_next_ref("F"), "PTC_500mA", FP_PTC_0805, "Device", "Polyfuse",
+        [("1","5V_SYS"),("2","5V_J4_OUT")])
 
     return comps
 
