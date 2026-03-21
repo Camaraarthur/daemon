@@ -70,7 +70,7 @@ FP_WS2812B     = "LED_SMD:LED_WS2812B-2020_PLCC4_2.0x2.0mm"
 FP_IR_LED      = "LED_SMD:LED_0603_1608Metric_Pad1.05x0.95mm_HandSolder"
 FP_NFET_SOT23  = "Package_TO_SOT_SMD:SOT-23"
 FP_PMOS_SOT23  = "Package_TO_SOT_SMD:SOT-23"
-FP_WAGO_4P     = "Daemon_V0:TerminalBlock_WAGO_2060-404_1x04_P4.00mm_Horizontal"
+FP_WAGO_3P     = "Daemon_V0:TerminalBlock_WAGO_2060-404_1x04_P4.00mm_Horizontal"  # Using 4-pad footprint for 3-position (pad 4 unused)
 FP_CHIP_ANT    = "Daemon_V0:Antenna_Chip_Johanson_0915AT43A0026"
 FP_TANT_CASEB  = "Capacitor_Tantalum_SMD:CP_EIA-3528-21_Kemet-B"
 FP_NTC_0402    = "Resistor_SMD:R_0402_1005Metric"
@@ -842,8 +842,9 @@ def _build_components() -> list[dict]:
          ("NC_7","NC"),("NC_15","NC"),("NC_16","NC")])
 
     # WAGO field connector — pins 3/4 go to relay COMs (not directly to protection chain)
-    add(_next_ref("J"), "WAGO-2060-404", FP_WAGO_4P, "Connector_Generic", "Conn_01x04",
-        [("1","ISO_GND1"),("2","ISO_VCC1"),("3","WAGO_COM1"),("4","WAGO_COM2")])
+    # WAGO 2060-403 (3-position). ISO_VCC1 powered internally from 3V3_SYS — not exposed.
+    add(_next_ref("J"), "WAGO-2060-403", FP_WAGO_3P, "Connector_Generic", "Conn_01x03",
+        [("1","ISO_GND1"),("2","WAGO_COM1"),("3","WAGO_COM2")])
 
     # G6K-2F-Y DPDT signal relay — switches WAGO pins 3/4 between:
     #   NC (default/boot): → protection chain → ISO1212 (industrial 24V mode)
