@@ -99,6 +99,8 @@ FP_TS3USB221   = "Package_SO:VSSOP-10_3x3mm_P0.5mm"  # USB 2.0 DPDT data switch
 FP_SOT236      = "Package_TO_SOT_SMD:SOT-23-6"
 FP_PTC_0805    = "Fuse:Fuse_0805_2012Metric"
 FP_ESD_SOD523  = "Diode_SMD:D_SOD-523"
+FP_RELAY_G6K   = "Relay_SMD:Relay_DPDT_Omron_G6K-2F-Y"
+FP_SOD123      = "Diode_SMD:D_SOD-123"
 
 
 # -- Net definitions ---------------------------------------------------------
@@ -233,6 +235,10 @@ NETS: list[str] = [
     "USB_DP_4_SW", "USB_DM_4_SW",  # Stinger port 4
     # Security
     "ATECC_SDA", "ATECC_SCL",
+    # WAGO switchable bypass
+    "WAGO_COM1", "WAGO_COM2",  # Relay common pins (from WAGO pins 3/4)
+    "WAGO_MODE",               # GPIO: LOW=industrial, HIGH=RS-485
+    "RLY_COIL_N",              # Relay coil negative (BSS138 drain)
 ]
 
 # -- Component definitions ---------------------------------------------------
@@ -823,9 +829,29 @@ def _build_components() -> list[dict]:
          ("OUT1","ISO_DO1"),("OUT2","ISO_DO2"),
          ("NC_7","NC"),("NC_15","NC"),("NC_16","NC")])
 
-    # WAGO field connector
+    # WAGO field connector — pins 3/4 go to relay COMs (not directly to protection chain)
     add(_next_ref("J"), "WAGO-2060-404", FP_WAGO_4P, "Connector_Generic", "Conn_01x04",
-        [("1","ISO_GND1"),("2","ISO_VCC1"),("3","ISO_IN1_RAW"),("4","ISO_IN2_RAW")])
+        [("1","ISO_GND1"),("2","ISO_VCC1"),("3","WAGO_COM1"),("4","WAGO_COM2")])
+
+    # G6K-2F-Y DPDT signal relay — switches WAGO pins 3/4 between:
+    #   NC (default/boot): → protection chain → ISO1212 (industrial 24V mode)
+    #   NO (GPIO HIGH):    → SP3485 A/B (RS-485/Modbus/DMX mode)
+    # Break-before-make: 24V NEVER reaches SP3485 even during transition.
+    # Relay pin map (G6K-2F-Y): 1=Coil+, 16=Coil-, 12=COM1, 11=NC1, 9=NO1,
+    #                            4=COM2, 5=NC2, 8=NO2
+    add("K1", "G6K-2F-Y", FP_RELAY_G6K, "Relay", "Relay_DPDT",
+        [("Coil_1","3V3_SYS"),("Coil_2","RLY_COIL_N"),
+         ("COM1","WAGO_COM1"),("NC1","ISO_IN1_RAW"),("NO1","RS485_A"),
+         ("COM2","WAGO_COM2"),("NC2","ISO_IN2_RAW"),("NO2","RS485_B")])
+    # BSS138 N-MOSFET relay driver (gate from GPIO, drain to coil negative)
+    add(_next_ref("Q"), "BSS138", FP_NFET_SOT23, "Device", "Q_NPN_GSD",
+        [("G","WAGO_MODE"),("S","GND"),("D","RLY_COIL_N")])
+    # Flyback diode across coil (cathode to 3V3, anode to coil negative)
+    add(_next_ref("D"), "1N4148W", FP_SOD123, "Device", "D",
+        [("A","RLY_COIL_N"),("K","3V3_SYS")])
+    # Gate pull-down: default LOW = relay de-energized = industrial mode (safe)
+    add(_next_ref("R"), "10k", FP_R0402, "Device", "R",
+        [("1","WAGO_MODE"),("2","GND")])
 
     # Channel 1 protection chain
     add(_next_ref("F"), "60R", FP_PTC_1206, "Device", "Polyfuse",
@@ -1078,7 +1104,7 @@ def _build_components() -> list[dict]:
          ("27","PCF8574_INT"),("28","GND"),  # Pin 27=I2C2_SDA repurposed as PCF8574 IRQ
          ("29","STINGER_EN_1"),("30","GND"),
          ("31","STINGER_EN_2"),("32","SCREEN_DC"),
-         ("33","STINGER_EN_3"),("34","GND"),          # was AUX_GPIO_4; sacrificed for EN_3
+         ("33","STINGER_EN_3"),("34","WAGO_MODE"),     # GPIO: LOW=industrial, HIGH=RS-485 relay
          ("35","I2S_LRCLK"),("36","MCU_LED_DIN"),  # 3.3V → level shifter input
          ("37","PMIC_KILL"),("38","I2S_DATA_IN"),   # was NAV_CENTER (→ PCF8574+BSS84)
          ("39","GND"),      ("40","I2S_DATA_OUT")])
@@ -1623,6 +1649,13 @@ def _build_netlist() -> str:
         "ATECC608B": {"SDA":"5","SCL":"6","VCC":"8","GND":"4",
                       "NC_1":"1","NC_2":"2","NC_3":"3","EPAD":"9"},
         "SS14": {"A":"1","K":"2"},  # 1A Schottky SMA
+        "Relay_DPDT": {  # G6K-2F-Y: pin map from KiCad symbol
+            "Coil_1":"1","Coil_2":"16",
+            "COM1":"12","NC1":"11","NO1":"9",
+            "COM2":"4","NC2":"5","NO2":"8",
+        },
+        "1N4148W": {"A":"1","K":"2"},
+        "BSS138": {"G":"1","S":"2","D":"3"},
         "Q_NMOS_GSD": {"G":"1","S":"2","D":"3"},
         "Q_NMOS_GDS": {"G":"1","D":"2","S":"3"},  # AO3400A SOT-23: G=1,D=2,S=3
         "USB_A": {  # USB-A connector (both male and female): pad 1=VBUS, 2=D-, 3=D+, 4=GND, 5=shield

@@ -7,7 +7,7 @@ def test_component_count():
     """232 components: CC1101 filterbalun (pi→14-component TI DN017, +10), 4× AVDD NP0 caps (+4),
     3 GDO pull-downs removed (-3), ISO1212 phantom pins fixed + SENSE resistors (+2), ISO pull-ups
     removed (-2), MAX98357A BTL ferrites→10Ω 0805 resistors (0), NTC 10k→51k (0), VREG cap 100n→4.7u (0)."""
-    assert len(COMPONENTS) == 311
+    assert len(COMPONENTS) == 315
 
 
 def test_no_duplicate_refs():
