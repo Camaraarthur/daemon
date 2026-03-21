@@ -94,7 +94,7 @@ FP_TSOP38238   = "OptoDevice:Vishay_MINICAST-3Pin"
 FP_CONN_1X04_F = "Connector_PinSocket_2.54mm:PinSocket_1x04_P2.54mm_Vertical"  # Female
 FP_CONN_1X03_F = "Connector_PinSocket_2.54mm:PinSocket_1x03_P2.54mm_Vertical"  # Female
 # Security & protection
-FP_ATECC608B   = "Package_DFN_QFN:DFN-8-1EP_2x3mm_P0.5mm_EP0.6x1.6mm"
+FP_ATECC608B   = "Package_DFN_QFN:DFN-8-1EP_2x3mm_P0.5mm_EP0.61x2.2mm"
 FP_TS3USB221   = "Package_SO:VSSOP-10_3x3mm_P0.5mm"  # USB 2.0 DPDT data switch
 FP_SOT236      = "Package_TO_SOT_SMD:SOT-23-6"
 FP_PTC_0805    = "Fuse:Fuse_0805_2012Metric"
