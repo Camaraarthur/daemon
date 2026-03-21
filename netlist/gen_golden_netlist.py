@@ -93,6 +93,12 @@ FP_SP3485      = "Package_SO:SOIC-8_3.9x4.9mm_P1.27mm"
 FP_TSOP38238   = "OptoDevice:Vishay_MINICAST-3Pin"
 FP_CONN_1X04_F = "Connector_PinSocket_2.54mm:PinSocket_1x04_P2.54mm_Vertical"  # Female
 FP_CONN_1X03_F = "Connector_PinSocket_2.54mm:PinSocket_1x03_P2.54mm_Vertical"  # Female
+# Security & protection
+FP_ATECC608B   = "Package_DFN_QFN:DFN-8-1EP_2x3mm_P0.5mm_EP0.6x1.6mm"
+FP_TS3USB221   = "Package_SO:VSSOP-10_3x3mm_P0.5mm"  # USB 2.0 DPDT data switch
+FP_SOT236      = "Package_TO_SOT_SMD:SOT-23-6"
+FP_PTC_0805    = "Fuse:Fuse_0805_2012Metric"
+FP_ESD_SOD523  = "Diode_SMD:D_SOD-523"
 
 
 # -- Net definitions ---------------------------------------------------------
@@ -208,6 +214,25 @@ NETS: list[str] = [
     "CODEC_ADCOUT",
     # PMIC charge indicator
     "PMIC_LIGHT_LED",
+    # Protection nets
+    "GOOBAY_VBUS_FUSED",  # PTC-fused Goobay VBUS before IP5328P
+    "USB_VBUS_1_FUSED", "USB_VBUS_4_FUSED", "USB_VBUS_5_FUSED",  # PTC-fused charging VBUSes
+    "BAT_PROTECTED",  # After reverse-polarity Schottky, before PTC
+    # ADC protected inputs
+    "ADC_AIN0_P", "ADC_AIN1_P", "ADC_AIN2_P", "ADC_AIN3_P",
+    # GPIO protected
+    "AUX_GPIO_1_P", "AUX_GPIO_2_P", "AUX_GPIO_3_P", "IR_GPIO_P",
+    # Audio protected
+    "SPK_P_FUSED", "SPK_N_FUSED", "TRRS_RING2_P",
+    # Ethernet protected
+    "ETH_MDI_TXP_P", "ETH_MDI_TXN_P", "ETH_MDI_RXP_P", "ETH_MDI_RXN_P",
+    # USB data switch nets
+    "USB_DP_1_SW", "USB_DM_1_SW",  # Stinger port 1 data after switch
+    "USB_DP_2_SW", "USB_DM_2_SW",  # Stinger port 2
+    "USB_DP_3_SW", "USB_DM_3_SW",  # Stinger port 3
+    "USB_DP_4_SW", "USB_DM_4_SW",  # Stinger port 4
+    # Security
+    "ATECC_SDA", "ATECC_SCL",
 ]
 
 # -- Component definitions ---------------------------------------------------
@@ -844,7 +869,7 @@ def _build_components() -> list[dict]:
     # CC1/CC2 → IP5328P internal CC detection (DRP with Try.SRC)
     # D+/D- → Hub 1 upstream: laptop/host PC connects here, sees Radxa+stingers+ETH as hub
     add(_next_ref("J"), "Goobay-74446", FP_USB_C_RCPT, "Connector", "USB_C_Receptacle",
-        [("VBUS","IP5328P_VBUS"),("GND","GND"),
+        [("VBUS","GOOBAY_VBUS_FUSED"),("GND","GND"),  # VBUS goes through PTC before reaching PMIC
          ("D+","USB_UP_DP"),("D-","USB_UP_DM"),
          ("CC1","GOOBAY_CC1"),("CC2","GOOBAY_CC2")])
     # CC1/CC2: IP5328P has internal 5.1K Rd pull-downs + Rp for DRP.
@@ -1348,6 +1373,97 @@ def _build_components() -> list[dict]:
     # UART debug: signals available on J4 pins 6/7 (AUX_GPIO_1/2 = UART2 TX/RX).
     # No separate header needed.
 
+    # ======================================================================
+    # Q: ATECC608B Secure Element — Hardware Crypto & Key Storage
+    # ======================================================================
+    # I2C address 0x60 (default). Provides: ECDSA P-256, SHA-256 HMAC,
+    # hardware-bound key storage (keys never leave chip), device identity,
+    # firmware signing, CC1101 AES key protection, anti-rollback counter.
+    add("U31", "ATECC608B", FP_ATECC608B, "Security", "ATECC608B",
+        [("SDA","I2C1_SDA"),("SCL","I2C1_SCL"),
+         ("VCC","3V3_SYS"),("GND","GND"),
+         ("NC_1","NC"),("NC_2","NC"),("NC_3","NC"),("EPAD","GND")])
+    add(_next_ref("C"), "100n", FP_C0402, "Device", "C", [("1","3V3_SYS"),("2","GND")])
+
+    # ======================================================================
+    # R: Port Protection — Make Every Port Unfryable
+    # ======================================================================
+
+    # --- J13 Goobay VBUS: TVS + PTC (was ZERO protection) ---
+    # PTC fuse in series: limits sustained fault current so TVS survives
+    add(_next_ref("F"), "PTC_1A", FP_PTC_1206, "Device", "Polyfuse",
+        [("1","GOOBAY_VBUS_FUSED"),("2","IP5328P_VBUS")])
+    # TVS on the PMIC side of the PTC
+    add(_next_ref("D"), "SMBJ5.0A", FP_TVS_SMB, "Device", "D_TVS",
+        [("A","GND"),("K","IP5328P_VBUS")])
+
+    # --- USB charging port PTC fuses (sustained overvoltage protection) ---
+    # These sit between the SS34 Schottky anodes and the connector VBUS.
+    # At normal operation: SY6280 output passes through. At overvoltage: PTC trips.
+    add(_next_ref("F"), "PTC_500mA", FP_PTC_0805, "Device", "Polyfuse",
+        [("1","USB_VBUS_1"),("2","USB_VBUS_1_FUSED")])
+    add(_next_ref("F"), "PTC_500mA", FP_PTC_0805, "Device", "Polyfuse",
+        [("1","USB_VBUS_4"),("2","USB_VBUS_4_FUSED")])
+    add(_next_ref("F"), "PTC_500mA", FP_PTC_0805, "Device", "Polyfuse",
+        [("1","USB_VBUS_5"),("2","USB_VBUS_5_FUSED")])
+
+    # --- BAT1 reverse polarity protection ---
+    # SS34 in series: blocks reversed battery entirely (0.45V drop)
+    add(_next_ref("D"), "SS34", FP_SCHOTTKY_SMA, "Device", "D_Schottky",
+        [("A","BAT"),("K","BAT_PROTECTED")])
+    # TVS on BAT_ISO: clamps overvoltage (12V lead-acid) so PTC trips
+    add(_next_ref("D"), "SMBJ5.0A", FP_TVS_SMB, "Device", "D_TVS",
+        [("A","GND"),("K","BAT_ISO")])
+
+    # --- J17 Analog input protection (10k series + TVS per channel) ---
+    # Protects ADS1115 from 24V, negative voltage, and ESD
+    for i in range(4):
+        ain = f"ADC_AIN{i}"
+        ain_p = f"ADC_AIN{i}_P"
+        add(_next_ref("R"), "10k", FP_R0402, "Device", "R",
+            [("1",ain_p),("2",ain)])
+        add(_next_ref("D"), "ESD5Z3.3", FP_ESD_SOD523, "Device", "D_TVS",
+            [("A","GND"),("K",ain)])
+
+    # --- J4 GPIO protection (1k series + TVS per pin) ---
+    # Protects Radxa SoC GPIO from overvoltage and ESD
+    for gpio, gpio_p in [("AUX_GPIO_1","AUX_GPIO_1_P"),
+                          ("AUX_GPIO_2","AUX_GPIO_2_P"),
+                          ("AUX_GPIO_3","AUX_GPIO_3_P"),
+                          ("IR_GPIO","IR_GPIO_P")]:
+        add(_next_ref("R"), "1k", FP_R0402, "Device", "R",
+            [("1",gpio_p),("2",gpio)])
+        add(_next_ref("D"), "ESD5Z3.3", FP_ESD_SOD523, "Device", "D_TVS",
+            [("A","GND"),("K",gpio)])
+
+    # RS-485 bus TVS (Bourns CDSOT23-SM712: asymmetric ±7V/±12V clamp)
+    add(_next_ref("D"), "SM712", FP_SOT236, "Device", "D_TVS_x2_AAC",
+        [("1","RS485_A"),("2","GND"),("3","RS485_B")])
+
+    # --- J15 TRRS audio protection ---
+    # PTC on speaker lines (protects MAX98357A from phantom power)
+    add(_next_ref("F"), "PTC_200mA", FP_PTC_0805, "Device", "Polyfuse",
+        [("1","SPK_P"),("2","SPK_P_FUSED")])
+    add(_next_ref("F"), "PTC_200mA", FP_PTC_0805, "Device", "Polyfuse",
+        [("1","SPK_N"),("2","SPK_N_FUSED")])
+    # Series resistor on Ring2 (limits current from 48V phantom to codec MICBIAS)
+    add(_next_ref("R"), "1k", FP_R0402, "Device", "R",
+        [("1","TRRS_RING2"),("2","TRRS_RING2_P")])
+    # TVS on Ring2 after series R
+    add(_next_ref("D"), "ESD5Z3.3", FP_ESD_SOD523, "Device", "D_TVS",
+        [("A","GND"),("K","TRRS_RING2_P")])
+
+    # --- J14 Ethernet surge protection ---
+    # CDSOT23-SM712 on PHY side of MagJack (lightning/ring voltage)
+    add(_next_ref("D"), "SM712", FP_SOT236, "Device", "D_TVS_x2_AAC",
+        [("1","ETH_MDI_TXP"),("2","GND"),("3","ETH_MDI_TXN")])
+    add(_next_ref("D"), "SM712", FP_SOT236, "Device", "D_TVS_x2_AAC",
+        [("1","ETH_MDI_RXP"),("2","GND"),("3","ETH_MDI_RXN")])
+
+    # --- WAGO field power reverse polarity protection ---
+    add(_next_ref("D"), "SS14", FP_SCHOTTKY_SMA, "Device", "D_Schottky",
+        [("A","ISO_VCC1"),("K","3V3_SYS")])
+
     return comps
 
 
@@ -1503,7 +1619,10 @@ def _build_netlist() -> str:
         },
         "TSOP38238": {"OUT":"1","GND":"2","VS":"3"},
         "AMBER_0402": {"A":"2","K":"1"},  # charge indicator LED
-        "D_TVS_x2_AAC": {"A1":"1","K":"2","A2":"3"},  # VCAN26A2 SC-70 3-pin dual TVS
+        "D_TVS_x2_AAC": {"A1":"1","K":"2","A2":"3"},  # VCAN26A2/SM712 3-pin dual TVS
+        "ATECC608B": {"SDA":"5","SCL":"6","VCC":"8","GND":"4",
+                      "NC_1":"1","NC_2":"2","NC_3":"3","EPAD":"9"},
+        "SS14": {"A":"1","K":"2"},  # 1A Schottky SMA
         "Q_NMOS_GSD": {"G":"1","S":"2","D":"3"},
         "Q_NMOS_GDS": {"G":"1","D":"2","S":"3"},  # AO3400A SOT-23: G=1,D=2,S=3
         "USB_A": {  # USB-A connector (both male and female): pad 1=VBUS, 2=D-, 3=D+, 4=GND, 5=shield
