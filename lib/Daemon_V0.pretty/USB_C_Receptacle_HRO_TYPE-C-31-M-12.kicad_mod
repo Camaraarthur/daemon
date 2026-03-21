@@ -354,7 +354,7 @@
 		(remove_unused_layers no)
 		(uuid "e783dde5-f762-4528-9b55-9220820b0b1c")
 	)
-	(model "${KICAD8_3DMODEL_DIR}/Connector_USB.3dshapes/USB_C_Receptacle_HRO_TYPE-C-31-M-12.wrl"
+	(model "${KIPRJMOD}/lib/3dmodels/HRO_TYPE-C-31-M-12.step"
 		(offset
 			(xyz 0 0 0)
 		)

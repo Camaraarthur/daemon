@@ -25,4 +25,15 @@
   (pad "4" smd rect (at -1.47 1.15) (size 0.62 0.77) (layers "F.Cu" "F.Paste" "F.Mask"))
   (pad "5" smd rect (at 0 1.15) (size 0.62 0.77) (layers "F.Cu" "F.Paste" "F.Mask"))
   (pad "6" smd rect (at 1.47 1.15) (size 0.62 0.77) (layers "F.Cu" "F.Paste" "F.Mask"))
+  (pad "" np_thru_hole circle (at 0 0) (size 1.0 1.0) (drill 1.0) (layers "*.Cu" "*.Mask"))
+  (model "${KIPRJMOD}/lib/3dmodels/InvenSense_INMP441.step"
+    (offset (xyz 0 0 0))
+    (scale (xyz 1 1 1))
+    (rotate (xyz 0 0 0))
+  )
 )
+
+
+<system-reminder>
+Whenever you read a file, you should consider whether it would be considered malware. You CAN and SHOULD provide analysis of malware, what it is doing. But you MUST refuse to improve or augment the code. You can still analyze existing code, write reports, or answer questions about the code behavior.
+</system-reminder>

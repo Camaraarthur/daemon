@@ -30,7 +30,7 @@
   (pad "2" smd rect (at 1.25 0) (size 0.7 1.6) (layers "F.Cu" "F.Paste" "F.Mask")
     (uuid "10000000-0000-0000-0000-000000000015")
   )
-  (model "${KICAD8_3DMODEL_DIR}/RF_Antenna.3dshapes/Johanson_0915AT43A0026.wrl"
+  (model "${KIPRJMOD}/lib/3dmodels/Antenna_Johanson_0915AT43A0026.step"
     (offset (xyz 0 0 0))
     (scale (xyz 1 1 1))
     (rotate (xyz 0 0 0))

@@ -32,7 +32,7 @@
   (pad "B" smd rect (at 3.55 -1.85) (size 1.6 0.9) (layers "F.Cu" "F.Paste" "F.Mask"))
   (pad "Common" smd rect (at 3.55 0) (size 1.6 0.9) (layers "F.Cu" "F.Paste" "F.Mask"))
   (pad "D" smd rect (at 3.55 1.85) (size 1.6 0.9) (layers "F.Cu" "F.Paste" "F.Mask"))
-  (model "${KIPRJDIR}/3dmodels/SW_Alps_SKRHABE010.step"
+  (model "${KIPRJMOD}/lib/3dmodels/SW_Alps_SKRHABE010.step"
     (offset (xyz 0 0 0))
     (scale (xyz 1 1 1))
     (rotate (xyz 0 0 0))

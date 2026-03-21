@@ -310,7 +310,7 @@
   )
   (fp_circle (center 2.875 -2.15) (end 2.975 -2.15) (layer F.Fab) (width 0.2))
   (fp_line (start -5.5 1.35) (end 5.5 1.35) (layer F.Fab) (width 0.1))
-  (model "${KIPRJDIR}/3dmodels/USB_C_Plug_GCT_USB4155.step"
+  (model "${KIPRJMOD}/lib/3dmodels/USB_C_Plug_GCT_USB4155.step"
     (offset (xyz 0 0 0))
     (scale (xyz 1 1 1))
     (rotate (xyz 0 0 0))
