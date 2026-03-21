@@ -61,7 +61,8 @@ FP_C_TMR_TANT  = "Capacitor_Tantalum_SMD:CP_EIA-7343-31_Kemet-D"
 FP_CC1101      = "Package_DFN_QFN:QFN-20-1EP_4x4mm_P0.5mm_EP2.6x2.6mm"
 FP_ISO1212     = "Package_SO:SSOP-16_3.9x4.9mm_P0.635mm"  # TI ISO1212 DBQ = SSOP-16 (NOT SOIC-16W)
 FP_CONN_1X03   = "Connector_PinHeader_2.54mm:PinHeader_1x03_P2.54mm_Vertical"
-FP_CONN_2X04   = "Connector_PinSocket_2.54mm:PinSocket_2x04_P2.54mm_Vertical"
+FP_CONN_2X05   = "Connector_PinSocket_2.54mm:PinSocket_2x05_P2.54mm_Vertical"
+FP_CONN_1X05_F = "Connector_PinSocket_2.54mm:PinSocket_1x05_P2.54mm_Vertical"
 FP_USB_C_RCPT  = "Connector_USB:USB_C_Receptacle_HRO_TYPE-C-31-M-12"
 FP_RTL8152B    = "Package_DFN_QFN:QFN-24-1EP_4x4mm_P0.5mm_EP2.6x2.6mm"
 FP_MAGJACK     = "Daemon_V0:RJ45_Hanrun_HR911105A_Horizontal"
@@ -1058,14 +1059,17 @@ def _build_components() -> list[dict]:
          ("39","GND"),      ("40","I2S_DATA_OUT")])
 
     # ======================================================================
-    # Auxiliary GPIO header (2x4 female socket for breadboard jumpers)
+    # Auxiliary I/O header (2x5 female socket — universal breakout)
     # ======================================================================
-    add("J4", "AUX-GPIO", FP_CONN_2X04, "Connector_Generic", "Conn_02x04_Odd_Even",
-        [("1","ISO_DO1"),("2","ISO_DO2"),
-         ("3","IR_GPIO"),("4","AUX_GPIO_1"),
-         ("5","AUX_GPIO_2"),("6","AUX_GPIO_3"),
-         ("7","GND"),("8","GND")])  # AUX_GPIO_4 sacrificed for STINGER_EN_3
-    # ISO1212 OUT1/OUT2 are push-pull (not open-drain) — no pull-ups needed.
+    # All pins are general-purpose from the user's perspective.
+    # Internal connections (SP3485, IR MOSFET, ISO1212) are abstracted by software.
+    # The daemon agent decides what each pin does at runtime.
+    add("J4", "DAEMON-IO", FP_CONN_2X05, "Connector_Generic", "Conn_02x05_Odd_Even",
+        [("1","3V3_SYS"),   ("2","5V_SYS"),      # Power out
+         ("3","AUX_GPIO_1"), ("4","AUX_GPIO_2"),  # GPIO (UART2 TX/RX, PWM, etc.)
+         ("5","AUX_GPIO_3"), ("6","IR_GPIO"),     # GPIO (RS485 DE, IR TX, etc.)
+         ("7","RS485_A"),    ("8","RS485_B"),      # Differential bus
+         ("9","GND"),        ("10","GND")])
 
     # ======================================================================
     # 3V3_SYS bulk decoupling at header (sourced from Radxa pin 1/17, no on-board regulator)
@@ -1301,8 +1305,8 @@ def _build_components() -> list[dict]:
     # VDD decoupling
     add(_next_ref("C"), "100n", FP_C0402, "Device", "C", [("1","3V3_SYS"),("2","GND")])
     # Analog input header (1x4): AIN0-AIN3 broken out for external sensors
-    add("J17", "Analog-In", FP_CONN_1X04_F, "Connector_Generic", "Conn_01x04",
-        [("1","ADC_AIN0"),("2","ADC_AIN1"),("3","ADC_AIN2"),("4","ADC_AIN3")])
+    add("J17", "Analog-In", FP_CONN_1X05_F, "Connector_Generic", "Conn_01x05",
+        [("1","ADC_AIN0"),("2","ADC_AIN1"),("3","ADC_AIN2"),("4","ADC_AIN3"),("5","GND")])
 
     # ======================================================================
     # N: SP3485 — RS-485 Transceiver (Modbus / DMX-512)
@@ -1326,9 +1330,7 @@ def _build_components() -> list[dict]:
     add(_next_ref("R"), "120", FP_R0402, "Device", "R", [("1","RS485_A"),("2","RS485_B")])
     # VCC decoupling
     add(_next_ref("C"), "100n", FP_C0402, "Device", "C", [("1","3V3_SYS"),("2","GND")])
-    # RS-485 terminal (3-pin header: A, B, GND)
-    add("J18", "RS485-Bus", FP_CONN_1X03_F, "Connector_Generic", "Conn_01x03",
-        [("1","RS485_A"),("2","RS485_B"),("3","GND")])
+    # RS-485 A/B broken out on J4 (DAEMON-IO header) — no separate terminal needed.
 
     # ======================================================================
     # O: TSOP38238 — IR Receiver (38kHz demodulated output)
@@ -1343,13 +1345,8 @@ def _build_components() -> list[dict]:
     add("U30", "TSOP38238", FP_TSOP38238, "Sensor_Optical", "TSOP38238",
         [("OUT","IR_RX"),("GND","GND"),("VS","IR_VS_FILT")])
 
-    # ======================================================================
-    # P: UART Header — Serial Debug / Legacy Device Interface
-    # ======================================================================
-    # AUX_GPIO_1 = UART2_TX, AUX_GPIO_2 = UART2_RX (shared with RS-485)
-    # When RS-485 DE is low (receive mode), UART is available for direct serial.
-    add("J19", "UART-Debug", FP_CONN_1X04_F, "Connector_Generic", "Conn_01x04",
-        [("1","GND"),("2","AUX_GPIO_1"),("3","AUX_GPIO_2"),("4","3V3_SYS")])
+    # UART debug: signals available on J4 pins 6/7 (AUX_GPIO_1/2 = UART2 TX/RX).
+    # No separate header needed.
 
     return comps
 
