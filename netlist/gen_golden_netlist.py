@@ -1365,14 +1365,15 @@ def _build_components() -> list[dict]:
     add(_next_ref("R"), "2.2k", FP_R0402, "Device", "R",
         [("1","CODEC_MICBIAS"),("2","TRRS_RING2")])
 
-    # Codec headphone output → TRRS Tip/Ring1 via DC-blocking caps
-    # These connect in parallel with the MAX98357A BTL outputs (through the NC switches).
-    # When headphones are plugged in: NC switches open (disconnect amp from speaker),
-    # and codec drives headphones via Tip/Ring1 directly.
+    # Codec headphone output → TRRS Tip/Ring1 via DC-blocking caps.
+    # MUST connect to SPK_P_FUSED/SPK_N_FUSED (Tip/Ring1 jack contacts),
+    # NOT AMP_OUT_P/N_FILT (TipSwitch side — goes open when plug inserted!).
+    # When headphones plugged in: NC switches open, amp disconnects from Tip/Ring1,
+    # but codec output remains connected via these caps.
     add(_next_ref("C"), "100u", FP_TANT_CASEB, "Device", "C_Polarized",
-        [("1","CODEC_LHPOUT"),("2","AMP_OUT_P_FILT")])
+        [("1","CODEC_LHPOUT"),("2","SPK_P_FUSED")])
     add(_next_ref("C"), "100u", FP_TANT_CASEB, "Device", "C_Polarized",
-        [("1","CODEC_RHPOUT"),("2","AMP_OUT_N_FILT")])
+        [("1","CODEC_RHPOUT"),("2","SPK_N_FUSED")])
 
     # ======================================================================
     # M: ADS1115 — 4-Channel 16-bit I2C ADC
