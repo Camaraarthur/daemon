@@ -78,7 +78,7 @@ FP_L_0402      = "Inductor_SMD:L_0402_1005Metric"
 # Audio subsystem footprints
 FP_QFN16       = "Package_DFN_QFN:QFN-16-1EP_3x3mm_P0.5mm_EP1.75x1.75mm"
 FP_INMP441     = "Daemon_V0:InvenSense_INMP441_BottomPort"
-FP_TRRS        = "Daemon_V0:Jack_3.5mm_SJ2-2531X-SMT"
+FP_TRRS        = "Connector_Audio:Jack_3.5mm_PJ320D_Horizontal"  # 3.5mm TRRS, SMD, LCSC C95562
 FP_JST_SH2     = "Connector_JST:JST_SH_SM02B-SRSS-TB_1x02-1MP_P1.00mm_Horizontal"
 FP_FERRITE_0603 = "Inductor_SMD:L_0603_1608Metric"
 FP_LED_0402    = "LED_SMD:LED_0402_1005Metric"
@@ -1210,21 +1210,25 @@ def _build_components() -> list[dict]:
 
     # TRRS jack — NC switch topology:
     #   TipSwitch (NC input)   ← AMP_OUT_P_FILT (from ferrite bead)
-    #   Tip (wiper/output)     → SPK_P (to speaker connector)
-    #   Ring1Switch (NC input) ← AMP_OUT_N_FILT
-    #   Ring1 (wiper/output)   → SPK_N (to speaker connector)
-    # When plug absent: NC closed → amp drives speaker.
-    # When plug inserted: NC opens → speaker disconnected.
-    # SJ2-2531X-SMT TRRS jack with NC switches
-    # KiCad symbol pin names: Sleeve, Detect, Tip, TipSwitch, Ring1, Ring1Switch
-    # NC switches: closed when no plug → amp drives speaker; open when inserted
-    add(_next_ref("J"), "SJ2-2531X", FP_TRRS, "Connector", "AudioJack4_Switch",
-        [("Sleeve","GND"),("Detect","TRRS_DETECT_RAW"),
-         ("Tip","SPK_P_FUSED"),("TipSwitch","AMP_OUT_P_FILT"),
-         ("Ring1","SPK_N_FUSED"),("Ring1Switch","AMP_OUT_N_FILT"),
-         ("Ring2","TRRS_RING2")])  # Ring2 = headset mic / line-in → NAU88C22 codec
+    # PJ-320D 3.5mm TRRS jack (no NC switches — software controls speaker/headphone)
+    # Pads: T=Tip, R1=Ring1, R2=Ring2, S=Sleeve
+    # Tip/Ring1 carry audio out (from amp via series resistors OR codec headphone out)
+    # Ring2 carries headset mic in (to NAU88C22 codec)
+    # Speaker switching: firmware detects plug via codec jack detect, shuts down
+    # MAX98357A via SD_MODE pin. No mechanical switching needed.
+    add(_next_ref("J"), "PJ-320D", FP_TRRS, "Connector", "AudioJack4",
+        [("T","SPK_P_FUSED"),("R1","SPK_N_FUSED"),
+         ("R2","TRRS_RING2"),("S","GND")])
 
-    # Speaker connector (JST-SH 2-pin) — wired to wiper side of NC switch
+    # Amp output → speaker/headphones (no NC switch, direct connection)
+    # AMP_OUT_P_FILT → SPK_P (speaker) and SPK_P_FUSED (TRRS via PTC)
+    # Both amp and codec drive the same output — firmware ensures only one is active.
+    add(_next_ref("R"), "0R", FP_R0402, "Device", "R",
+        [("1","AMP_OUT_P_FILT"),("2","SPK_P")])
+    add(_next_ref("R"), "0R", FP_R0402, "Device", "R",
+        [("1","AMP_OUT_N_FILT"),("2","SPK_N")])
+
+    # Speaker connector (JST-SH 2-pin)
     add(_next_ref("J"), "Speaker", FP_JST_SH2, "Connector_Generic", "Conn_01x02",
         [("1","SPK_P"),("2","SPK_N"),("MP","GND")])
 
@@ -1750,11 +1754,9 @@ def _build_netlist() -> str:
             "CC2":"B5","D+_B6":"B6","D-_B7":"B7","SBU2":"B8",
             "S1":"S1",
         },
-        "AudioJack4_Switch": {
-            # SJ2-2531X KiCad footprint pads: T, R1, R2, S, GND
-            "Sleeve":"S","Tip":"T","Ring1":"R1","Ring2":"R2",
-            "TipSwitch":"T","Ring1Switch":"R1",  # NC switch → same pad as main contact
-            "Detect":"GND",  # Detect NC to sleeve = GND pad
+        "AudioJack4": {
+            # PJ-320D: pads T, R1, R2, S (no NC switches, no detect)
+            "T":"T","R1":"R1","R2":"R2","S":"S",
         },
         "Goobay-74446": {  # USB-C receptacle used as Goobay bridge (HRO TYPE-C-31-M-12)
             "GND_A1":"A1","GND_A12":"A12","VBUS_A4":"A4","VBUS_A9":"A9",
