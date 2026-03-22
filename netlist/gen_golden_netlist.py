@@ -490,7 +490,7 @@ def _build_components() -> list[dict]:
         [("1","PMIC_KILL"),("2","GND")])
     # Physical power button
     add(_next_ref("SW"), "SW_PWR", FP_SW_PUSH, "Switch", "SW_Push",
-        [("1","PMIC_KEY"),("2","GND")])
+        [("1","PMIC_KEY"),("2","GND"),("MP","GND")])
     # J5 (PWR_MGMT header) removed — PMIC_KILL now routed via J3 pin 37
     # Software reboot: `sudo reboot` (warm SoC reset, no PMIC needed)
     # Software shutdown: drive J3.37 HIGH → Q3 pulls PMIC_KEY → IP5328P off
@@ -592,10 +592,23 @@ def _build_components() -> list[dict]:
         conn_ref = _next_ref("J")
         dp_sw = dp_net + "_SW"
         dm_sw = dm_net + "_SW"
-        conn_pins = [("VBUS",vbus_net),("D+",dp_sw),("D-",dm_sw),("GND","GND")]
-        if has_cc:
+        if conn_part == "USB_C_Plug_USB2.0":
+            # GCT USB4155: all 26 pads (A1-A12, B1-B12, S1, S2)
             cc_net = f"STINGER{port}_CC"
-            conn_pins.append(("CC", cc_net))
+            conn_pins = [
+                ("GND_A1","GND"),("GND_A12","GND"),("VBUS_A4",vbus_net),("VBUS_A9",vbus_net),
+                ("CC",cc_net),("D+",dp_sw),("D-",dm_sw),("SBU1","GND"),
+                ("NC_A2","NC"),("NC_A3","NC"),("NC_A10","NC"),("NC_A11","NC"),
+                ("GND_B1","GND"),("GND_B12","GND"),("VBUS_B4",vbus_net),("VBUS_B9",vbus_net),
+                ("VCONN","GND"),("D+_B6",dp_sw),("D-_B7",dm_sw),("SBU2","GND"),
+                ("NC_B2","NC"),("NC_B3","NC"),("NC_B10","NC"),("NC_B11","NC"),
+                ("S1","GND"),("S2","GND"),
+            ]
+        elif conn_part == "USB_A":
+            conn_pins = [("VBUS",vbus_net),("D+",dp_sw),("D-",dm_sw),("GND","GND"),
+                         ("Shield","GND")]
+        else:
+            conn_pins = [("VBUS",vbus_net),("D+",dp_sw),("D-",dm_sw),("GND","GND")]
         add(conn_ref, conn_part, conn_fp, conn_lib, conn_part, conn_pins)
 
         if has_cc:
@@ -645,9 +658,13 @@ def _build_components() -> list[dict]:
         [("IN","5V_SYS"),("OUT","USB_VBUS_5"),("EN","STINGER_EN_5"),
          ("GND","GND"),("ISET","STINGER_ISET_5")])
     # USB-C female receptacle — host port (provides 5V to connected devices)
+    # HRO TYPE-C-31-M-12: all 17 pads mapped
     add(_next_ref("J"), "USB_C_Receptacle", FP_USB_C_RCPT, "Connector", "USB_C_Receptacle_USB2.0",
-        [("VBUS","USB_VBUS_5"),("D+","HUB2_DN_DP_3_SW"),("D-","HUB2_DN_DM_3_SW"),
-         ("GND","GND"),("CC1","STINGER5_CC1"),("CC2","STINGER5_CC2")])
+        [("GND_A1","GND"),("GND_A12","GND"),("VBUS_A4","USB_VBUS_5"),("VBUS_A9","USB_VBUS_5"),
+         ("CC1","STINGER5_CC1"),("D+","HUB2_DN_DP_3_SW"),("D-","HUB2_DN_DM_3_SW"),("SBU1","GND"),
+         ("GND_B1","GND"),("GND_B12","GND"),("VBUS_B4","USB_VBUS_5"),("VBUS_B9","USB_VBUS_5"),
+         ("CC2","STINGER5_CC2"),("D+_B6","HUB2_DN_DP_3_SW"),("D-_B7","HUB2_DN_DM_3_SW"),("SBU2","GND"),
+         ("S1","GND")])
     # CC1/CC2 pull-UPS (56k Rp to 3V3_SYS — DFP host advertising 5V/900mA)
     # USB PD spec: Rp=56k→3.3V = 900mA source; Rd=5.1k→GND = sink/device. This is a HOST port.
     add(_next_ref("R"), "56k", FP_R0402, "Device", "R", [("1","3V3_SYS"),("2","STINGER5_CC1")])
@@ -908,10 +925,13 @@ def _build_components() -> list[dict]:
     # VBUS → IP5328P_VBUS for charging (NOT directly to 5V_SYS!)
     # CC1/CC2 → IP5328P internal CC detection (DRP with Try.SRC)
     # D+/D- → Hub 1 upstream: laptop/host PC connects here, sees Radxa+stingers+ETH as hub
+    # HRO TYPE-C-31-M-12: all 17 pads mapped
     add(_next_ref("J"), "Goobay-74446", FP_USB_C_RCPT, "Connector", "USB_C_Receptacle",
-        [("VBUS","GOOBAY_VBUS_FUSED"),("GND","GND"),  # VBUS goes through PTC before reaching PMIC
-         ("D+","USB_UP_DP"),("D-","USB_UP_DM"),
-         ("CC1","GOOBAY_CC1"),("CC2","GOOBAY_CC2")])
+        [("GND_A1","GND"),("GND_A12","GND"),("VBUS_A4","GOOBAY_VBUS_FUSED"),("VBUS_A9","GOOBAY_VBUS_FUSED"),
+         ("CC1","GOOBAY_CC1"),("D+","USB_UP_DP"),("D-","USB_UP_DM"),("SBU1","GND"),
+         ("GND_B1","GND"),("GND_B12","GND"),("VBUS_B4","GOOBAY_VBUS_FUSED"),("VBUS_B9","GOOBAY_VBUS_FUSED"),
+         ("CC2","GOOBAY_CC2"),("D+_B6","USB_UP_DP"),("D-_B7","USB_UP_DM"),("SBU2","GND"),
+         ("S1","GND")])
     # CC1/CC2: IP5328P has internal 5.1K Rd pull-downs + Rp for DRP.
     # No external CC resistors needed — IP5328P handles UFP/DFP detection.
     # ESD protection on CC lines (direct path to IP5328P — vulnerable to ESD)
@@ -1004,7 +1024,9 @@ def _build_components() -> list[dict]:
     add(_next_ref("J"), "HR911105A", FP_MAGJACK, "Connector", "RJ45_Hanrun_HR911105A_Horizontal",
         [("1","ETH_MDI_TXP"),("2","ETH_MDI_TXN"),("3","ETH_MDI_RXP"),
          ("4","3V3_CLEAN"),("5","3V3_CLEAN"),("6","ETH_MDI_RXN"),
-         ("8","GND"),("SH","GND")])
+         ("7","GND"),("8","GND"),  # Pin 7: unused pair, tie to GND
+         ("9","NC"),("10","NC"),("11","NC"),("12","NC"),  # LED pins: NC (no LEDs populated)
+         ("SH","GND")])
 
     # RTL8152B external supply decoupling
     add(_next_ref("C"), "100n", FP_C0402, "Device", "C", [("1","3V3_CLEAN"),("2","GND")])
@@ -1076,9 +1098,10 @@ def _build_components() -> list[dict]:
 
     for i in range(1, 5):
         din = "LED_DIN" if i == 1 else f"WS2812B_DOUT_{i-1}"
-        dout_pins = []
         if i < 4:
             dout_pins = [("DOUT", f"WS2812B_DOUT_{i}")]
+        else:
+            dout_pins = [("DOUT", "NC")]  # Last LED in chain — DOUT pad unused
         add(_next_ref("LED"), "WS2812B-2020", FP_WS2812B, "LED", "WS2812B-2020",
             [("VDD","5V_SYS"),("VSS","GND"),("DIN",din)] + dout_pins)
         add(_next_ref("C"), "100n", FP_C0402, "Device", "C", [("1","5V_SYS"),("2","GND")])
@@ -1164,8 +1187,7 @@ def _build_components() -> list[dict]:
          ("BCLK","I2S_BCLK"),("LRCLK","I2S_LRCLK"),("DIN","I2S_DATA_OUT"),
          ("OUTP","AMP_OUT_P"),("OUTN","AMP_OUT_N"),
          ("~{SD_MODE}","AMP_SD"),
-         ("GAIN_SLOT","NC"),   # Float = +15dB gain, mono mix (L+R)/2 — best for single speaker
-         ("EPAD","GND")])
+         ("GAIN_SLOT","NC")])
 
     # Dual INMP441 microphones — bottom-port (sound hole through PCB)
     # Both powered from MIC_VDD (switched via mic LED → always-on together)
@@ -1204,7 +1226,7 @@ def _build_components() -> list[dict]:
 
     # Speaker connector (JST-SH 2-pin) — wired to wiper side of NC switch
     add(_next_ref("J"), "Speaker", FP_JST_SH2, "Connector_Generic", "Conn_01x02",
-        [("1","SPK_P"),("2","SPK_N")])
+        [("1","SPK_P"),("2","SPK_N"),("MP","GND")])
 
     # SD_MODE pull-up to 3V3_SYS. MAX98357A has internal 100k pull-down on SD_MODE.
     # SJ2-2531X detect pin: NC to Sleeve(GND) when no plug; floats when plug inserted.
@@ -1218,9 +1240,9 @@ def _build_components() -> list[dict]:
 
     # TVS diodes on BTL outputs
     add(_next_ref("U"), "ESD9B5.0ST5G", FP_TVS_SC70, "Daemon_V0", "ESD9B5.0ST5G",
-        [("A","AMP_OUT_P"),("K","GND")])
+        [("A","AMP_OUT_P"),("K","GND"),("NC_3","NC")])
     add(_next_ref("U"), "ESD9B5.0ST5G", FP_TVS_SC70, "Daemon_V0", "ESD9B5.0ST5G",
-        [("A","AMP_OUT_N"),("K","GND")])
+        [("A","AMP_OUT_N"),("K","GND"),("NC_3","NC")])
 
     # BTL output series resistors (replaces ferrite beads — MAX98357A is filterless Class D;
     # speaker coil IS the filter. Ferrites create resonance and exceed 500mA rating at 3.2W/4Ω peak.
@@ -1422,7 +1444,7 @@ def _build_components() -> list[dict]:
     add("U31", "ATECC608B", FP_ATECC608B, "Security", "ATECC608B",
         [("SDA","I2C1_SDA"),("SCL","I2C1_SCL"),
          ("VCC","3V3_SYS"),("GND","GND"),
-         ("NC_1","NC"),("NC_2","NC"),("NC_3","NC"),("EPAD","GND")])
+         ("NC_1","NC"),("NC_2","NC"),("NC_3","NC"),("NC_7","NC"),("EPAD","GND")])
     add(_next_ref("C"), "100n", FP_C0402, "Device", "C", [("1","3V3_SYS"),("2","GND")])
 
     # ======================================================================
@@ -1487,7 +1509,8 @@ def _build_components() -> list[dict]:
 
     # RS-485 bus TVS (Bourns CDSOT23-SM712: asymmetric ±7V/±12V clamp)
     add(_next_ref("D"), "SM712", FP_SOT236, "Device", "D_TVS_x2_AAC",
-        [("1","RS485_A"),("2","GND"),("3","RS485_B")])
+        [("A1","RS485_A"),("K","GND"),("A2","RS485_B"),
+         ("NC_4","NC"),("NC_5","NC"),("NC_6","NC")])
 
     # --- J15 TRRS audio protection ---
     # PTC on speaker lines (protects MAX98357A from phantom power)
@@ -1505,9 +1528,11 @@ def _build_components() -> list[dict]:
     # --- J14 Ethernet surge protection ---
     # CDSOT23-SM712 on PHY side of MagJack (lightning/ring voltage)
     add(_next_ref("D"), "SM712", FP_SOT236, "Device", "D_TVS_x2_AAC",
-        [("1","ETH_MDI_TXP"),("2","GND"),("3","ETH_MDI_TXN")])
+        [("A1","ETH_MDI_TXP"),("K","GND"),("A2","ETH_MDI_TXN"),
+         ("NC_4","NC"),("NC_5","NC"),("NC_6","NC")])
     add(_next_ref("D"), "SM712", FP_SOT236, "Device", "D_TVS_x2_AAC",
-        [("1","ETH_MDI_RXP"),("2","GND"),("3","ETH_MDI_RXN")])
+        [("A1","ETH_MDI_RXP"),("K","GND"),("A2","ETH_MDI_RXN"),
+         ("NC_4","NC"),("NC_5","NC"),("NC_6","NC")])
 
     # WAGO field power: ISO_VCC1 is powered from 3V3_SYS via ISO1212 VCC1 pin.
     # NO reverse-polarity diode here — it would backfeed 24V field power into 3V3_SYS
@@ -1705,10 +1730,24 @@ def _build_netlist() -> str:
         "RED_0402": {"A":"2","K":"1"},  # LED_0402: pad1=K, pad2=A
         "GREEN_0402": {"A":"2","K":"1"},
         "VSMB294008": {"A":"2","K":"1"},  # IR LED (0603)
-        "ESD9B5.0ST5G": {"A":"1","K":"2"},  # TVS diode
-        "USB_C_Plug_USB2.0": {"VBUS":"A4","CC":"A5","D+":"A6","D-":"A7","GND":"A1"},
+        "ESD9B5.0ST5G": {"A":"1","K":"2","NC_3":"3"},  # TVS diode SC-70 (3 pads)
+        "USB_C_Plug_USB2.0": {
+            # GCT USB4155: 24 signal pads (A1-A12, B1-B12) + 2 shield (S1, S2)
+            "GND_A1":"A1","GND_A12":"A12","VBUS_A4":"A4","VBUS_A9":"A9",
+            "CC":"A5","D+":"A6","D-":"A7","SBU1":"A8",
+            "NC_A2":"A2","NC_A3":"A3","NC_A10":"A10","NC_A11":"A11",
+            "GND_B1":"B1","GND_B12":"B12","VBUS_B4":"B4","VBUS_B9":"B9",
+            "VCONN":"B5","D+_B6":"B6","D-_B7":"B7","SBU2":"B8",
+            "NC_B2":"B2","NC_B3":"B3","NC_B10":"B10","NC_B11":"B11",
+            "S1":"S1","S2":"S2",
+        },
         "USB_C_Receptacle_USB2.0": {
-            "VBUS":"A4","D-":"A7","D+":"A6","CC1":"A5","CC2":"B5","GND":"A1",
+            # HRO TYPE-C-31-M-12: 16 signal pads + 1 shield (S1)
+            "GND_A1":"A1","GND_A12":"A12","VBUS_A4":"A4","VBUS_A9":"A9",
+            "CC1":"A5","D+":"A6","D-":"A7","SBU1":"A8",
+            "GND_B1":"B1","GND_B12":"B12","VBUS_B4":"B4","VBUS_B9":"B9",
+            "CC2":"B5","D+_B6":"B6","D-_B7":"B7","SBU2":"B8",
+            "S1":"S1",
         },
         "AudioJack4_Switch": {
             # SJ2-2531X KiCad footprint pads: T, R1, R2, S, GND
@@ -1716,8 +1755,12 @@ def _build_netlist() -> str:
             "TipSwitch":"T","Ring1Switch":"R1",  # NC switch → same pad as main contact
             "Detect":"GND",  # Detect NC to sleeve = GND pad
         },
-        "Goobay-74446": {  # USB-C receptacle used as Goobay bridge
-            "VBUS":"A4","D-":"A7","D+":"A6","CC1":"A5","CC2":"B5","GND":"A1",
+        "Goobay-74446": {  # USB-C receptacle used as Goobay bridge (HRO TYPE-C-31-M-12)
+            "GND_A1":"A1","GND_A12":"A12","VBUS_A4":"A4","VBUS_A9":"A9",
+            "CC1":"A5","D+":"A6","D-":"A7","SBU1":"A8",
+            "GND_B1":"B1","GND_B12":"B12","VBUS_B4":"B4","VBUS_B9":"B9",
+            "CC2":"B5","D+_B6":"B6","D-_B7":"B7","SBU2":"B8",
+            "S1":"S1",
         },
         "NAU88C22": {  # QFN-32+EPAD
             "LHPOUT":"1","RHPOUT":"2","LSPKOUT":"3","RSPKOUT":"4","AVDD":"5",
@@ -1737,14 +1780,13 @@ def _build_netlist() -> str:
         },
         "TSOP38238": {"OUT":"1","GND":"2","VS":"3"},
         "AMBER_0402": {"A":"2","K":"1"},  # charge indicator LED
-        "D_TVS_x2_AAC": {"A1":"1","K":"2","A2":"3"},  # VCAN26A2/SM712 3-pin dual TVS
-        "ATECC608B": {"SDA":"5","SCL":"6","VCC":"8","GND":"4",
+        "D_TVS_x2_AAC": {"A1":"1","K":"2","A2":"3","NC_4":"4","NC_5":"5","NC_6":"6"},  # SM712/VCAN26A2 in SOT-23-6 (pads 4-6 NC)
+        "ATECC608B": {"SDA":"5","SCL":"6","NC_7":"7","VCC":"8","GND":"4",
                       "NC_1":"1","NC_2":"2","NC_3":"3","EPAD":"9"},
         "SS14": {"A":"1","K":"2"},  # 1A Schottky SMA
-        "Relay_DPDT": {  # G6K-2F-Y: pin map from KiCad symbol
-            "Coil_1":"1","Coil_2":"16",
-            "COM1":"12","NC1":"11","NO1":"9",
-            "COM2":"4","NC2":"5","NO2":"8",
+        "Relay_DPDT": {  # G6K-2F-Y SMD: 8 pads (DIP pins 1,4,5,8,9,11,12,16 → SMD pads 1-8)
+            "Coil_1":"1","COM2":"2","NC2":"3","NO2":"4",
+            "NO1":"5","NC1":"6","COM1":"7","Coil_2":"8",
         },
         "1N4148W": {"A":"1","K":"2"},
         "BSS138": {"G":"1","S":"2","D":"3"},
@@ -1756,13 +1798,16 @@ def _build_netlist() -> str:
             "OE":"1","GND":"2","D1+":"3","D1-":"4","SEL":"5",
             "D2+":"6","D2-":"7","COM+":"8","COM-":"9","VCC":"10",
         },
+        "SW_Push": {"1":"1","2":"2","MP":"MP"},  # Alps SKRTLAE010: pads 1, 2, MP (mount)
+        "Speaker": {"1":"1","2":"2","MP":"MP"},  # JST-SH 2-pin with mount pad (value-based lookup)
         "Q_NMOS_GSD": {"G":"1","S":"2","D":"3"},
         "Q_NMOS_GDS": {"G":"1","D":"2","S":"3"},  # AO3400A SOT-23: G=1,D=2,S=3
         "USB_A": {  # USB-A connector (both male and female): pad 1=VBUS, 2=D-, 3=D+, 4=GND, 5=shield
-            "VBUS":"1","D-":"2","D+":"3","GND":"4",
+            "VBUS":"1","D-":"2","D+":"3","GND":"4","Shield":"5",
         },
         "RJ45_Hanrun_HR911105A_Horizontal": {
-            "1":"1","2":"2","3":"3","4":"4","5":"5","6":"6","8":"8","SH":"SH",
+            "1":"1","2":"2","3":"3","4":"4","5":"5","6":"6","7":"7","8":"8",
+            "9":"9","10":"10","11":"11","12":"12","SH":"SH",
         },
     }
 
