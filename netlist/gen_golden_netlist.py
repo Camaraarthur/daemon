@@ -461,7 +461,7 @@ def _build_components() -> list[dict]:
     # ======================================================================
     # AP2112K SOT-23-5: Pin1=VIN, Pin2=GND, Pin3=EN, Pin4=NC, Pin5=VOUT
     add("U2", "AP2112K-3.3", FP_LDO_SOT23_5, "Regulator_Linear", "AP2112K-3.3",
-        [("VIN","5V_SYS"),("VOUT","3V3_CLEAN"),("GND","GND"),("EN","5V_SYS"),("NC","NC")])
+        [("VIN","5V_SYS"),("VOUT","3V3_CLEAN"),("GND","GND"),("EN","5V_SYS"),("NC_001","NC_002")])
     # LDO input decoupling
     add(_next_ref("C"), "10u",  FP_C0805, "Device", "C", [("1","5V_SYS"),("2","GND")])
     add(_next_ref("C"), "100n", FP_C0402, "Device", "C", [("1","5V_SYS"),("2","GND")])
@@ -598,10 +598,10 @@ def _build_components() -> list[dict]:
             conn_pins = [
                 ("GND_A1","GND"),("GND_A12","GND"),("VBUS_A4",vbus_net),("VBUS_A9",vbus_net),
                 ("CC",cc_net),("D+",dp_sw),("D-",dm_sw),("SBU1","GND"),
-                ("NC_A2","NC"),("NC_A3","NC"),("NC_A10","NC"),("NC_A11","NC"),
+                ("NC_A2","NC_003"),("NC_A3","NC_004"),("NC_A10","NC_005"),("NC_A11","NC_006"),
                 ("GND_B1","GND"),("GND_B12","GND"),("VBUS_B4",vbus_net),("VBUS_B9",vbus_net),
                 ("VCONN","GND"),("D+_B6",dp_sw),("D-_B7",dm_sw),("SBU2","GND"),
-                ("NC_B2","NC"),("NC_B3","NC"),("NC_B10","NC"),("NC_B11","NC"),
+                ("NC_B2","NC_007"),("NC_B3","NC_008"),("NC_B10","NC_009"),("NC_B11","NC_010"),
                 ("S1","GND"),("S2","GND"),
             ]
         elif conn_part == "USB_A":
@@ -856,7 +856,7 @@ def _build_components() -> list[dict]:
          ("SUB1","ISO_SUB1"),("SUB2","ISO_SUB2"),
          ("EN","3V3_SYS"),           # Enable tied high (always-on)
          ("OUT1","ISO_DO1"),("OUT2","ISO_DO2"),
-         ("NC_7","NC"),("NC_15","NC"),("NC_16","NC")])
+         ("NC_011","NC_012"),("NC_013","NC_014"),("NC_015","NC_016")])
 
     # WAGO field connector — pins 3/4 go to relay COMs (not directly to protection chain)
     # WAGO 2060-403 (3-position). ISO_VCC1 powered internally from 3V3_SYS — not exposed.
@@ -1025,7 +1025,7 @@ def _build_components() -> list[dict]:
         [("1","ETH_MDI_TXP"),("2","ETH_MDI_TXN"),("3","ETH_MDI_RXP"),
          ("4","3V3_CLEAN"),("5","3V3_CLEAN"),("6","ETH_MDI_RXN"),
          ("7","GND"),("8","GND"),  # Pin 7: unused pair, tie to GND
-         ("9","NC"),("10","NC"),("11","NC"),("12","NC"),  # LED pins: NC (no LEDs populated)
+         ("9","NC_017"),("10","NC_018"),("11","NC_019"),("12","NC_020"),  # LED pins: NC (no LEDs populated)
          ("SH","GND")])
 
     # RTL8152B external supply decoupling
@@ -1187,7 +1187,7 @@ def _build_components() -> list[dict]:
          ("BCLK","I2S_BCLK"),("LRCLK","I2S_LRCLK"),("DIN","I2S_DATA_OUT"),
          ("OUTP","AMP_OUT_P"),("OUTN","AMP_OUT_N"),
          ("~{SD_MODE}","AMP_SD"),
-         ("GAIN_SLOT","NC")])
+         ("GAIN_SLOT","NC_021")])
 
     # Dual INMP441 microphones — bottom-port (sound hole through PCB)
     # Both powered from MIC_VDD (switched via mic LED → always-on together)
@@ -1244,9 +1244,9 @@ def _build_components() -> list[dict]:
 
     # TVS diodes on BTL outputs
     add(_next_ref("U"), "ESD9B5.0ST5G", FP_TVS_SC70, "Daemon_V0", "ESD9B5.0ST5G",
-        [("A","AMP_OUT_P"),("K","GND"),("NC_3","NC")])
+        [("A","AMP_OUT_P"),("K","GND"),("NC_022","NC_023")])
     add(_next_ref("U"), "ESD9B5.0ST5G", FP_TVS_SC70, "Daemon_V0", "ESD9B5.0ST5G",
-        [("A","AMP_OUT_N"),("K","GND"),("NC_3","NC")])
+        [("A","AMP_OUT_N"),("K","GND"),("NC_024","NC_025")])
 
     # BTL output series resistors (replaces ferrite beads — MAX98357A is filterless Class D;
     # speaker coil IS the filter. Ferrites create resonance and exceed 500mA rating at 3.2W/4Ω peak.
@@ -1445,7 +1445,7 @@ def _build_components() -> list[dict]:
     add("U31", "ATECC608B", FP_ATECC608B, "Security", "ATECC608B",
         [("SDA","I2C1_SDA"),("SCL","I2C1_SCL"),
          ("VCC","3V3_SYS"),("GND","GND"),
-         ("NC_1","NC"),("NC_2","NC"),("NC_3","NC"),("NC_7","NC"),("EPAD","GND")])
+         ("NC_026","NC_027"),("NC_028","NC_029"),("NC_030","NC_031"),("NC_032","NC_033"),("EPAD","GND")])
     add(_next_ref("C"), "100n", FP_C0402, "Device", "C", [("1","3V3_SYS"),("2","GND")])
 
     # ======================================================================
@@ -1511,7 +1511,7 @@ def _build_components() -> list[dict]:
     # RS-485 bus TVS (Bourns CDSOT23-SM712: asymmetric ±7V/±12V clamp)
     add(_next_ref("D"), "SM712", FP_SOT236, "Device", "D_TVS_x2_AAC",
         [("A1","RS485_A"),("K","GND"),("A2","RS485_B"),
-         ("NC_4","NC"),("NC_5","NC"),("NC_6","NC")])
+         ("NC_034","NC_035"),("NC_036","NC_037"),("NC_038","NC_039")])
 
     # --- J15 TRRS audio protection ---
     # PTC on speaker lines (protects MAX98357A from phantom power)
@@ -1530,10 +1530,10 @@ def _build_components() -> list[dict]:
     # CDSOT23-SM712 on PHY side of MagJack (lightning/ring voltage)
     add(_next_ref("D"), "SM712", FP_SOT236, "Device", "D_TVS_x2_AAC",
         [("A1","ETH_MDI_TXP"),("K","GND"),("A2","ETH_MDI_TXN"),
-         ("NC_4","NC"),("NC_5","NC"),("NC_6","NC")])
+         ("NC_040","NC_041"),("NC_042","NC_043"),("NC_044","NC_045")])
     add(_next_ref("D"), "SM712", FP_SOT236, "Device", "D_TVS_x2_AAC",
         [("A1","ETH_MDI_RXP"),("K","GND"),("A2","ETH_MDI_RXN"),
-         ("NC_4","NC"),("NC_5","NC"),("NC_6","NC")])
+         ("NC_046","NC_047"),("NC_048","NC_049"),("NC_050","NC_051")])
 
     # WAGO field power: ISO_VCC1 is powered from 3V3_SYS via ISO1212 VCC1 pin.
     # NO reverse-polarity diode here — it would backfeed 24V field power into 3V3_SYS
@@ -1552,7 +1552,7 @@ def _build_components() -> list[dict]:
          ("3A","STINGER_EN_3"),("3Y","STINGER_OE_3"),
          ("4A","STINGER_EN_4"),("4Y","STINGER_OE_4"),
          ("5A","STINGER_EN_5"),("5Y","STINGER_OE_5"),
-         ("6A","GND"),("6Y","NC"),  # Unused channel — tie input to GND
+         ("6A","GND"),("6Y","NC_052"),  # Unused channel — tie input to GND
          ("VCC","3V3_CLEAN"),("GND","GND")])  # 3V3_CLEAN: available at boot (from AP2112K)
     add(_next_ref("C"), "100n", FP_C0402, "Device", "C", [("1","3V3_CLEAN"),("2","GND")])
 
@@ -1570,7 +1570,7 @@ def _build_components() -> list[dict]:
             [("OE",oe_net),("GND","GND"),
              ("D1+",dp_hub),("D1-",dm_hub),
              ("SEL","GND"),
-             ("D2+","NC"),("D2-","NC"),
+             ("D2+",f"NC_{ref}_DP"),("D2-",f"NC_{ref}_DM"),
              ("COM+",dp_hub+"_SW"),("COM-",dm_hub+"_SW"),
              ("VCC","3V3_CLEAN")])
         add(_next_ref("C"), "100n", FP_C0402, "Device", "C", [("1","3V3_CLEAN"),("2","GND")])
@@ -1579,7 +1579,7 @@ def _build_components() -> list[dict]:
     add("U37", "TS3USB221", FP_TS3USB221, "Analog_Switch", "TS3USB221",
         [("OE","STINGER_OE_5"),("GND","GND"),
          ("D1+","HUB2_DN_DP_3"),("D1-","HUB2_DN_DM_3"),
-         ("SEL","GND"),("D2+","NC"),("D2-","NC"),
+         ("SEL","GND"),("D2+","NC_055"),("D2-","NC_056"),
          ("COM+","HUB2_DN_DP_3_SW"),("COM-","HUB2_DN_DM_3_SW"),
          ("VCC","3V3_CLEAN")])
     add(_next_ref("C"), "100n", FP_C0402, "Device", "C", [("1","3V3_CLEAN"),("2","GND")])
@@ -1613,7 +1613,11 @@ def _build_components() -> list[dict]:
 
 
 # Add BJT intermediate nets (not in original NETS list)
-NETS.extend(["BJT_BASE", "BJT_COLLECTOR", "NC"])
+# Add dynamic nets
+NETS.extend(["BJT_BASE", "BJT_COLLECTOR"])
+# Add all unique NC nets (each NC pad gets its own net so autorouter doesn't connect them)
+_nc_nets = set(n for c in _build_components() for _, n in c["pins"] if n.startswith("NC"))
+NETS.extend(sorted(_nc_nets))
 
 # Build components
 COMPONENTS = _build_components()
@@ -1692,9 +1696,9 @@ def _build_netlist() -> str:
             "DVDD":"19","RBIAS":"20","EPAD":"21",
         },
         "ISO1212": {  # SSOP-16
-            "VCC1":"1","OUT1":"2","OUT2":"3","EN":"4","GND1":"5","SUB1":"6","NC_7":"7","SUB2":"8",
+            "VCC1":"1","OUT1":"2","OUT2":"3","EN":"4","GND1":"5","SUB1":"6","NC_057":"7","SUB2":"8",
             "FGND2":"9","SENSE2":"10","IN2":"11","FGND1":"12","SENSE1":"13","IN1":"14",
-            "NC_15":"15","NC_16":"16",
+            "NC_058":"15","NC_059":"16",
         },
         "PCF8574": {  # SOIC-16
             "A0":"1","A1":"2","A2":"3","P0":"4","P1":"5","P2":"6","P3":"7","VSS":"8",
@@ -1732,7 +1736,7 @@ def _build_netlist() -> str:
         "RED_0402": {"A":"2","K":"1"},  # LED_0402: pad1=K, pad2=A
         "GREEN_0402": {"A":"2","K":"1"},
         "VSMB294008": {"A":"2","K":"1"},  # IR LED (0603)
-        "ESD9B5.0ST5G": {"A":"1","K":"2","NC_3":"3"},  # TVS diode SC-70 (3 pads)
+        "ESD9B5.0ST5G": {"A":"1","K":"2","NC_060":"3"},  # TVS diode SC-70 (3 pads)
         "USB_C_Plug_USB2.0": {
             # GCT USB4155: 24 signal pads (A1-A12, B1-B12) + 2 shield (S1, S2)
             "GND_A1":"A1","GND_A12":"A12","VBUS_A4":"A4","VBUS_A9":"A9",
@@ -1780,9 +1784,9 @@ def _build_netlist() -> str:
         },
         "TSOP38238": {"OUT":"1","GND":"2","VS":"3"},
         "AMBER_0402": {"A":"2","K":"1"},  # charge indicator LED
-        "D_TVS_x2_AAC": {"A1":"1","K":"2","A2":"3","NC_4":"4","NC_5":"5","NC_6":"6"},  # SM712/VCAN26A2 in SOT-23-6 (pads 4-6 NC)
-        "ATECC608B": {"SDA":"5","SCL":"6","NC_7":"7","VCC":"8","GND":"4",
-                      "NC_1":"1","NC_2":"2","NC_3":"3","EPAD":"9"},
+        "D_TVS_x2_AAC": {"A1":"1","K":"2","A2":"3","NC_061":"4","NC_062":"5","NC_063":"6"},  # SM712/VCAN26A2 in SOT-23-6 (pads 4-6 NC)
+        "ATECC608B": {"SDA":"5","SCL":"6","NC_064":"7","VCC":"8","GND":"4",
+                      "NC_065":"1","NC_066":"2","NC_067":"3","EPAD":"9"},
         "SS14": {"A":"1","K":"2"},  # 1A Schottky SMA
         "Relay_DPDT": {  # G6K-2F-Y SMD: 8 pads (DIP pins 1,4,5,8,9,11,12,16 → SMD pads 1-8)
             "Coil_1":"1","COM2":"2","NC2":"3","NO2":"4",
