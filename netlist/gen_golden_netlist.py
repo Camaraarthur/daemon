@@ -1551,11 +1551,12 @@ def _build_components() -> list[dict]:
          ("4A","STINGER_EN_4"),("4Y","STINGER_OE_4"),
          ("5A","STINGER_EN_5"),("5Y","STINGER_OE_5"),
          ("6A","GND"),("6Y","NC"),  # Unused channel — tie input to GND
-         ("VCC","3V3_SYS"),("GND","GND")])
-    add(_next_ref("C"), "100n", FP_C0402, "Device", "C", [("1","3V3_SYS"),("2","GND")])
+         ("VCC","3V3_CLEAN"),("GND","GND")])  # 3V3_CLEAN: available at boot (from AP2112K)
+    add(_next_ref("C"), "100n", FP_C0402, "Device", "C", [("1","3V3_CLEAN"),("2","GND")])
 
-    # TS3USB221 per stinger port: SEL=GND (use channel 1 only), OE from inverter
-    # Hub D+/D- on channel 1 (D1+/D1-), connector D+/D- on COM+/COM-
+    # TS3USB221 per stinger port — powered from 3V3_CLEAN (NOT 3V3_SYS!)
+    # 3V3_CLEAN comes from AP2112K LDO off 5V_SYS, available within ms of power-on.
+    # If powered from 3V3_SYS (Radxa), USB data is blocked for 2-3s during boot = Radxa can't enumerate.
     usb_switch_configs = [
         ("U33", "HUB1_DN_DP_1", "HUB1_DN_DM_1", "STINGER_OE_1"),  # Port 1 (USB-C male)
         ("U34", "HUB1_DN_DP_2", "HUB1_DN_DM_2", "STINGER_OE_2"),  # Port 2 (USB-A female)
@@ -1565,21 +1566,21 @@ def _build_components() -> list[dict]:
     for ref, dp_hub, dm_hub, oe_net in usb_switch_configs:
         add(ref, "TS3USB221", FP_TS3USB221, "Analog_Switch", "TS3USB221",
             [("OE",oe_net),("GND","GND"),
-             ("D1+",dp_hub),("D1-",dm_hub),  # Hub side
-             ("SEL","GND"),  # Select channel 1
-             ("D2+","NC"),("D2-","NC"),  # Channel 2 unused
-             ("COM+",dp_hub+"_SW"),("COM-",dm_hub+"_SW"),  # Connector side (switched)
-             ("VCC","3V3_SYS")])
-        add(_next_ref("C"), "100n", FP_C0402, "Device", "C", [("1","3V3_SYS"),("2","GND")])
+             ("D1+",dp_hub),("D1-",dm_hub),
+             ("SEL","GND"),
+             ("D2+","NC"),("D2-","NC"),
+             ("COM+",dp_hub+"_SW"),("COM-",dm_hub+"_SW"),
+             ("VCC","3V3_CLEAN")])
+        add(_next_ref("C"), "100n", FP_C0402, "Device", "C", [("1","3V3_CLEAN"),("2","GND")])
 
-    # Port 5 (USB-C female, Hub2 port 3) — same treatment
+    # Port 5 (USB-C female, Hub2 port 3)
     add("U37", "TS3USB221", FP_TS3USB221, "Analog_Switch", "TS3USB221",
         [("OE","STINGER_OE_5"),("GND","GND"),
          ("D1+","HUB2_DN_DP_3"),("D1-","HUB2_DN_DM_3"),
          ("SEL","GND"),("D2+","NC"),("D2-","NC"),
          ("COM+","HUB2_DN_DP_3_SW"),("COM-","HUB2_DN_DM_3_SW"),
-         ("VCC","3V3_SYS")])
-    add(_next_ref("C"), "100n", FP_C0402, "Device", "C", [("1","3V3_SYS"),("2","GND")])
+         ("VCC","3V3_CLEAN")])
+    add(_next_ref("C"), "100n", FP_C0402, "Device", "C", [("1","3V3_CLEAN"),("2","GND")])
 
     # --- J6 Display connector protection ---
     # SPI signals go directly to Radxa GPIO — add TVS clamping
