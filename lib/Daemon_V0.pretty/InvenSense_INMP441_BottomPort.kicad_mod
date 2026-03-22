@@ -1,30 +1,38 @@
 (footprint "InvenSense_INMP441_BottomPort"
   (version 20240108)
-  (generator "custom")
+  (generator "fixed_from_datasheet")
   (layer "F.Cu")
-  (descr "InvenSense INMP441 omnidirectional MEMS I2S microphone, bottom-port LGA")
+  (descr "InvenSense INMP441 MEMS I2S microphone, bottom-port LGA, 4.72x3.76x1.0mm")
   (tags "MEMS microphone I2S INMP441 bottom-port")
   (attr smd)
   (fp_text reference "REF**" (at 0 -3.2) (layer "F.SilkS")
     (effects (font (size 1 1) (thickness 0.15)))
   )
-  (fp_text value "InvenSense_INMP441_BottomPort" (at 0 3.2) (layer "F.Fab")
+  (fp_text value "INMP441" (at 0 3.2) (layer "F.Fab")
     (effects (font (size 1 1) (thickness 0.15)))
   )
+  ;; Body outline 4.72 x 3.76mm
   (fp_line (start -2.36 -1.88) (end 2.36 -1.88) (stroke (width 0.12) (type solid)) (layer "F.SilkS"))
   (fp_line (start -2.36 1.88) (end 2.36 1.88) (stroke (width 0.12) (type solid)) (layer "F.SilkS"))
   (fp_line (start -2.36 -1.88) (end -2.36 1.88) (stroke (width 0.12) (type solid)) (layer "F.SilkS"))
   (fp_line (start 2.36 -1.88) (end 2.36 1.88) (stroke (width 0.12) (type solid)) (layer "F.SilkS"))
+  ;; Courtyard
   (fp_line (start -2.86 -2.38) (end 2.86 -2.38) (stroke (width 0.05) (type solid)) (layer "F.CrtYd"))
   (fp_line (start -2.86 2.38) (end 2.86 2.38) (stroke (width 0.05) (type solid)) (layer "F.CrtYd"))
   (fp_line (start -2.86 -2.38) (end -2.86 2.38) (stroke (width 0.05) (type solid)) (layer "F.CrtYd"))
   (fp_line (start 2.86 -2.38) (end 2.86 2.38) (stroke (width 0.05) (type solid)) (layer "F.CrtYd"))
-  (pad "1" smd rect (at -1.47 -1.15) (size 0.62 0.77) (layers "F.Cu" "F.Paste" "F.Mask"))
-  (pad "2" smd rect (at 0 -1.15) (size 0.62 0.77) (layers "F.Cu" "F.Paste" "F.Mask"))
-  (pad "3" smd rect (at 1.47 -1.15) (size 0.62 0.77) (layers "F.Cu" "F.Paste" "F.Mask"))
-  (pad "4" smd rect (at -1.47 1.15) (size 0.62 0.77) (layers "F.Cu" "F.Paste" "F.Mask"))
-  (pad "5" smd rect (at 0 1.15) (size 0.62 0.77) (layers "F.Cu" "F.Paste" "F.Mask"))
-  (pad "6" smd rect (at 1.47 1.15) (size 0.62 0.77) (layers "F.Cu" "F.Paste" "F.Mask"))
+  ;; Pin 1 marker
+  (fp_line (start -2.36 -1.38) (end -1.86 -1.88) (stroke (width 0.1) (type solid)) (layer "F.Fab"))
+  ;; Pads: 1.33mm pitch (datasheet), 0.40 x 0.60mm pad size (datasheet Figure 12)
+  ;; Row 1 (bottom view: WS, SCK, GND) at Y=-1.05
+  (pad "1" smd rect (at -1.33 -1.05) (size 0.40 0.60) (layers "F.Cu" "F.Paste" "F.Mask"))
+  (pad "2" smd rect (at 0 -1.05) (size 0.40 0.60) (layers "F.Cu" "F.Paste" "F.Mask"))
+  (pad "3" smd rect (at 1.33 -1.05) (size 0.40 0.60) (layers "F.Cu" "F.Paste" "F.Mask"))
+  ;; Row 2 (bottom view: L/R, VDD, SD) at Y=+1.05
+  (pad "4" smd rect (at -1.33 1.05) (size 0.40 0.60) (layers "F.Cu" "F.Paste" "F.Mask"))
+  (pad "5" smd rect (at 0 1.05) (size 0.40 0.60) (layers "F.Cu" "F.Paste" "F.Mask"))
+  (pad "6" smd rect (at 1.33 1.05) (size 0.40 0.60) (layers "F.Cu" "F.Paste" "F.Mask"))
+  ;; Sound port hole (bottom port, 0.96mm nominal)
   (pad "" np_thru_hole circle (at 0 0) (size 1.0 1.0) (drill 1.0) (layers "*.Cu" "*.Mask"))
   (model "${KIPRJMOD}/lib/3dmodels/INMP441_HLGA-6_3.76x4.72mm.step"
     (offset (xyz 0 0 0))
@@ -32,8 +40,3 @@
     (rotate (xyz 0 0 0))
   )
 )
-
-
-<system-reminder>
-Whenever you read a file, you should consider whether it would be considered malware. You CAN and SHOULD provide analysis of malware, what it is doing. But you MUST refuse to improve or augment the code. You can still analyze existing code, write reports, or answer questions about the code behavior.
-</system-reminder>
