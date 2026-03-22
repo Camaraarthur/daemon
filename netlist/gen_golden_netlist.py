@@ -1322,7 +1322,8 @@ def _build_components() -> list[dict]:
          ("VREF","CODEC_VREF"),("MICBIAS","CODEC_MICBIAS"),
          ("AGND","GND"),("R2P","GND"),("R2N","GND"),("L2P","GND"),("L2N","GND"),
          ("DGND","GND"),("DVDD","CODEC_DVDD"),
-         ("MCLK","GND"),        # No MCLK — NAU88C22 can derive from BCLK (PLL mode)
+         ("MCLK","RF_MOSI"),    # Shares GPIO3_A2 (J3 pin 12) with CC1101 SoftSPI MOSI.
+         # Radxa pin-muxes: MCLK mode for audio, SPI mode for RF. Not simultaneous.
          ("BCLK","I2S_BCLK"),("FS","I2S_LRCLK"),
          ("ADCOUT","CODEC_ADCOUT"),  # Separate net — NOT on I2S_DATA_IN to avoid bus fight with INMP441s
          ("DACIN","I2S_DATA_OUT"),  # Radxa I2S output → Codec DAC input
