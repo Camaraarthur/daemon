@@ -168,7 +168,7 @@ NETS: list[str] = [
     "5V_AUDIO",
     "AMP_OUT_P", "AMP_OUT_N",
     "AMP_OUT_P_FILT", "AMP_OUT_N_FILT",
-    "AMP_SD", "TRRS_DETECT_RAW", "SPK_P", "SPK_N", "MIC_VDD", "MIC_LED_A",
+    "AMP_SD", "SPK_P", "SPK_N", "MIC_VDD", "MIC_LED_A",
     # WS2812B + IR blaster
     "MCU_LED_DIN",  # 3.3V Radxa GPIO → 74AHCT1G125 level shifter input
     "LED_DIN",      # 5V output of level shifter → first WS2812B DIN
@@ -1232,14 +1232,14 @@ def _build_components() -> list[dict]:
     add(_next_ref("J"), "Speaker", FP_JST_SH2, "Connector_Generic", "Conn_01x02",
         [("1","SPK_P"),("2","SPK_N"),("MP","GND")])
 
-    # SD_MODE pull-up to 3V3_SYS. MAX98357A has internal 100k pull-down on SD_MODE.
-    # SJ2-2531X detect pin: NC to Sleeve(GND) when no plug; floats when plug inserted.
-    # With 47k pull-up, 10k detect-to-SD, internal 100k pull-down:
-    #   No plug (speaker): V = 3.3 × (10k||100k)/(47k+10k||100k) = 0.535V → left channel ✓
-    #   Plug in (headphones): V = 3.3 × 100k/(47k+100k) = 2.24V → right channel
-    # Both states: amp ON. NC switches mechanically disconnect speaker when plug inserted.
-    # Power waste with headphones is ~5mA — acceptable for V0.
-    add(_next_ref("R"), "47k", FP_R0402, "Device", "R",
+    # SD_MODE: controls amp enable + channel selection.
+    # PJ-320D has NO detect pin — headphone detection via NAU88C22 codec (impedance sensing).
+    # Firmware shuts down amp (SD_MODE LOW) when headphones detected, enables for speaker.
+    # With 100k pull-up and internal 100k pull-down: V = 3.3 × 100k/(100k+100k) = 1.65V
+    # 1.65V = left channel at +12dB (per MAX98357A datasheet Table 1). Perfect for mono speaker.
+    # To shut down: firmware drives AMP_SD LOW via a GPIO (connect to a Radxa GPIO).
+    # For V0: just use pull-up, amp always on, firmware controls via I2C to codec.
+    add(_next_ref("R"), "100k", FP_R0402, "Device", "R",
         [("1","3V3_SYS"),("2","AMP_SD")])
 
     # TVS diodes on BTL outputs
@@ -1259,13 +1259,7 @@ def _build_components() -> list[dict]:
     add(_next_ref("C"), "1n", FP_C0402, "Device", "C", [("1","AMP_OUT_P_FILT"),("2","GND")])
     add(_next_ref("C"), "1n", FP_C0402, "Device", "C", [("1","AMP_OUT_N_FILT"),("2","GND")])
 
-    # TRRS detect → AMP_SD: 10k resistor + 100nF RC debounce
-    # SJ2-2531X: Detect NC to Sleeve(GND). No plug = detect LOW. Plug inserted = detect FLOATS.
-    # This pulls AMP_SD lower when no plug (speaker connected), raising it when headphones in.
-    # Not a shutdown mechanism — just shifts SD_MODE voltage for channel selection.
-    add(_next_ref("R"), "10k", FP_R0402, "Device", "R",
-        [("1","TRRS_DETECT_RAW"),("2","AMP_SD")])
-    # AMP_SD bypass cap (100nF to GND — RC debounce with the 10k above)
+    # AMP_SD bypass cap (100nF to GND — noise filtering on SD_MODE line)
     add(_next_ref("C"), "100n", FP_C0402, "Device", "C",
         [("1","AMP_SD"),("2","GND")])
 
