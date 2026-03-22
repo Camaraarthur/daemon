@@ -1349,8 +1349,9 @@ def _build_components() -> list[dict]:
 
     # TRRS Ring2 → Codec left mic input (headset mic / line-in)
     # DC-blocking cap + bias from MICBIAS for electret headset mics
+    # DC-block cap on PROTECTED side (after 1k + TVS, not raw jack pin)
     add(_next_ref("C"), "1u", FP_C0402, "Device", "C",
-        [("1","TRRS_RING2"),("2","CODEC_LMICP")])
+        [("1","TRRS_RING2_P"),("2","CODEC_LMICP")])
     # LMICN to GND for single-ended mic input
     add(_next_ref("R"), "10k", FP_R0402, "Device", "R",
         [("1","CODEC_LMICN"),("2","GND")])
@@ -1359,9 +1360,9 @@ def _build_components() -> list[dict]:
     # Both cannot drive I2S_DATA_IN simultaneously — firmware must disable the other.
     add(_next_ref("R"), "0R_DNP", FP_R0402, "Device", "R",
         [("1","CODEC_ADCOUT"),("2","I2S_DATA_IN")])
-    # MICBIAS to Ring2 via 2.2k (powers electret headset mic)
+    # MICBIAS to Ring2 via 2.2k (on protected side, after 1k series R)
     add(_next_ref("R"), "2.2k", FP_R0402, "Device", "R",
-        [("1","CODEC_MICBIAS"),("2","TRRS_RING2")])
+        [("1","CODEC_MICBIAS"),("2","TRRS_RING2_P")])
 
     # Codec headphone output → TRRS Tip/Ring1 via DC-blocking caps.
     # MUST connect to SPK_P_FUSED/SPK_N_FUSED (Tip/Ring1 jack contacts),
