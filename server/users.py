@@ -1,0 +1,103 @@
+"""User management — SQLite on arturito."""
+import sqlite3
+import hashlib
+import secrets
+import os
+from datetime import datetime, timezone
+from pathlib import Path
+
+try:
+    import bcrypt
+    HAS_BCRYPT = True
+except ImportError:
+    HAS_BCRYPT = False
+
+DB_PATH = Path("/home/arthur/daemon/data/users.db")
+DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+
+def get_db():
+    db = sqlite3.connect(str(DB_PATH))
+    db.row_factory = sqlite3.Row
+    db.execute("""CREATE TABLE IF NOT EXISTS users (
+        id INTEGER PRIMARY KEY,
+        email TEXT UNIQUE NOT NULL,
+        password_hash TEXT NOT NULL,
+        daemon_name TEXT UNIQUE NOT NULL,
+        created_at TEXT NOT NULL,
+        last_login TEXT,
+        settings TEXT DEFAULT '{}'
+    )""")
+    db.execute("""CREATE TABLE IF NOT EXISTS sessions (
+        token TEXT PRIMARY KEY,
+        user_id INTEGER NOT NULL,
+        created_at TEXT NOT NULL,
+        FOREIGN KEY (user_id) REFERENCES users(id)
+    )""")
+    db.commit()
+    return db
+
+def hash_password(password):
+    if HAS_BCRYPT:
+        return "bcrypt:" + bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
+    salt = secrets.token_hex(16)
+    h = hashlib.sha256((salt + password).encode()).hexdigest()
+    return f"{salt}:{h}"
+
+def check_password(stored, password):
+    if stored.startswith("bcrypt:"):
+        return bcrypt.checkpw(password.encode(), stored[7:].encode())
+    salt, h = stored.split(":", 1)
+    return hashlib.sha256((salt + password).encode()).hexdigest() == h
+
+def create_user(email, password, daemon_name):
+    db = get_db()
+    try:
+        db.execute(
+            "INSERT INTO users (email, password_hash, daemon_name, created_at) VALUES (?, ?, ?, ?)",
+            (email.lower(), hash_password(password), daemon_name.lower(), datetime.now(timezone.utc).isoformat())
+        )
+        db.commit()
+        return {"ok": True, "daemon_name": daemon_name.lower()}
+    except sqlite3.IntegrityError as e:
+        if "email" in str(e):
+            return {"ok": False, "error": "Email already registered"}
+        if "daemon_name" in str(e):
+            return {"ok": False, "error": "Daemon name already taken"}
+        return {"ok": False, "error": str(e)}
+
+def login(email_or_name, password):
+    db = get_db()
+    # Try email first, then daemon name
+    user = db.execute("SELECT * FROM users WHERE email = ?", (email_or_name.lower(),)).fetchone()
+    if not user:
+        user = db.execute("SELECT * FROM users WHERE daemon_name = ?", (email_or_name.lower(),)).fetchone()
+    if not user or not check_password(user["password_hash"], password):
+        return None
+    # Create session
+    token = secrets.token_hex(32)
+    db.execute("INSERT INTO sessions (token, user_id, created_at) VALUES (?, ?, ?)",
+               (token, user["id"], datetime.now(timezone.utc).isoformat()))
+    db.execute("UPDATE users SET last_login = ? WHERE id = ?",
+               (datetime.now(timezone.utc).isoformat(), user["id"]))
+    db.commit()
+    return {"token": token, "daemon_name": user["daemon_name"], "email": user["email"]}
+
+def get_user_by_token(token):
+    db = get_db()
+    row = db.execute("""
+        SELECT u.* FROM users u JOIN sessions s ON u.id = s.user_id WHERE s.token = ?
+    """, (token,)).fetchone()
+    return dict(row) if row else None
+
+def get_user_by_daemon_name(name):
+    db = get_db()
+    row = db.execute("SELECT id, email, daemon_name, created_at, settings FROM users WHERE daemon_name = ?",
+                     (name.lower(),)).fetchone()
+    return dict(row) if row else None
+
+def list_users():
+    db = get_db()
+    return [dict(r) for r in db.execute("SELECT id, email, daemon_name, created_at, last_login FROM users ORDER BY created_at DESC").fetchall()]
+
+if __name__ == "__main__":
+    print("Users:", list_users())
