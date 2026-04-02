@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Daemon — Logos & Diagrams</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #111; color: #bfbfbf; font-family: -apple-system, system-ui, sans-serif; padding: 20px; }
+  h1 { color: #ff0505; font-size: 24px; margin-bottom: 8px; }
+  h2 { color: #fff; font-size: 18px; margin: 30px 0 15px; }
+  p { color: #555; font-size: 13px; margin-bottom: 20px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 12px; }
+  .card { background: #1a1a1a; border-radius: 12px; overflow: hidden; border: 1px solid #222; }
+  .card img { width: 100%; display: block; cursor: pointer; }
+  .card .label { padding: 10px 14px; font-size: 12px; color: #888; }
+  a { color: #ff0505; text-decoration: none; }
+</style>
+</head>
+<body>
+<h1>daemon</h1>
+<p>Logos & architecture diagrams. Tap any image to open full size.</p>
+
+<h2>Logo Variations (15)</h2>
+<div class="grid" id="logos"></div>
+
+<h2>Architecture Diagrams (12)</h2>
+<div class="grid" id="diagrams"></div>
+
+<h2>Other</h2>
+<div class="grid" id="other"></div>
+
+<script>
+const logos = [
+  'logo_01_blob_faces', 'logo_02_emoji_letters', 'logo_03_silhouette_creatures',
+  'logo_04_stacked_faces', 'logo_05_tamagotchi_row', 'logo_06_faces_only',
+  'logo_07_morph_letters', 'logo_08_minimal_dots', 'logo_09_one_eye_each',
+  'logo_10_evolving', 'logo_11_hand_drawn', 'logo_12_negative_space',
+  'logo_13_circuit_faces', 'logo_14_shadow_friends', 'logo_15_personality_spectrum'
+];
+const diagrams = [
+  '01_overall_architecture', '02_three_layers', '03_software_first',
+  '04_memory_system', '05_device_mesh', '06_settling_personality',
+  '07_security_isolation', '08_voice_pipeline', '09_plug_and_play',
+  '10_revenue_model', '11_daemon_character', '12_competitive_landscape'
+];
+const other = ['daemon_logo', 'daemon_logo_v2', 'daemon_logo_v3', 'hero_image'];
+
+function render(items, containerId) {
+  const el = document.getElementById(containerId);
+  items.forEach(name => {
+    const label = name.replace(/_/g, ' ').replace(/^\d+\s*/, '');
+    el.innerHTML += `<div class="card"><a href="${name}.png" target="_blank"><img src="${name}.png" alt="${label}" loading="lazy"></a><div class="label">${label}</div></div>`;
+  });
+}
+render(logos, 'logos');
+render(diagrams, 'diagrams');
+render(other, 'other');
+</script>
+</body>
+</html>

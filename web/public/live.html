@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>daemon — live sensors</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { background: #0a0a0a; color: #bfbfbf; font-family: system-ui, sans-serif; padding: 20px; }
+h1 { color: #ff0505; font-size: 16px; margin-bottom: 4px; }
+.sub { font-size: 11px; color: #444; margin-bottom: 20px; }
+.value { font-size: 48px; font-weight: 700; color: #ff0505; }
+.unit { font-size: 18px; color: #555; }
+.label { font-size: 11px; color: #444; margin-top: 4px; }
+canvas { display: block; margin: 20px auto; border: 1px solid #1a1a1a; border-radius: 12px; }
+.status { font-size: 10px; color: #333; text-align: center; margin-top: 10px; }
+.grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; max-width: 400px; margin: 20px auto; }
+.card { background: #111; border: 1px solid #1a1a1a; border-radius: 12px; padding: 16px; text-align: center; }
+</style>
+</head>
+<body>
+
+<h1>daemon sensors</h1>
+<div class="sub">live from ESP32</div>
+
+<div class="grid">
+  <div class="card">
+    <div class="value" id="distance">--</div>
+    <div class="unit">cm</div>
+    <div class="label">distance</div>
+  </div>
+  <div class="card">
+    <div class="value" id="temp" style="font-size: 36px;">--</div>
+    <div class="unit">°F</div>
+    <div class="label">chip temp</div>
+  </div>
+</div>
+
+<canvas id="graph" width="380" height="200"></canvas>
+<div class="status" id="status">connecting...</div>
+
+<script>
+// ESP32 data endpoint — served from ESP32 directly or proxied through MSI
+// Try multiple endpoints
+const ENDPOINTS = [
+  '/api/esp32-data',  // Proxied through our web server
+];
+
+let history = [];
+const canvas = document.getElementById('graph');
+const ctx = canvas.getContext('2d');
+
+function drawGraph() {
+  const w = canvas.width, h = canvas.height;
+  ctx.fillStyle = '#0a0a0a';
+  ctx.fillRect(0, 0, w, h);
+
+  if (history.length < 2) return;
+
+  const maxD = Math.max(...history, 1);
+  const padding = 20;
+  const gw = w - padding * 2;
+  const gh = h - padding * 2;
+
+  // Grid lines
+  ctx.strokeStyle = '#1a1a1a';
+  ctx.lineWidth = 1;
+  for (let i = 0; i <= 4; i++) {
+    const y = padding + (gh / 4) * i;
+    ctx.beginPath(); ctx.moveTo(padding, y); ctx.lineTo(w - padding, y); ctx.stroke();
+  }
+
+  // Plot
+  ctx.strokeStyle = '#ff0505';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  for (let i = 0; i < history.length; i++) {
+    const x = padding + (i / 59) * gw;
+    const y = padding + gh - (Math.min(history[i], maxD) / maxD) * gh;
+    if (i === 0) ctx.moveTo(x, y);
+    else ctx.lineTo(x, y);
+  }
+  ctx.stroke();
+
+  // Fill under
+  ctx.lineTo(padding + ((history.length - 1) / 59) * gw, padding + gh);
+  ctx.lineTo(padding, padding + gh);
+  ctx.closePath();
+  ctx.fillStyle = 'rgba(255, 5, 5, 0.1)';
+  ctx.fill();
+
+  // Labels
+  ctx.fillStyle = '#444';
+  ctx.font = '10px system-ui';
+  ctx.fillText(maxD.toFixed(0) + 'cm', 2, padding + 10);
+  ctx.fillText('0', 2, padding + gh);
+}
+
+async function fetchData() {
+  try {
+    const res = await fetch('/api/esp32-data');
+    const data = await res.json();
+
+    document.getElementById('distance').textContent = data.distance || '--';
+    if (data.temp) document.getElementById('temp').textContent = data.temp;
+    if (data.history && data.history.length > 0) {
+      history = data.history;
+    } else if (data.distance > 0) {
+      history.push(data.distance);
+      if (history.length > 60) history.shift();
+    }
+    drawGraph();
+    document.getElementById('status').textContent = 'live — ' + new Date().toLocaleTimeString();
+  } catch (e) {
+    document.getElementById('status').textContent = 'offline — ' + e.message;
+  }
+}
+
+setInterval(fetchData, 1000);
+fetchData();
+</script>
+</body>
+</html>

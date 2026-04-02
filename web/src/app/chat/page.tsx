@@ -49,7 +49,7 @@ function DevicePanel() {
         {allDevices.filter(d => d.status === 'online').length}/{allDevices.length} online
       </div>
       {allDevices.map(d => (
-        <div key={d.id} className="bg-[#111] border border-[#1a1a1a] rounded-xl p-3">
+        <div key={d.id} className="bg-[#111] border border-[#222] rounded-xl p-3">
           <div className="flex items-center justify-between mb-1.5">
             <div className="flex items-center gap-2">
               <div className={`w-2 h-2 rounded-full ${d.status === 'online' ? 'bg-green-500' : 'bg-[#333]'}`} />
@@ -145,7 +145,7 @@ function MicButton({ onTranscript }: { onTranscript: (text: string) => void }) {
       className={`p-2.5 rounded-full transition-colors shrink-0 ${
         listening
           ? 'bg-[#ff0505] text-white animate-pulse'
-          : 'bg-[#1a1a1a] text-[#555] hover:text-[#ff0505] border border-[#222]'
+          : 'bg-[#1a1a1a] text-[#888] hover:text-[#ff0505] border border-[#282828]'
       }`}
     >
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -164,7 +164,7 @@ function ChatBubble({ message }: { message: Message }) {
       <div className={`max-w-[85%] sm:max-w-[70%] rounded-2xl px-4 py-2.5 text-[13px] leading-relaxed ${
         isUser
           ? 'bg-[#ff0505] text-white'
-          : 'bg-[#161616] text-[#ccc] border border-[#1e1e1e]'
+          : 'bg-[#181818] text-[#ddd] border border-[#252525]'
       }`}>
         <p className="whitespace-pre-wrap">{message.content}</p>
       </div>
@@ -324,8 +324,8 @@ function AuthedChat({ user }: { user: any }) {
       {/* Left sidebar — chat threads, hidden on mobile */}
       {showSidebar && (
         <div className="fixed inset-0 z-50 flex sm:relative sm:inset-auto">
-          <div className="w-56 bg-[#0d0d0d] border-r border-[#1a1a1a] flex flex-col">
-            <div className="p-4 flex items-center justify-between border-b border-[#1a1a1a]">
+          <div className="w-56 bg-[#111] border-r border-[#222] flex flex-col">
+            <div className="p-4 flex items-center justify-between border-b border-[#222]">
               <Image src="/brand/favicon.png" alt="d" width={24} height={24} />
               <button onClick={() => createThread()} className="text-[10px] px-2 py-1 bg-[#1a1a1a] rounded-md text-[#888] hover:text-white">+ new</button>
             </div>
@@ -335,7 +335,7 @@ function AuthedChat({ user }: { user: any }) {
                   key={t.id}
                   onClick={() => { setActiveThread(t.id); setShowSidebar(false) }}
                   className={`w-full text-left p-2.5 rounded-xl text-xs mb-1 truncate ${
-                    activeThreadId === t.id ? 'bg-[#1a1a1a] text-white' : 'text-[#555] hover:bg-[#141414]'
+                    activeThreadId === t.id ? 'bg-[#1a1a1a] text-white' : 'text-[#888] hover:bg-[#181818]'
                   }`}
                 >
                   {t.title}
@@ -350,7 +350,7 @@ function AuthedChat({ user }: { user: any }) {
       {/* Main chat area */}
       <div className="flex-1 flex flex-col min-w-0">
         {/* Header */}
-        <div className="h-12 border-b border-[#1a1a1a] flex items-center justify-between px-3 bg-[#0d0d0d] shrink-0">
+        <div className="h-12 border-b border-[#222] flex items-center justify-between px-3 bg-[#111] shrink-0">
           <div className="flex items-center gap-3">
             <button onClick={() => setShowSidebar(!showSidebar)} className="p-1">
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#666" strokeWidth="2"><path d="M3 12h18M3 6h18M3 18h18"/></svg>
@@ -369,8 +369,8 @@ function AuthedChat({ user }: { user: any }) {
           {!thread || thread.messages.length === 0 ? (
             <div className="flex items-center justify-center h-full">
               <div className="text-center">
-                <Image src="/brand/app-icon.png" alt="daemon" width={60} height={60} className="mx-auto mb-4 opacity-20" />
-                <p className="text-xs text-[#555]">say something</p>
+                <Image src="/brand/app-icon.png" alt="daemon" width={60} height={60} className="mx-auto mb-4" />
+                <p className="text-xs text-[#777]">say something</p>
               </div>
             </div>
           ) : (
@@ -385,7 +385,7 @@ function AuthedChat({ user }: { user: any }) {
                       <div key={i} className="w-1.5 h-1.5 bg-[#ff0505] rounded-full animate-bounce" style={{ animationDelay: `${i * 0.15}s` }} />
                     ))}
                   </div>
-                  <span className="text-[10px] text-[#444]">{statusText}</span>
+                  <span className="text-[10px] text-[#777]">{statusText}</span>
                 </div>
               )}
               <div ref={endRef} />
@@ -394,7 +394,7 @@ function AuthedChat({ user }: { user: any }) {
         </div>
 
         {/* Input */}
-        <div className="border-t border-[#1a1a1a] p-3 bg-[#0d0d0d] shrink-0">
+        <div className="border-t border-[#222] p-3 bg-[#111] shrink-0">
           <div className="flex items-end gap-2 max-w-2xl mx-auto">
             <textarea
               ref={inputRef}
@@ -403,13 +403,13 @@ function AuthedChat({ user }: { user: any }) {
               onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send() } }}
               placeholder="Message your daemon..."
               rows={1}
-              className="flex-1 resize-none rounded-2xl border border-[#1e1e1e] bg-[#141414] px-4 py-2.5 text-sm text-white placeholder-[#666] focus:outline-none focus:border-[#ff0505]/30"
+              className="flex-1 resize-none rounded-2xl border border-[#282828] bg-[#161616] px-4 py-2.5 text-sm text-white placeholder-[#666] focus:outline-none focus:border-[#ff0505]/40"
             />
             <MicButton onTranscript={(text) => setInputDraft(inputDraft + (inputDraft ? ' ' : '') + text)} />
             <button
               onClick={send}
               disabled={isProcessing || !inputDraft.trim()}
-              className="p-2.5 rounded-full bg-[#ff0505] text-white disabled:opacity-20 hover:bg-[#dd0404] transition-colors shrink-0"
+              className="p-2.5 rounded-full bg-[#ff0505] text-white disabled:opacity-40 hover:bg-[#dd0404] transition-colors shrink-0"
             >
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="m5 12 7-7 7 7"/><path d="M12 19V5"/></svg>
             </button>
@@ -418,8 +418,8 @@ function AuthedChat({ user }: { user: any }) {
       </div>
 
       {/* Right sidebar — devices (always visible on desktop, toggleable on mobile) */}
-      <div className={`${showDevices ? 'block' : 'hidden'} sm:block w-full sm:w-72 border-l border-[#1a1a1a] bg-[#0d0d0d] fixed right-0 top-0 h-full sm:relative sm:right-auto z-40 overflow-y-auto`}>
-        <div className="p-3 border-b border-[#1a1a1a] flex items-center justify-between">
+      <div className={`${showDevices ? 'block' : 'hidden'} sm:block w-full sm:w-72 border-l border-[#222] bg-[#111] fixed right-0 top-0 h-full sm:relative sm:right-auto z-40 overflow-y-auto`}>
+        <div className="p-3 border-b border-[#222] flex items-center justify-between">
           <span className="text-xs font-semibold text-[#888] uppercase tracking-wider">Devices</span>
           <button onClick={() => setShowDevices(false)} className="sm:hidden text-[#555]">✕</button>
         </div>

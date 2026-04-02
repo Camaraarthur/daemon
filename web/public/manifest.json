@@ -1,0 +1,11 @@
+{
+  "name": "daemons",
+  "short_name": "daemon",
+  "start_url": "/chat",
+  "display": "standalone",
+  "background_color": "#0a0a0a",
+  "theme_color": "#0a0a0a",
+  "icons": [
+    { "src": "/app-icon.png", "sizes": "512x512", "type": "image/png" }
+  ]
+}

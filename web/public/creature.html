@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>daemon creature generator</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { background: #111; color: #bfbfbf; font-family: system-ui, sans-serif; display: flex; min-height: 100vh; }
+.controls { width: 320px; padding: 24px; border-right: 1px solid #222; overflow-y: auto; }
+.canvas { flex: 1; display: flex; align-items: center; justify-content: center; flex-direction: column; }
+h1 { color: #ff0505; font-size: 18px; margin-bottom: 2px; }
+.sub { font-size: 11px; color: #444; margin-bottom: 24px; }
+.axis { margin-bottom: 18px; }
+.axis-header { display: flex; justify-content: space-between; align-items: baseline; }
+.axis-name { font-size: 13px; color: #ddd; font-weight: 600; }
+.axis-value { font-size: 20px; color: #ff0505; font-weight: 700; }
+.axis-desc { font-size: 10px; color: #555; margin: 2px 0 4px; }
+.axis-labels { display: flex; justify-content: space-between; font-size: 9px; color: #444; margin-top: 2px; }
+input[type=range] { width: 100%; accent-color: #ff0505; height: 4px; }
+svg { max-width: 400px; max-height: 400px; }
+.creature-name { font-size: 13px; color: #555; margin-top: 12px; }
+.btns { display: flex; gap: 8px; margin-top: 20px; width: 100%; }
+button { flex: 1; padding: 10px; border: none; border-radius: 8px; cursor: pointer; font-size: 12px; }
+.btn-rand { background: #ff0505; color: white; }
+.btn-rand:hover { background: #cc0404; }
+.btn-export { background: #1a1a1a; color: #888; border: 1px solid #333; }
+.btn-export:hover { background: #222; color: #fff; }
+</style>
+</head>
+<body>
+
+<div class="controls">
+<h1>daemon creature</h1>
+<div class="sub">five currents shape one creature</div>
+
+<div class="axis">
+  <div class="axis-header"><span class="axis-name">Pace</span><span class="axis-value" id="v-pace">50</span></div>
+  <div class="axis-desc">How fast you think at the machine.</div>
+  <input type="range" id="pace" min="0" max="100" value="50" oninput="update()">
+  <div class="axis-labels"><span>slow, paragraphs</span><span>fast, commands</span></div>
+</div>
+
+<div class="axis">
+  <div class="axis-header"><span class="axis-name">Direction</span><span class="axis-value" id="v-direction">50</span></div>
+  <div class="axis-desc">Do you tell or ask?</div>
+  <input type="range" id="direction" min="0" max="100" value="50" oninput="update()">
+  <div class="axis-labels"><span>ask, explore</span><span>tell, command</span></div>
+</div>
+
+<div class="axis">
+  <div class="axis-header"><span class="axis-name">Warmth</span><span class="axis-value" id="v-warmth">50</span></div>
+  <div class="axis-desc">Emotional bandwidth of your conversations.</div>
+  <input type="range" id="warmth" min="0" max="100" value="50" oninput="update()">
+  <div class="axis-labels"><span>functional, dry</span><span>personal, open</span></div>
+</div>
+
+<div class="axis">
+  <div class="axis-header"><span class="axis-name">Depth</span><span class="axis-value" id="v-depth">50</span></div>
+  <div class="axis-desc">How long you stay with one thread.</div>
+  <input type="range" id="depth" min="0" max="100" value="50" oninput="update()">
+  <div class="axis-labels"><span>quick lookup</span><span>200-msg deep dive</span></div>
+</div>
+
+<div class="axis">
+  <div class="axis-header"><span class="axis-name">Push</span><span class="axis-value" id="v-push">50</span></div>
+  <div class="axis-desc">How much you push back and correct.</div>
+  <input type="range" id="push" min="0" max="100" value="50" oninput="update()">
+  <div class="axis-labels"><span>accepts first answer</span><span>"no, try again"</span></div>
+</div>
+
+<div class="btns">
+  <button class="btn-rand" onclick="randomize()">randomize</button>
+  <button class="btn-export" onclick="exportSVG()">export SVG</button>
+</div>
+</div>
+
+<div class="canvas">
+<svg id="creature" viewBox="0 0 400 450" xmlns="http://www.w3.org/2000/svg"></svg>
+</div>
+
+<script>
+function val(id) { return +document.getElementById(id).value / 100; }
+function lerp(a, b, t) { return a + (b - a) * t; }
+function hsl(h, s, l) { return `hsl(${h},${s}%,${l}%)`; }
+
+function seededRandom(seed) {
+  const x = Math.sin(seed * 127.1) * 43758.5453;
+  return x - Math.floor(x);
+}
+
+function generateCreature(pace, direction, warmth, depth, push) {
+  const cx = 200, cy = 210;
+  const points = 24;
+
+  // DEPTH = size. Deep conversations = massive creature
+  const baseRadius = lerp(50, 130, depth);
+
+  // Build blob body
+  const pts = [];
+  for (let i = 0; i < points; i++) {
+    const angle = (i / points) * Math.PI * 2 - Math.PI / 2;
+    let r = baseRadius;
+
+    // PACE: fast = tall and lean, slow = wide and squat
+    const widthMul = lerp(1.3, 0.7, pace);
+    const heightMul = lerp(0.8, 1.2, pace);
+    r = r * Math.sqrt(
+      (widthMul * Math.cos(angle)) ** 2 +
+      (heightMul * Math.sin(angle)) ** 2
+    );
+
+    // PUSH: high = spiky contour
+    if (push > 0.35) {
+      const freq = Math.floor(lerp(3, 10, push));
+      const amp = lerp(0, 22, (push - 0.35) / 0.65);
+      r += Math.abs(Math.sin(angle * freq)) * amp;
+    }
+
+    // DEPTH: heavy = pear-shaped (wider bottom)
+    if (depth > 0.5 && angle > 0.2 && angle < Math.PI - 0.2) {
+      r += (depth - 0.5) * 25;
+    }
+
+    // Organic noise
+    const seed = Math.round(pace*100 + direction*200 + warmth*300 + depth*400 + push*500);
+    r += (seededRandom(i * 13.7 + seed) - 0.5) * lerp(4, 14, push * 0.5 + pace * 0.5);
+
+    pts.push({
+      x: cx + Math.cos(angle) * r,
+      y: cy + Math.sin(angle) * r,
+    });
+  }
+
+  // Bezier smooth
+  const tension = lerp(0.18, 0.4, 1 - push * 0.7);
+  let path = `M ${pts[0].x.toFixed(1)} ${pts[0].y.toFixed(1)} `;
+  for (let i = 0; i < points; i++) {
+    const p0 = pts[(i - 1 + points) % points];
+    const p1 = pts[i];
+    const p2 = pts[(i + 1) % points];
+    const p3 = pts[(i + 2) % points];
+    path += `C ${(p1.x + (p2.x - p0.x) * tension).toFixed(1)} ${(p1.y + (p2.y - p0.y) * tension).toFixed(1)}, ${(p2.x - (p3.x - p1.x) * tension).toFixed(1)} ${(p2.y - (p3.y - p1.y) * tension).toFixed(1)}, ${p2.x.toFixed(1)} ${p2.y.toFixed(1)} `;
+  }
+  path += 'Z';
+
+  // WARMTH = color
+  const hue = lerp(220, 5, warmth);
+  const sat = lerp(20, 75, warmth);
+  const light = lerp(32, 52, warmth);
+  const bodyColor = hsl(hue, sat, light);
+  const strokeColor = hsl(hue, Math.min(sat + 10, 90), Math.max(light - 15, 15));
+  const strokeW = lerp(1.5, 3.5, depth);
+
+  // Eye position
+  const eyeY = cy - baseRadius * lerp(0.12, 0.3, pace);
+  const eyeSpacing = lerp(10, 28, 1 - direction * 0.5) + baseRadius * 0.1;
+
+  // DIRECTION: asking = big round curious eyes, telling = narrow confident
+  const eyeH = lerp(16, 5, direction);
+  const eyeW = lerp(11, 17, direction);
+  const pupilR = lerp(5.5, 3, direction);
+  const pupilOX = lerp(-1.5, 1, pace);
+  const pupilOY = lerp(1, -0.5, pace);
+
+  // SVG
+  let svg = '';
+
+  // Shadow
+  svg += `<ellipse cx="${cx}" cy="${cy + baseRadius + 12}" rx="${baseRadius * lerp(0.5, 0.75, depth)}" ry="${lerp(4, 10, depth)}" fill="rgba(0,0,0,0.15)"/>`;
+
+  // Body
+  svg += `<path d="${path}" fill="${bodyColor}" stroke="${strokeColor}" stroke-width="${strokeW}" stroke-linejoin="round"/>`;
+
+  // Warm spots
+  if (warmth > 0.5) {
+    const n = Math.floor(lerp(0, 6, (warmth - 0.5) * 2));
+    for (let i = 0; i < n; i++) {
+      const a = seededRandom(i * 7.3 + warmth * 99) * Math.PI * 2;
+      const d2 = seededRandom(i * 13.1 + warmth * 77) * baseRadius * 0.45;
+      svg += `<circle cx="${cx + Math.cos(a) * d2}" cy="${cy + Math.sin(a) * d2}" r="${lerp(3, 8, seededRandom(i * 19))}" fill="${hsl(hue - 15, sat + 15, light + 12)}" opacity="0.25"/>`;
+    }
+  }
+
+  // Eyes
+  const eyeStroke = direction > 0.6 ? `stroke="#111" stroke-width="1"` : '';
+  svg += `<ellipse cx="${cx - eyeSpacing}" cy="${eyeY}" rx="${eyeW}" ry="${eyeH}" fill="white" ${eyeStroke}/>`;
+  svg += `<circle cx="${cx - eyeSpacing + pupilOX}" cy="${eyeY + pupilOY}" r="${pupilR}" fill="#111"/>`;
+  svg += `<ellipse cx="${cx + eyeSpacing}" cy="${eyeY}" rx="${eyeW}" ry="${eyeH}" fill="white" ${eyeStroke}/>`;
+  svg += `<circle cx="${cx + eyeSpacing + pupilOX}" cy="${eyeY + pupilOY}" r="${pupilR}" fill="#111"/>`;
+
+  // Eye highlights (curious = bigger sparkle)
+  if (direction < 0.65) {
+    const hlR = lerp(2.5, 1, direction);
+    svg += `<circle cx="${cx - eyeSpacing + pupilOX + 2}" cy="${eyeY + pupilOY - 2}" r="${hlR}" fill="white"/>`;
+    svg += `<circle cx="${cx + eyeSpacing + pupilOX + 2}" cy="${eyeY + pupilOY - 2}" r="${hlR}" fill="white"/>`;
+  }
+
+  // Eyebrows (Push > 0.5 = determined/angry brows)
+  if (push > 0.45) {
+    const browTilt = lerp(0, -7, (push - 0.45) / 0.55);
+    const bw = eyeW * 1.1;
+    svg += `<line x1="${cx - eyeSpacing - bw * 0.6}" y1="${eyeY - eyeH - 2 + browTilt}" x2="${cx - eyeSpacing + bw * 0.3}" y2="${eyeY - eyeH - 2 - browTilt * 0.5}" stroke="${strokeColor}" stroke-width="2.5" stroke-linecap="round"/>`;
+    svg += `<line x1="${cx + eyeSpacing - bw * 0.3}" y1="${eyeY - eyeH - 2 - browTilt * 0.5}" x2="${cx + eyeSpacing + bw * 0.6}" y2="${eyeY - eyeH - 2 + browTilt}" stroke="${strokeColor}" stroke-width="2.5" stroke-linecap="round"/>`;
+  }
+
+  // Mouth
+  const mouthY = eyeY + lerp(16, 30, depth);
+  const mouthW = lerp(3, 18, warmth);
+  if (warmth > 0.45) {
+    const curve = lerp(0, 10, (warmth - 0.45) / 0.55);
+    svg += `<path d="M ${cx - mouthW} ${mouthY} Q ${cx} ${mouthY + curve} ${cx + mouthW} ${mouthY}" fill="none" stroke="#111" stroke-width="${lerp(1.5, 2.5, warmth)}" stroke-linecap="round"/>`;
+  } else {
+    svg += `<line x1="${cx - mouthW}" y1="${mouthY}" x2="${cx + mouthW}" y2="${mouthY}" stroke="#111" stroke-width="1.5" stroke-linecap="round"/>`;
+  }
+
+  // Blush (high warmth)
+  if (warmth > 0.6) {
+    const bY = eyeY + eyeH + 5;
+    const op = lerp(0, 0.3, (warmth - 0.6) / 0.4);
+    svg += `<ellipse cx="${cx - eyeSpacing - 2}" cy="${bY}" rx="7" ry="4" fill="${hsl(0, 55, 68)}" opacity="${op}"/>`;
+    svg += `<ellipse cx="${cx + eyeSpacing + 2}" cy="${bY}" rx="7" ry="4" fill="${hsl(0, 55, 68)}" opacity="${op}"/>`;
+  }
+
+  // Push > 0.7: horn/spike
+  if (push > 0.65) {
+    const topPt = pts.reduce((a, b) => a.y < b.y ? a : b);
+    const hH = lerp(0, 25, (push - 0.65) / 0.35);
+    svg += `<polygon points="${topPt.x - 6},${topPt.y + 2} ${topPt.x},${topPt.y - hH} ${topPt.x + 6},${topPt.y + 2}" fill="${strokeColor}"/>`;
+  }
+
+  return svg;
+}
+
+function update() {
+  const p = val('pace'), d = val('direction'), w = val('warmth'), dp = val('depth'), pu = val('push');
+  document.getElementById('v-pace').textContent = Math.round(p * 100);
+  document.getElementById('v-direction').textContent = Math.round(d * 100);
+  document.getElementById('v-warmth').textContent = Math.round(w * 100);
+  document.getElementById('v-depth').textContent = Math.round(dp * 100);
+  document.getElementById('v-push').textContent = Math.round(pu * 100);
+  document.getElementById('creature').innerHTML = generateCreature(p, d, w, dp, pu);
+}
+
+function randomize() {
+  ['pace', 'direction', 'warmth', 'depth', 'push'].forEach(s => {
+    document.getElementById(s).value = Math.round(Math.random() * 100);
+  });
+  update();
+}
+
+function exportSVG() {
+  const svg = document.getElementById('creature');
+  const blob = new Blob(['<?xml version="1.0"?>\n' + svg.outerHTML], { type: 'image/svg+xml' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'daemon.svg';
+  a.click();
+}
+
+update();
+</script>
+</body>
+</html>

@@ -1,55 +1,17 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { spawn, execFile } from 'child_process'
+import { execFile } from 'child_process'
 import { promisify } from 'util'
-import { readFileSync, writeFileSync, existsSync, mkdirSync, unlinkSync } from 'fs'
+import { readFileSync, writeFileSync, existsSync } from 'fs'
+import { join } from 'path'
+import { routeChat, type ModelTier } from '@/lib/model-router'
 
 const execFileAsync = promisify(execFile)
-import { join } from 'path'
-import { randomUUID } from 'crypto'
-
-function execClaude(args: string[]): Promise<{ stdout: string; stderr: string }> {
-  return new Promise((resolve, reject) => {
-    const child = spawn('claude', args, {
-      stdio: ['pipe', 'pipe', 'pipe'],  // Explicit pipe for stdin — prevents "no stdin" warning
-    })
-
-    // Close stdin immediately so Claude doesn't wait
-    child.stdin.end()
-
-    let stdout = ''
-    let stderr = ''
-    child.stdout.on('data', (d) => { stdout += d.toString() })
-    child.stderr.on('data', (d) => { stderr += d.toString() })
-
-    const timer = setTimeout(() => {
-      child.kill()
-      reject(new Error('Claude timed out after 180s'))
-    }, 180000)
-
-    child.on('close', (code) => {
-      clearTimeout(timer)
-      if (stdout) {
-        resolve({ stdout, stderr })
-      } else {
-        reject(new Error(stderr || `Claude exited with code ${code}`))
-      }
-    })
-  })
-}
 
 const DAEMON_ROOT = join(process.cwd(), '..')
 const CONFIG_DIR = join(DAEMON_ROOT, 'config')
 const SOUL_PATH = join(DAEMON_ROOT, 'SOUL.md')
 const PERSONALITY_PATH = join(CONFIG_DIR, 'personality.json')
-const MCP_CONFIG_PATH = join(CONFIG_DIR, 'mcp_tools.json')
 const VENV_PYTHON = join(DAEMON_ROOT, '.venv', 'bin', 'python3')
-const PROMPT_DIR = join('/tmp', 'daemon-prompts')
-
-// Ensure prompt temp dir exists
-try { mkdirSync(PROMPT_DIR, { recursive: true }) } catch {}
-
-// Session IDs per thread for conversation continuity
-const sessions: Record<string, string> = {}
 
 function loadPersonality() {
   if (existsSync(PERSONALITY_PATH)) {
@@ -91,10 +53,6 @@ ${memoryBlock}
 }
 
 async function getKnowledgeContext(message: string): Promise<string> {
-  /**
-   * Call the Python knowledge module to get relevant context.
-   * Returns a formatted knowledge block for the system prompt.
-   */
   try {
     const { stdout } = await execFileAsync(VENV_PYTHON, [
       '-c',
@@ -109,9 +67,6 @@ print(build_knowledge_context(os.environ["QUERY_MSG"], limit=5))`,
 }
 
 async function storeKnowledge(userMsg: string, daemonMsg: string) {
-  /**
-   * Store the conversation turn in the knowledge graph (background, non-blocking).
-   */
   try {
     execFileAsync(VENV_PYTHON, [
       '-c',
@@ -120,104 +75,88 @@ from memory import store_conversation_turn
 store_conversation_turn(os.environ["USER_MSG"], os.environ["DAEMON_MSG"])`,
     ], { timeout: 15000, env: { ...process.env, PYTHONPATH: join(DAEMON_ROOT, 'server'), DAEMON_SERVER: join(DAEMON_ROOT, 'server'), USER_MSG: userMsg.slice(0, 300), DAEMON_MSG: daemonMsg.slice(0, 300) } })
   } catch {
-    // Non-critical, don't block
+    // Non-critical
   }
 }
 
+async function getUserTier(token: string): Promise<{ tier: ModelTier; email: string }> {
+  try {
+    const { stdout } = await execFileAsync(VENV_PYTHON, ['-c', `
+import sys,json,os; sys.path.insert(0,os.environ["DAEMON_SERVER"])
+from users import get_user_by_token
+u=get_user_by_token(os.environ["AUTH_TOKEN"])
+if u:
+    import json as j
+    settings = j.loads(u.get("settings","{}") or "{}")
+    print(j.dumps({"ok":True,"email":u["email"],"tier":settings.get("model_tier","free")}))
+else:
+    print(j.dumps({"ok":False}))
+`], { timeout: 3000, env: { ...process.env, PYTHONPATH: join(DAEMON_ROOT, 'server'), DAEMON_SERVER: join(DAEMON_ROOT, 'server'), AUTH_TOKEN: token } })
+    const result = JSON.parse(stdout.trim())
+    if (!result.ok) throw new Error('Invalid token')
+    // Arthur (tutucamara@gmail.com) always gets premium
+    const tier = result.email === 'tutucamara@gmail.com' ? 'premium' : (result.tier || 'free')
+    return { tier: tier as ModelTier, email: result.email }
+  } catch {
+    throw new Error('Authentication failed')
+  }
+}
+
+const TOOLS_REGEX = /ssh|device|esp32|sensor|distance|temperature|phone|battery|pixel|msi|arturito|screen|display|hardware|run|execute|check|what.*running|connect|plot|stream|live|data|web.*page|key|pendant|show|monitor/i
+
 export async function POST(req: NextRequest) {
   try {
-    // AUTH CHECK — require valid token
     const token = req.cookies.get('daemon_token')?.value
     if (!token) {
       return NextResponse.json({ error: 'Not authenticated' }, { status: 401 })
     }
-    // Verify token is valid (quick check) — token passed via env to prevent injection
-    const authCheck = await execFileAsync(VENV_PYTHON, ['-c', `
-import sys,json,os; sys.path.insert(0,os.environ["DAEMON_SERVER"])
-from users import get_user_by_token
-u=get_user_by_token(os.environ["AUTH_TOKEN"])
-print(json.dumps({"ok":True} if u else {"ok":False}))
-`], { timeout: 3000, env: { ...process.env, PYTHONPATH: join(DAEMON_ROOT, 'server'), DAEMON_SERVER: join(DAEMON_ROOT, 'server'), AUTH_TOKEN: token } })
-    if (!JSON.parse(authCheck.stdout.trim()).ok) {
-      return NextResponse.json({ error: 'Invalid token' }, { status: 401 })
-    }
 
-    const { message, threadId } = await req.json()
+    const { tier, email } = await getUserTier(token)
+    const { message, threadId, modelOverride } = await req.json()
 
     if (!message) {
       return NextResponse.json({ error: 'No message provided' }, { status: 400 })
     }
 
+    // Allow explicit tier override via request (for testing or user preference)
+    const effectiveTier: ModelTier = modelOverride && ['free', 'mid', 'premium'].includes(modelOverride)
+      ? modelOverride as ModelTier
+      : tier
+
     const personality = loadPersonality()
     let systemPrompt = buildSystemPrompt(personality)
 
-    // Retrieve relevant knowledge for this message
     const knowledgeContext = await getKnowledgeContext(message)
     if (knowledgeContext) {
       systemPrompt += '\n\n' + knowledgeContext
     }
 
-    // Write system prompt to temp file (avoids shell arg length limits)
-    const promptFile = join(PROMPT_DIR, `${randomUUID()}.md`)
-    writeFileSync(promptFile, systemPrompt)
-
-    const args = [
-      '-p', message,
-      '--output-format', 'json',
-      '--model', 'opus',
-      '--system-prompt-file', promptFile,
-      '--dangerously-skip-permissions', '--allow-dangerously-skip-permissions',
-    ]
-
-    // Only load MCP tools when message likely needs device/hardware access
-    const needsTools = /ssh|device|esp32|sensor|distance|temperature|phone|battery|pixel|msi|arturito|screen|display|hardware|run|execute|check|what.*running|connect|plot|stream|live|data|web.*page|key|pendant|show|monitor/i.test(message)
-
-    if (needsTools && existsSync(MCP_CONFIG_PATH)) {
-      args.push('--mcp-config', MCP_CONFIG_PATH)
-      args.push(
-        '--allowed-tools',
-        'Bash', 'Read', 'Write', 'Edit', 'Glob', 'Grep',
-        'mcp__daemon-tools__ssh_run',
-        'mcp__daemon-tools__list_devices',
-        'mcp__daemon-tools__device_info',
-        'mcp__daemon-tools__list_usb_devices',
-        'mcp__daemon-tools__scan_i2c',
-        'mcp__daemon-tools__esp32_command',
-        'mcp__daemon-tools__phone_command',
-        'mcp__daemon-tools__plot_sensor_web',
-        'mcp__daemon-tools__plot_sensor_esp32',
-        'mcp__daemon-tools__push_to_web',
-      )
-    }
-
+    const needsTools = TOOLS_REGEX.test(message)
     const threadKey = threadId || 'default'
-    if (sessions[threadKey]) {
-      args.push('--resume', sessions[threadKey])
-    }
 
-    const { stdout } = await execClaude(args)
+    const result = await routeChat({
+      message,
+      tier: effectiveTier,
+      systemPrompt,
+      threadId: threadKey,
+      needsTools,
+    })
 
-    // Clean up temp prompt file
-    try { unlinkSync(promptFile) } catch {}
-
-    const result = JSON.parse(stdout)
-    if (result.session_id) sessions[threadKey] = result.session_id
-
-    const responseText = result.result || ''
-
-    // Update personality
+    // Update personality interaction count
     if (personality) {
       personality.interaction_count = (personality.interaction_count || 0) + 1
       writeFileSync(PERSONALITY_PATH, JSON.stringify(personality, null, 2))
     }
 
     // Store in knowledge graph (async, non-blocking)
-    storeKnowledge(message, responseText)
+    storeKnowledge(message, result.response)
 
     return NextResponse.json({
-      response: responseText,
-      sessionId: sessions[threadKey],
-      model: Object.keys(result.modelUsage || {})[0] || 'unknown',
+      response: result.response,
+      sessionId: result.sessionId,
+      model: result.model,
+      tier: result.tier,
+      usage: result.usage,
     })
   } catch (error: any) {
     console.error('[chat api]', error?.message || error)

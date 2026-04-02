@@ -5,16 +5,19 @@ import { NextRequest, NextResponse } from 'next/server'
 const PUBLIC_ROUTES = [
   '/',           // Landing page / public daemon page
   '/canvas',     // Canvas iframe (embedded in public page)
+  '/login',      // Google OAuth login page
   '/apk',        // APK download
   '/logos',       // Logo gallery
   '/creature.html', // Creature generator
   '/live.html',  // Live sensor page
   '/brand/',     // Brand assets
+  '/docs/',      // Research docs
   '/font/',      // Font assets
   '/favicon.png',
   '/app-icon.png',
   '/manifest.json',
   '/daemon.apk',
+  '/watch.apk',
 ]
 
 const PUBLIC_API_ROUTES = [
