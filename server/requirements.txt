@@ -1,0 +1,16 @@
+# Core
+pyudev>=0.24           # USB hotplug monitoring
+pyserial>=3.5          # Arduino/ESP32 serial communication
+smbus2>=0.4            # I2C sensor access
+
+# Audio
+sounddevice>=0.4       # Audio recording (numpy arrays)
+deepgram-sdk>=3.0      # Streaming speech-to-text
+pulsectl>=23.0         # PulseAudio/PipeWire device management
+
+# Bluetooth (optional)
+bleak>=0.21            # BLE scanning and communication
+
+# Display (optional, for Pi with SPI screen)
+# luma.lcd>=2.0        # SPI/I2C displays (ST7789, SSD1306)
+# pillow>=10.0         # Image processing for display

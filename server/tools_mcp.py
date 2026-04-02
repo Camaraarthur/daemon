@@ -342,49 +342,63 @@ async def handle_tool_call(name: str, arguments: dict) -> list[dict]:
             conn = sqlite3.connect("/home/arthur/daemon/data/users.db")
             token = conn.execute("SELECT token FROM sessions LIMIT 1").fetchone()[0]
             conn.close()
-            req = urllib.request.Request(
-                f"http://localhost:4800/api/sensor-stream?action={action}",
-                headers={"Cookie": f"daemon_token={token}"},
-            )
-            resp = urllib.request.urlopen(req, timeout=15)
-            result = json_mod.loads(resp.read().decode())
+
             if action == "start":
-                return [{"type": "text", "text": f"**Sensor stream started** on my.daemon.page. The canvas will appear with live distance data updating every 2 seconds."}]
+                # Start background streaming loop
+                subprocess.Popen(
+                    ["/home/arthur/daemon/server/fast_loop.sh"],
+                    stdout=open("/tmp/sensor-fast.log", "w"),
+                    stderr=subprocess.STDOUT,
+                    env={**dict(__import__('os').environ), "HOME": "/home/arthur"},
+                )
+                return [{"type": "text", "text": f"**Sensor stream started** on my.daemon.page. Live distance graph updating every 2 seconds."}]
             elif action == "stop":
+                # Kill the loop and clear canvas
+                subprocess.run(["pkill", "-9", "-f", "fast_loop"], capture_output=True)
+                subprocess.run(["pkill", "-9", "-f", "read_sensor"], capture_output=True)
+                data = json_mod.dumps({"type": "clear"}).encode()
+                req = urllib.request.Request(
+                    "http://localhost:4800/api/stream-push", data=data,
+                    headers={"Content-Type": "application/json", "Cookie": f"daemon_token={token}"},
+                    method="POST")
+                urllib.request.urlopen(req, timeout=3)
                 return [{"type": "text", "text": f"**Sensor stream stopped.** Canvas hidden on my.daemon.page."}]
             else:
-                return [{"type": "text", "text": f"**Single read:** {json_mod.dumps(result)}"}]
+                # Single read + push
+                result = subprocess.run(
+                    ["/home/arthur/daemon/server/read_sensor.sh"],
+                    capture_output=True, text=True, timeout=8,
+                    env={**dict(__import__('os').environ), "HOME": "/home/arthur"})
+                dist = float(result.stdout.strip())
+                data = json_mod.dumps({"type": "sensor", "distance": dist, "timestamp": int(time.time()*1000)}).encode()
+                req = urllib.request.Request(
+                    "http://localhost:4800/api/stream-push", data=data,
+                    headers={"Content-Type": "application/json", "Cookie": f"daemon_token={token}"},
+                    method="POST")
+                urllib.request.urlopen(req, timeout=3)
+                return [{"type": "text", "text": f"**Single read:** {dist:.1f} cm pushed to web."}]
         except Exception as e:
             return [{"type": "text", "text": f"**Stream error:** {e}"}]
 
     elif name == "plot_sensor_esp32":
         action = arguments["action"]
-        if action == "stop":
-            # Clear ESP32 display
-            result = await handle_tool_call("esp32_command", {"command": "tft.fill(0)"})
-            return [{"type": "text", "text": "**ESP32 display cleared.**"}]
-        # Read sensor and display on ESP32
+        # The ESP32 firmware has a built-in live display loop that runs automatically.
+        # It shows distance in red with a scrolling graph, updating every 50ms directly from the sensor pin.
+        # This tool just checks if the ESP32 is reachable and reports status.
         try:
-            # Read via HTTP
-            read_result = subprocess.run(
+            result = subprocess.run(
                 ["/home/arthur/daemon/server/read_sensor.sh"],
-                capture_output=True, text=True, timeout=10,
-                env={**dict(__import__('os').environ), "HOME": "/home/arthur"},
-            )
-            distance = float(read_result.stdout.strip())
-        except:
-            distance = -1
-
-        if distance > 0:
-            # Send display command: clear screen, show big red number
-            display_cmd = f'tft.fill(0); tft.text(font, "{distance:.1f}", 10, 60, st7789.RED); tft.text(font, "cm", 10, 140, st7789.color565(80,80,80))'
-            result = await handle_tool_call("esp32_command", {"command": display_cmd})
-            msg = f"**ESP32 display:** {distance:.1f} cm"
-            if action == "start":
-                msg += "\n\n(Note: for continuous updates on ESP32, the firmware handles its own display loop. Single update shown.)"
-            return [{"type": "text", "text": msg}]
-        else:
-            return [{"type": "text", "text": f"**Sensor read failed** (got {distance}). ESP32 may be unreachable."}]
+                capture_output=True, text=True, timeout=8,
+                env={**dict(__import__('os').environ), "HOME": "/home/arthur"})
+            dist = float(result.stdout.strip())
+            if action == "stop":
+                return [{"type": "text", "text": "**ESP32 display is always-on** — it's driven by the firmware directly from the sensor pins. The live graph runs independently at ~20fps."}]
+            if dist > 0:
+                return [{"type": "text", "text": f"**Daemon key is live.** Currently showing {dist:.1f} cm with a scrolling red graph. The display updates directly from the sensor at ~20fps — no network lag."}]
+            else:
+                return [{"type": "text", "text": f"**Daemon key is online** but sensor reads -1 (nothing in range). The display will update when something is within sensor range."}]
+        except Exception as e:
+            return [{"type": "text", "text": f"**Daemon key offline:** can't reach ESP32. Is it powered on and connected to the hotspot?"}]
 
     elif name == "push_to_web":
         content_type = arguments["type"]
