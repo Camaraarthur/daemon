@@ -224,13 +224,34 @@ export async function routeChat(opts: {
   try {
     return await callOpenAICompatible(tier, messages)
   } catch (err: any) {
-    // Fallback: if free tier fails (rate limit), try mid. If mid fails, error out.
+    // Fallback chain: free → paid Qwen (cheap) → DeepSeek
     if (tier === 'free') {
-      console.warn(`[router] Free tier failed (${err.message}), falling back to mid`)
+      console.warn(`[router] Free tier failed (${err.message}), trying paid Qwen`)
+      try {
+        // Try paid Qwen3-Coder via OpenRouter (~$0.20/MTok — cheaper than DeepSeek)
+        const paidProvider = { ...PROVIDERS.free, name: 'Qwen3-Coder (paid)', model: 'qwen/qwen3-coder' }
+        const paidRes = await fetch(paidProvider.baseUrl, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${OPENROUTER_API_KEY}`,
+            ...paidProvider.extraHeaders,
+          },
+          body: JSON.stringify({ model: paidProvider.model, messages, max_tokens: paidProvider.maxTokens, temperature: 0.7 }),
+        })
+        if (paidRes.ok) {
+          const data = await paidRes.json()
+          let content = data.choices?.[0]?.message?.content || ''
+          content = content.replace(/<think>[\s\S]*?<\/think>/g, '').trim()
+          return { response: content, model: data.model || paidProvider.model, tier: 'free' as ModelTier, usage: data.usage }
+        }
+      } catch {}
+      // Final fallback: DeepSeek
+      console.warn(`[router] Paid Qwen also failed, falling back to DeepSeek`)
       try {
         return await callOpenAICompatible('mid', messages)
       } catch (midErr: any) {
-        throw new Error(`Both free and mid tiers failed. Free: ${err.message}. Mid: ${midErr.message}`)
+        throw new Error(`All tiers failed. Free: ${err.message}. Mid: ${midErr.message}`)
       }
     }
     throw err

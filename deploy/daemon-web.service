@@ -1,0 +1,19 @@
+[Unit]
+Description=Daemon Web UI
+After=network.target
+
+[Service]
+Type=simple
+User=arthur
+WorkingDirectory=/home/arthur/daemon/web
+Environment=PORT=4800
+Environment=NODE_ENV=production
+Environment=PATH=/home/arthur/.local/bin:/usr/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+Environment=HOME=/home/arthur
+EnvironmentFile=/home/arthur/.secrets/vault.env
+ExecStart=/usr/bin/npx next start -p 4800
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

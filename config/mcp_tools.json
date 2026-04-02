@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "daemon-tools": {
+      "command": "python3",
+      "args": ["/home/arthur/daemon/server/tools_mcp.py"],
+      "env": {}
+    }
+  }
+}
