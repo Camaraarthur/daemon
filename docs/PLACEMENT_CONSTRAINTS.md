@@ -436,14 +436,6 @@ The USB 2.0 high-speed differential pairs impose placement constraints on the co
 
 ---
 
-### B-20. Charging MUX -- OR-Diode Circuit (Subsystem A3)
-
-**Constraints:**
-
-1. **D_VBUS_A and D_VBUS_C (SS14 Schottky, DO-214AC/SMA):** These carry charging current (up to 1A+). Place between the USB-C bridge / external USB-A input and the IP5328P VIN pin.
-2. **Short, wide traces:** Schottky diode anode-to-cathode paths carry high current. Use >= 0.5 mm traces.
-3. **R_MUX_SER (430k) and R_MUX_SHN (620k):** Near the diode junction, within 5 mm.
-
 ---
 
 ## 4. Category C -- Secondary Components

@@ -231,7 +231,7 @@
     "pinned_symbol_libs": []
   },
   "meta": {
-    "filename": "daemon_v0screenshot4.kicad_pro",
+    "filename": "daemon_v0.kicad_pro",
     "version": 1
   },
   "net_settings": {
@@ -319,7 +319,7 @@
       "netlist": "",
       "plot": "output/gerber/",
       "pos_files": "",
-      "specctra_dsn": "",
+      "specctra_dsn": "daemon_v0.dsn",
       "step": "",
       "svg": "",
       "vrml": ""

@@ -1,6 +1,7 @@
 # Radxa Zero 3W Physical Layout Reference for Daemon V0 PCB Design
 
-Generated 2026-03-07 from `/home/arthur/daemon/netlist/full_system.py` analysis.
+Generated 2026-03-09 from official Radxa DXF files (`reference/radxa_zero_3w_v1110_top.dxf`,
+`reference/radxa_zero_3w_v1110_bottom.dxf`) and `netlist/full_system.py` analysis.
 
 ## 1. Board Dimensions
 
@@ -63,8 +64,8 @@ Looking DOWN through the Daemon board at the Radxa underneath:
     │   :              [WiFi U.FL]                                              :   │
     │   :                                                                       :   │
     │   :  (M)                                                       (M)        :   │
-    │   : [SD]                                                                  :   │
-    │   :        [USB-C OTG]     [micro HDMI]     [USB-C Host]                  :   │
+    │   :                                                          [µSD]         :   │
+    │   : [USB-C OTG][USB-C Host]              [µHDMI]                          :   │
     │   └─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ┘   │
     │                                                                                 │
     │                         (Daemon board continues)                                │ Y=0
@@ -72,28 +73,28 @@ Looking DOWN through the Daemon board at the Radxa underneath:
    X=0                                                                              X=85.6
 
     (M) = M2.5 mounting hole / standoff
-    [SD] = MicroSD card slot (protrudes from left edge of Radxa)
+    [µSD] = MicroSD card slot (right edge of Radxa)
 ```
 
 ### 2.4 Radxa Component Positions (Translated to Daemon Board Coordinates)
 
 Using the centered alignment (X_off=10.3, Y_off=12.0):
 
-| Radxa Feature          | Radxa Coords (mm)   | Daemon Coords (mm)    | Notes                           |
-|------------------------|----------------------|-----------------------|---------------------------------|
-| **USB-C OTG/Power**    | X=12.4, Y=0 (edge)  | X=22.7, Y=12.0        | Bottom edge of Radxa            |
-| **USB-C Host**         | X=51.9, Y=0 (edge)  | X=62.2, Y=12.0        | Bottom edge of Radxa            |
-| **Micro HDMI**         | X=31.3, Y=0 (edge)  | X=41.6, Y=12.0        | Bottom edge of Radxa            |
-| **MicroSD slot**       | X=0 (edge), Y=15    | X=10.3, Y=27.0        | Protrudes left ~2-3mm           |
-| **WiFi U.FL**          | X=63.5, Y=19.7      | X=73.8, Y=31.7        | Antenna connector               |
-| **GPIO Pin 1**         | X=8.32, Y=25.41     | X=18.62, Y=37.41      | 3V3_SYS                         |
-| **GPIO Pin 2**         | X=8.32, Y=27.95     | X=18.62, Y=39.95      | 5V_SYS                          |
-| **GPIO Pin 39**        | X=56.58, Y=25.41    | X=66.88, Y=37.41      | GND                             |
-| **GPIO Pin 40**        | X=56.58, Y=27.95    | X=66.88, Y=39.95      | I2S_DATA_OUT                    |
-| **Mounting hole 1**    | (3.5, 3.6)          | (13.8, 15.6)          | Near USB-C OTG                  |
-| **Mounting hole 2**    | (3.6, 26.5)          | (13.9, 38.5)          | Near GPIO pin 1                 |
-| **Mounting hole 3**    | (61.4, 3.6)          | (71.7, 15.6)          | Near USB-C Host                 |
-| **Mounting hole 4**    | (61.4, 26.5)         | (71.7, 38.5)          | Near GPIO pin 40                |
+| Radxa Feature          | Radxa Coords (mm)       | Daemon Coords (mm)      | Notes / Source                   |
+|------------------------|-------------------------|-------------------------|----------------------------------|
+| **USB-C OTG/Power**    | X≈6.3, Y≈1.5 (conn edge)| X=16.6, Y=13.5         | Leftmost — DXF pads X=4.86..7.71|
+| **USB-C Host (USB3)**  | X≈15.5, Y≈1.5 (conn edge)| X=25.8, Y=13.5        | Adjacent to OTG (~9mm right)     |
+| **micro-HDMI**         | X≈41.5, Y≈2 (conn edge) | X=51.8, Y=14.0         | Right side, separate from USB-Cs |
+| **MicroSD slot**       | X≈59, Y≈14 (right edge) | X=69.3, Y=26.0         | DXF "TF" label at (58.9,14.1)   |
+| **CSI camera**         | X≈6.6, Y≈15.4 (left)    | X=16.9, Y=27.4         | DXF "CSI" label at (6.6,15.4)   |
+| **GPIO Pin 1**         | (8.320, 25.405)          | (18.62, 37.41)         | DXF circle R=0.749              |
+| **GPIO Pin 2**         | (8.320, 27.945)          | (18.62, 39.95)         | Row pitch 2.54mm                 |
+| **GPIO Pin 39**        | (56.580, 25.405)         | (66.88, 37.41)         | 20 columns × 2 rows             |
+| **GPIO Pin 40**        | (56.580, 27.945)         | (66.88, 39.95)         | Col pitch 2.54mm                 |
+| **Mounting hole 1**    | (3.550, 3.600)           | (13.85, 15.60)         | R=1.41mm → M2.5                 |
+| **Mounting hole 2**    | (3.600, 26.450)          | (13.90, 38.45)         | Near GPIO pin 1                  |
+| **Mounting hole 3**    | (61.400, 3.600)          | (71.70, 15.60)         | Near USB-C Host                  |
+| **Mounting hole 4**    | (61.400, 26.500)         | (71.70, 38.50)         | Near GPIO pin 40                 |
 
 ---
 
@@ -143,9 +144,10 @@ are acceptable.
 | LPDDR4 RAM (near SoC)     | X: 35-55, Y: 22-36                | 1.2 mm            |
 | WiFi/BT module            | X: 58-75, Y: 25-38                | 2.0 mm            |
 | 40-pin header pins         | X: 18-67, Y: 37-40                | 2.5 mm (pin stubs)|
-| USB-C connectors (2x)     | X: 18-28, Y: 12-16; X: 57-67     | 3.2 mm            |
-| Micro HDMI                | X: 37-47, Y: 12-16                | 3.0 mm            |
-| MicroSD slot               | X: 7-15, Y: 22-32                 | 2.0 mm            |
+| USB-C OTG (leftmost)      | X: 12-21, Y: 12-16                | 3.2 mm            |
+| USB-C Host (next to OTG)  | X: 21-30, Y: 12-16                | 3.2 mm            |
+| Micro HDMI (right side)   | X: 47-57, Y: 12-17                | 3.0 mm            |
+| MicroSD slot (right edge) | X: 65-76, Y: 22-32                | 2.0 mm            |
 | Voltage regulators         | X: 15-25, Y: 18-28                | 1.5 mm            |
 
 ### 4.3 Daemon Board Edges (Free Zones)
@@ -302,14 +304,14 @@ FLAG pins are open-drain with 10k pull-ups to 3V3_SYS on the Daemon board.
 
 ## 7. PCB Design Checklist
 
-- [ ] Place M2.5 mounting holes at (13.8, 15.6), (13.9, 38.5), (71.7, 15.6), (71.7, 38.5)
-- [ ] Route 40-pin header J12 footprint centered at approximately X=42.75, Y=38.68
+- [ ] Place M2.5 mounting holes at (13.85, 15.60), (13.90, 38.45), (71.70, 15.60), (71.70, 38.50)
+- [ ] Route 40-pin header J3 footprint centered at approximately X=42.75, Y=38.68
       (midpoint between pin 1 and pin 40 in Daemon coordinates)
 - [ ] Verify standoff height (8.4-8.85mm) clears Radxa top-side components
 - [ ] No tall Daemon B.Cu components within Radxa footprint zone (X:10.3-75.3, Y:12.0-42.0)
 - [ ] Keep Daemon B.Cu clear directly above Radxa USB-C / HDMI connectors (tallest: 3.2mm)
-- [ ] MicroSD slot clearance: no Daemon components at X:7.3-15.3, Y:22-32 on B.Cu
-- [ ] WiFi antenna keep-out: minimize copper pour within 10mm of (73.8, 31.7) on all layers
+- [ ] MicroSD slot clearance: no Daemon components at X:65-76, Y:22-32 on B.Cu
+- [ ] Goobay USB-C bridge (J12) on B.Cu, aligned under Radxa USB-C OTG at (16.6, 13.5)
 - [ ] SPI3 traces (display): keep short, <50mm, avoid crossing RF SoftSPI traces
 - [ ] RF SoftSPI traces (CC1101): keep away from I2S bus to avoid crosstalk
 - [ ] I2C1 bus: matched-length SDA/SCL; 470-ohm series resistors close to header

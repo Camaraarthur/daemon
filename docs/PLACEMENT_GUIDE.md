@@ -46,9 +46,8 @@ Place the power ICs. They're noisy — keep them in ONE corner, away from RF.
 | **U1** | IP5328P PMIC | Pick a corner. This is your "power corner" |
 | **L1** | 4.7µH boost inductor | **Right next to U1** (< 5mm). BIGGEST component (12.5×11.5mm) |
 | **TH1** | NTC thermistor | **Touching U1** (< 3mm from QFN pad). Temperature sensor |
-| **D1, D2** | SS14 Schottky diodes | Near U1, on charging input path |
 | **C7** | 100µF tantalum | Near U1 VOUT, on 5V_SYS rail |
-| **C12** | 100µF electrolytic | Near U3 (NE555). **TALL** — check Radxa clearance! |
+| **C12** | 100µF tantalum (SMD Case-D) | Near U3 (NE555). SMD — no height issue |
 | **U2** | AP2112K 3.3V LDO | Between power corner and RF/Ethernet. ≥10mm from L1 |
 
 **Check**: Is L1 ≥ 25mm from where you'll put the antenna? ≥ 15mm from where crystals will go?
@@ -136,7 +135,7 @@ Near the WAGO terminal block.
 |-----------|------|------|
 | **D3-D6** | WS2812B LEDs ×4 | Daisy-chained. ≤ 30mm between each. Away from RF |
 | **D7** | IR LED | Board EDGE, side-view emitter facing outward |
-| **U8** | ADS1015 joystick ADC | Near J6 (joystick connector) |
+| **SW2** | SKRHABE010 nav switch | Thumb-reachable zone, near display |
 | **U3** | NE555 heartbeat timer | Near power section. ≥ 15mm from U9 |
 | **Q1-Q4** | Transistors | Near their connected ICs (Q1-Q3 near U1, Q4 near D7) |
 | **TP1-TP4** | Test points | Accessible, near power section |
@@ -171,7 +170,7 @@ Near the WAGO terminal block.
 │   :  [MH]───── 40-pin GPIO header ─────[MH]                           : │ Y≈37-40
 │   :                                                                     : │
 │   :  [MH]                                                    [MH]      : │
-│   :   USB-C OTG    µHDMI     USB-C Host                               : │
+│   :  USB-C OTG  USB-C Host                  µHDMI                     : │
 │   └─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ┘ │
 │                                                                             │
 │ SOUTH STRIP (12mm) — tall parts OK, edge connectors                        │ Y=0

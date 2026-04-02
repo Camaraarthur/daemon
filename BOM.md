@@ -236,7 +236,7 @@ The physical interface to the Radxa Zero 3W SBC. All board subsystems connect to
 
 | Ref | Part | Value / MPN | Package | Qty | What it does |
 |-----|------|-------------|---------|-----|--------------|
-| J_RADXA | 2×20 pin header | — | 2.54mm 2×20 right-angle | 1 | Raspberry Pi HAT-compatible 40-pin expansion header. Carries 5V power (pins 2/4) to the SBC, receives 3.3V back (pins 1/17), and routes all signal interfaces: SPI3 display (pins 19/21/23/24), RF SoftSPI (pins 13/15/16/18), I2C1 (pins 3/5), I2S audio (pins 12/35/38/40), Stinger EN/FLAG GPIOs, SCREEN_BL/DC/RST, LED_DIN, JOY_SW |
+| J_RADXA | 2×20 pin header | — | 2.54mm 2×20 vertical | 1 | Raspberry Pi HAT-compatible 40-pin expansion header. Carries 5V power (pins 2/4) to the SBC, receives 3.3V back (pins 1/17), and routes all signal interfaces: SPI3 display (pins 19/21/23/24), RF SoftSPI (pins 13/15/16/18), I2C1 (pins 3/5), I2S audio (pins 12/35/38/40), Stinger EN/FLAG GPIOs, SCREEN_BL/DC/RST, LED_DIN, JOY_SW |
 
 ---
 

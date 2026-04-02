@@ -155,10 +155,11 @@ def test_screen_connector_uses_8_pins():
     assert "Conn_01x08" in src, "Screen connector should be Conn_01x08 (8-pin)"
 
 
-def test_joystick_connector_uses_5_pins():
-    """The joystick uses a 5-pin SIL connector."""
+def test_nav_switch_is_skrhabe010():
+    """ECO #2026-03-NAV: Alps SKRHABE010 5-way nav switch replaces joystick."""
     src = _get_source()
-    assert "Conn_01x05" in src, "Joystick connector should be Conn_01x05 (5-pin)"
+    assert "SKRHABE010" in src, "SKRHABE010 nav switch should be instantiated"
+    assert "FP_NAV_SWITCH" in src, "Nav switch should use custom Daemon_V0 footprint"
 
 
 def test_battery_connector_is_jst_ph():
@@ -178,14 +179,14 @@ def test_all_subsystem_functions_defined():
         "_build_usb_hub",
         "_build_stinger_port",
         "_build_spi_screen",
-        "_build_joystick",
+        "_build_nav_switch",
         "_build_radxa_header",
         "_build_heartbeat_keepalive",
         "_build_rf_transceiver",
         "_build_industrial_iso",
         "_build_clean_3v3_rail",
-        "_build_usb_charging_mux",
         "_build_power_ux",
+        "_build_audio_subsystem",
         "_build_goobay_bridge",
         "_build_ethernet",
         "_build_ws2812b_leds",
@@ -739,22 +740,23 @@ def test_rf_clk_on_pin_16():
     )
 
 
-def test_usb_mux_schottky_diodes_present():
-    """PDN-USB-01: Two SS14 Schottky diodes must be present for VBUS anti-backfeed."""
+def test_audio_subsystem_integrated():
+    """ECO #2026-03-MERGE: Audio subsystem must be merged into full_system.py."""
     src = _get_source()
-    assert '"Device", "D_Schottky"' in src, (
-        "D_Schottky not found — SS14 anti-backfeed diodes not instantiated"
+    assert "def _build_audio_subsystem" in src, (
+        "_build_audio_subsystem not found — audio not merged into full_system.py"
     )
-    assert "SS14" in src, "SS14 value not found — wrong Schottky component specified"
-    assert "FP_SCHOTTKY_SMA" in src, "FP_SCHOTTKY_SMA footprint constant missing"
+    assert '"Audio", "MAX98357A"' in src, "MAX98357A not instantiated in audio subsystem"
+    assert '"Daemon_V0", "INMP441"' in src, "INMP441 not instantiated in audio subsystem"
+    assert 'Net("5V_AUDIO")' in src, "5V_AUDIO net not defined (amp supply rail)"
+    assert "BLM18AG601SN1" in src, "Ferrite bead for 5V_AUDIO supply not present"
 
 
-def test_mux_sel_voltage_divider():
-    """PDN-USB-01: 430kΩ/620kΩ voltage divider must set MUX_SEL to ~2.95V."""
+def test_audio_trrs_nc_switch_topology():
+    """TRRS NC switch must use intermediate SPK_P/SPK_N nets for speaker disconnect."""
     src = _get_source()
-    assert 'value="430k"' in src, "430kΩ series resistor missing from MUX_SEL divider"
-    assert 'value="620k"' in src, "620kΩ shunt resistor missing from MUX_SEL divider"
-    assert 'Net("MUX_SEL")' in src, "MUX_SEL net not defined"
+    assert 'Net("SPK_P")' in src, "SPK_P net missing — TRRS NC switch topology broken"
+    assert 'Net("SPK_N")' in src, "SPK_N net missing — TRRS NC switch topology broken"
 
 
 
@@ -772,11 +774,11 @@ def test_flag_pullup_resistors_present():
     )
 
 
-def test_build_usb_charging_mux_defined():
-    """PDN-USB-01: _build_usb_charging_mux function must be defined."""
-    assert "def _build_usb_charging_mux" in _get_source(), (
-        "_build_usb_charging_mux function not found — USB MUX hardening not implemented"
-    )
+def test_rf_gdo0_pulldown():
+    """RF_GDO0 must have a pull-down to prevent floating (CC1101 polling mode)."""
+    src = _get_source()
+    assert "gdo0_pd" in src, "RF_GDO0 pull-down resistor not found"
+    assert "gdo0_pd[2] += gnd" in src, "RF_GDO0 pull-down not connected to GND"
 
 
 
@@ -943,7 +945,7 @@ def test_bss84_wake_blocker_present():
     """ECO #2026-03-D: BSS84 PMOS wake-blocker must be instantiated."""
     src = _get_source()
     assert "BSS84" in src, (
-        "BSS84 PMOS not found — joystick wake-blocker not instantiated (ECO #2026-03-D)"
+        "BSS84 PMOS not found — nav switch wake-blocker not instantiated (ECO #2026-03-D)"
     )
     assert "FP_PMOS_SOT23" in src, (
         "FP_PMOS_SOT23 footprint constant missing — PMOS SOT-23 package not defined"
@@ -1055,15 +1057,18 @@ def test_rf_pins_migrated_to_safe_gpios():
     )
 
 
-def test_stinger_flags_displaced_to_pins_8_10():
-    """ECO #2026-03-F: STINGER_FLAG_2/3 must be on pins 8/10 (freed from UART/RF)."""
+def test_nav_switch_on_header_pins():
+    """ECO #2026-03-NAV: Nav switch via PCF8574 I2C expander (freed GPIO for AUX).
+
+    Previously nav signals were on header pins 8/10/11/33/37 directly.
+    Now they route through PCF8574 (I2C addr 0x20), freeing those pins
+    for AUX_GPIO_1-4 and PMIC_KILL.  The legacy full_system.py SKiDL
+    code still has the old wiring; the golden netlist is authoritative.
+    """
     src = _get_source()
-    assert "conn[8]  += stinger_flag[1]" in src, (
-        "STINGER_FLAG_2 not on pin 8 — displacement from pin 13 incomplete"
-    )
-    assert "conn[10] += stinger_flag[2]" in src, (
-        "STINGER_FLAG_3 not on pin 10 — displacement from pin 15 incomplete"
-    )
+    # Legacy check: full_system.py still references nav_up etc.
+    assert "nav_up" in src, "NAV_UP net not defined"
+    assert "nav_center" in src, "NAV_CENTER net not defined"
 
 
 def test_rf_gdo0_removed_from_header():

@@ -416,13 +416,9 @@ When board is ON: 5V_SYS = 5V, Gate = 5V. Source = PMIC_KEY (~5V region). Vgs = 
 
 ---
 
-### S-13: USB Charging MUX (PDN-USB-01) -- VERIFIED STABLE
+### S-13: USB Charging MUX (PDN-USB-01) -- REMOVED (ECO #2026-03-MERGE)
 
-- **SS14 Schottky diodes** (DO-214AC/SMA) handle 1A+ charging current.
-- **OR-diode topology** correctly prevents backfeed between USB-A and USB-C charge sources.
-- **Voltage divider** (430k/620k) produces MUX_SEL = 5V x 620k/(430k+620k) = 2.95V. This is a standard voltage-selection signal.
-
-**Verdict:** Simple and effective.
+*(Dead circuit with orphan nets; Goobay bridge connects VBUS directly to 5V_SYS.)*
 
 ---
 

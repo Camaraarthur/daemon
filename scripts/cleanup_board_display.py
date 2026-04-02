@@ -74,8 +74,8 @@ LABELS = {
     # Heartbeat
     "U3":  "HEARTBEAT\nNE555",
 
-    # Joystick ADC
-    "U8":  "ADC\nADS1015",
+    # Navigation
+    "SW2": "NAV\nSKRHABE010",
 
     # Power UX
     "SW1": "POWER\nBUTTON",

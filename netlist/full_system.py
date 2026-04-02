@@ -27,7 +27,7 @@ Instantiates and wires every subsystem in the Daemon V0 architecture:
     · HanRun HR911105A MagJack; MDI TX+/TX−/RX+/RX− → RJ45 pins 1/2/3/6
 
   Subsystem A6 – Advanced Power UX (ECO #2026-03-D)
-    · BSS84 PMOS wake-blocker: JOY_SW wakes when 5V OFF; isolated when ON
+    · BSS84 PMOS wake-blocker: NAV_CENTER wakes when 5V OFF; isolated when ON
     · 2N7002 NMOS software kill: Radxa PMIC_KILL GPIO simulates double-tap
     · SW_PWR tactile button: always-on hard wake/sleep; SW_PWR_GPIO for long-press
     · 3-pin Power Management Header: PMIC_KILL / SW_PWR_GPIO / GND
@@ -40,9 +40,10 @@ Instantiates and wires every subsystem in the Daemon V0 architecture:
     · 8-pin SIL connector for ST7789V2-based display module
     · SCK / MOSI / CS from Radxa SPI3 bus (pins 19/23/24); BL → GPIO4 / pin 7 (hardware PWM)
 
-  Subsystem E  – Analog Joystick + ADS1015 ADC
-    · VRX / VRY → ADS1015 I2C ADC (I2C1 bus)
-    · SW → Radxa GPIO (digital input, 10 kΩ pull-up)
+  Subsystem E  – Alps SKRHABE010 5-Way Navigation Switch (ECO #2026-03-NAV)
+    · SMD 7.35×7.5mm tactile switch (UP/DOWN/LEFT/RIGHT/CENTER)
+    · All digital GPIO (active-low, 10 kΩ pull-ups); no ADC needed
+    · Replaces breakout analog joystick + ADS1015 I2C ADC
 
   Subsystem E2 – WS2812B Smart RGB LEDs × 4 (NEW)
     · Daisy-chained; data-in on LED_DIN (Radxa header pin 36)
@@ -68,21 +69,26 @@ Instantiates and wires every subsystem in the Daemon V0 architecture:
     · WAGO 2060-404 4-pos terminal block replaces pin-header field connector
     · Full IND-SAF-01 protection chain maintained (PTC/TVS/R/R/C per channel)
 
-  Subsystem K  – MAX98357A Audio Amplifier (audio_subsystem.py)
-    · ESD9B5.0ST5G bidirectional TVS diodes on AMP_OUT_P / AMP_OUT_N
-      (SM-AUD-01; confirmed present in audio_subsystem.py)
+  Subsystem K  – MAX98357A + INMP441 Audio (ECO #2026-03-MERGE: merged from audio_subsystem.py)
+    · MAX98357A I2S Class-D BTL amplifier + INMP441 MEMS microphone
+    · 5V_SYS → ferrite bead → 5V_AUDIO (isolated amp supply)
+    · ESD9B5.0ST5G bidirectional TVS diodes on AMP_OUT_P / AMP_OUT_N (SM-AUD-01)
+    · Ferrite bead EMI filter on BTL outputs (SM-AUD-02)
+    · TRRS NC switch topology for speaker auto-disconnect
+    · Hardware mic-active privacy LED (always-on when mic powered)
 
   NOTE: CAN Bus (MCP2515 / MCP2551) REMOVED per ECO #2026-02-V2.
   NOTE: Hardware Reset Switch (A4) REMOVED per ECO #2026-03-D; replaced by A6 power UX.
+  NOTE: USB Charging MUX (A3) REMOVED per ECO #2026-03-MERGE (dead circuit; orphan nets).
 
 Power topology:
     Li-ion cell ──► IP5328P BAT ──► SW / inductor ──► VOUT
     VOUT ──[J2 0Ω]──► 5V_SYS ──► SL2.1A×2 VCC, SY6280×4 IN, WS2812B, Radxa 5V
     5V_SYS ──► AP2112K-3.3 ──► 3V3_CLEAN ──► CC1101, RTL8152B, ISO1212 logic side
-    Radxa header 3.3V ──► 3V3_SYS ──► screen VCC, joystick, pull-ups
+    Radxa header 3.3V ──► 3V3_SYS ──► screen VCC, nav switch pull-ups
 
 Custom KiCad symbol library required (add to ./lib/Daemon_V0.kicad_sym):
-    IP5328P, SL2.1A×2, SY6280AAC×4, RTL8152B, ISO1212, USBLC6-2SC6×4
+    IP5328P, SL2.1A×2, SY6280AAC×4, RTL8152B, ISO1212, USBLC6-2SC6×4, SKRHABE010
 
 Usage:
     python -m netlist.full_system
@@ -141,8 +147,18 @@ FP_USBLC6       = "Package_TO_SOT_SMD:SOT-23-6"
 # Connectors
 # ECO #2026-03-HWR: Changed to female socket — mates with Radxa's male header pins
 FP_RADXA_HDR    = "Connector_PinSocket_2.54mm:PinSocket_2x20_P2.54mm_Vertical"
-FP_SCREEN_CONN  = "Connector_PinHeader_2.54mm:PinHeader_1x08_P2.54mm_Vertical"
-FP_JOY_CONN     = "Connector_PinHeader_2.54mm:PinHeader_1x05_P2.54mm_Vertical"
+# ECO #2026-03-NAV: PinSocket (female) receives display module's male header pins.
+# Display sits flush against the board — no cable, no adapter.
+FP_SCREEN_CONN  = "Connector_PinSocket_2.54mm:PinSocket_1x08_P2.54mm_Vertical"
+# Audio subsystem (merged from audio_subsystem.py; ECO #2026-03-MERGE)
+FP_AMP_QFN16    = "Package_DFN_QFN:QFN-16-1EP_3x3mm_P0.5mm_EP1.75x1.75mm"
+FP_INMP441      = "Daemon_V0:InvenSense_INMP441_BottomPort"
+FP_TRRS         = "Daemon_V0:Jack_3.5mm_SJ2-2531X-SMT"
+FP_JST_SH2      = "Connector_JST:JST_SH_SM02B-SRSS-TB_1x02-1MP_P1.00mm_Horizontal"
+FP_FERRITE_0402 = "Inductor_SMD:L_0402_1005Metric"
+FP_LED_0402     = "LED_SMD:LED_0402_1005Metric"
+# ECO #2026-03-NAV: Alps SKRHABE010 5-way SMD navigation switch replaces breakout joystick
+FP_NAV_SWITCH   = "Daemon_V0:SW_Alps_SKRHABE010"
 FP_BAT_CONN     = "Connector_JST:JST_PH_S2B-PH-K_1x02_P2.00mm_Horizontal"
 
 # DFT
@@ -159,8 +175,7 @@ FP_TVS_SC70     = "Package_TO_SOT_SMD:SOT-323_SC-70"
 FP_TVS_SMB      = "Diode_SMD:D_SMB"
 # IND-SAF-01: Littelfuse 60R series resettable PTC fuse (1206)
 FP_PTC_1206     = "Fuse:Fuse_1206_3216Metric"
-# PDN-USB-01: SS14 Schottky diode (DO-214AC / SMA) for VBUS anti-backfeed
-FP_SCHOTTKY_SMA = "Diode_SMD:D_SMA"
+
 # HW-RST-01: Right-angle tactile switch, flush with board edge for ergonomics
 # ECO #2026-03-HWR: Changed from top-press PTS645 to horizontal Alps SKRTLAE010
 FP_SW_PUSH      = "Button_Switch_SMD:SW_Push_1P1T-MP_NO_Horizontal_Alps_SKRTLAE010"
@@ -187,14 +202,14 @@ FP_CONN_1X04_254 = "Connector_PinHeader_2.54mm:PinHeader_1x04_P2.54mm_Vertical"
 # Bridge center-to-center USB-C spacing: 8.85mm (measured from physical unit).
 # Female socket on top minimizes total stack height.
 FP_USB_C_RCPT   = "Connector_USB:USB_C_Receptacle_HRO_TYPE-C-31-M-12"
-# B2: RTL8152B USB-to-Ethernet (QFN-32)
-FP_RTL8152B     = "Package_DFN_QFN:QFN-32-1EP_5x5mm_P0.5mm_EP3.1x3.1mm"
+# B2: RTL8152B USB-to-Ethernet (QFN-24, 4x4mm — NOT QFN-32)
+FP_RTL8152B     = "Package_DFN_QFN:QFN-24-1EP_4x4mm_P0.5mm_EP2.6x2.6mm"
 # B2: HanRun HR911105A integrated-magnetics RJ45 MagJack
 FP_MAGJACK      = "Connector_RJ:RJ45_Hanrun_HR911105A_Horizontal"
 # B2: 25 MHz crystal for RTL8152B (same 3225-4Pin SMD package class)
 FP_XTAL_25M     = "Crystal:Crystal_SMD_3225-4Pin_3.2x2.5mm"
-# E2: WS2812B addressable RGB LED (PLCC4 5×5 mm)
-FP_WS2812B      = "LED_SMD:LED_WS2812B_PLCC4_5.0x5.0mm_P3.2mm"
+# E2: WS2812B-2020 addressable RGB LED (PLCC4 2×2 mm, compact)
+FP_WS2812B      = "LED_SMD:LED_WS2812B-2020_PLCC4_2.0x2.0mm"
 # E3: VSMB294008 side-view IR LED (SMD; front-edge placement)
 FP_IR_LED       = "LED_SMD:LED_0603_1608Metric_Pad1.05x0.95mm_HandSolder"
 # E3: AO3400A N-channel MOSFET (SOT-23; ECO #2026-03-F: replaced 2N7002)
@@ -295,8 +310,8 @@ def _build_power_system(
     cout_bypass = Capacitor(value="100n")
     # SM-PDN-01: 100µF 6.3V tantalum power tank on 5V_SYS (ECO #2026-03-G)
     # Absorbs 4A transients during simultaneous SBC + RF + Ethernet + Stinger load steps,
-    # preventing IP5328P OCP trip.  Case-B footprint (3.5×2.8mm) on back of boost node.
-    tant_5v = Part("Device", "C_Polarized", footprint=FP_TANT_CASEB, value="100u")
+    # preventing IP5328P OCP trip.  Case-D (7.3×4.3mm) for low ESR (~0.1-0.3Ω).
+    tant_5v = Part("Device", "C_Polarized", footprint=FP_C_TMR_TANT, value="100u")
     # SM-THM-01: 10kΩ NTC thermistor on IP5328P NTC pin (ECO #2026-03-G)
     # IC measures V_NTC = V_REF × R_NTC/(R_PULLUP + R_NTC) to derive junction temperature.
     # Hardware throttles the boost converter to prevent thermal runaway above Tj = 120°C.
@@ -326,7 +341,7 @@ def _build_power_system(
     # ECO #2026-03-F: 470Ω series protection prevents IP5328P from back-driving
     # the I2C1 bus when the CPU is unpowered (latch-up mitigation).
     # ECO #2026-03-H: Moved from I2C0 (pins 27/28, disconnected on Zero 3W) to
-    # I2C1 (pins 3/5, Always-On bus shared with ADS1015 joystick ADC).
+    # I2C1 (pins 3/5, Always-On bus; IP5328P telemetry only).
     # Thermal note: the QFN-40 exposed pad requires ≥ 16 thermal vias (0.3mm drill,
     # 0.6mm pad) to the inner GND plane to keep Tj < 85°C at 2.4A continuous.
     r_i2c_sda      = Resistor(value="470")
@@ -739,7 +754,7 @@ def _build_spi_screen(
     Instantiate the 8-pin connector for the 1.69″ ST7789V2 SPI display module.
 
     Pin assignment (SIL-8, left to right on the module header):
-      1: VCC   2: GND   3: SCL   4: SDA   5: RES   6: DC   7: CS   8: BLK
+      1: GND   2: VCC   3: SCL   4: SDA   5: RES   6: DC   7: CS   8: BLK
 
     SCL / SDA here are the SPI clock and MOSI lines (the ST7789 is
     write-only; no MISO is needed).  BLK accepts PWM from GPIO4 / pin 7
@@ -754,8 +769,8 @@ def _build_spi_screen(
     bypass = Capacitor(value="100n")
 
     # ── Connector wiring ─────────────────────────────────────────────────────
-    conn[1] += vcc_3v3    # VCC
-    conn[2] += gnd        # GND
+    conn[1] += gnd        # GND
+    conn[2] += vcc_3v3    # VCC
     conn[3] += spi_sck    # SCL (SPI clock)
     conn[4] += spi_mosi   # SDA (SPI MOSI – write-only display)
     conn[5] += screen_rst # RES (reset, active low)
@@ -768,76 +783,70 @@ def _build_spi_screen(
     bypass[2] += gnd
 
 
-# ── Subsystem E: Analog Joystick ──────────────────────────────────────────────
+# ── Subsystem E: Alps SKRHABE010 5-Way Navigation Switch ─────────────────────
+# ECO #2026-03-NAV: Replaces breakout analog joystick + ADS1015 ADC.
+# The SKRHABE010 is a 7.35×7.5mm SMD 5-way tactile switch (UP/DOWN/LEFT/RIGHT
+# + center push). All 5 internal switches share a Common pin tied to GND.
+# Each direction is active-low (pulled high by 10kΩ to 3V3_SYS).
+# No ADC needed — pure digital GPIO input.
 
 
-def _build_joystick(
+def _build_nav_switch(
     gnd: Net,
     vcc_3v3: Net,
-    joy_vrx: Net,
-    joy_vry: Net,
-    joy_sw: Net,
-    i2c1_sda: Net,
-    i2c1_scl: Net,
+    nav_up: Net,
+    nav_down: Net,
+    nav_left: Net,
+    nav_right: Net,
+    nav_center: Net,
 ) -> None:
     """
-    Instantiate the 5-pin connector for the analog thumbstick module.
+    Instantiate the Alps SKRHABE010 5-way navigation switch.
 
-    Pin assignment (SIL-5):
-      1: GND   2: VCC   3: VRX   4: VRY   5: SW
+    Pin mapping (SKRHABE010 datasheet Drawing No.2):
+      Pin 1 (A)      → NAV_UP       (direction; exact mapping depends on mounting rotation)
+      Pin 2 (Center)  → NAV_CENTER   (center push)
+      Pin 3 (C)      → NAV_DOWN
+      Pin 4 (B)      → NAV_LEFT
+      Pin 5 (Common) → GND           (shared return for all 5 switches)
+      Pin 6 (D)      → NAV_RIGHT
 
-    VRX / VRY are mid-rail (~1.65 V at rest) analog voltages routed to
-    ADC-capable pins on the Radxa header (pins 35 and 40 on Radxa boards
-    that expose the SoC ADC on the 40-pin header; otherwise an external
-    ADS1015 I2C ADC should be added to the I2C1 bus).
+    All switches are active-low: pressed → pin shorted to Common (GND).
+    10 kΩ pull-ups to 3V3_SYS keep each line high when idle.
 
-    SW is active-low; a 10 kΩ pull-up to 3V3_SYS is added on-board so the
-    Radxa GPIO reads logic-1 at rest and logic-0 when the stick is pressed.
+    Note: pressing a direction also momentarily contacts Center (sequential
+    make). Firmware should debounce and treat simultaneous direction+center
+    as a direction press, not a center press.
+
+    Radxa header GPIO assignments (ECO #2026-03-NAV):
+      NAV_UP     → pin 8  (was STINGER_FLAG_2; flags now polled via USB hub)
+      NAV_DOWN   → pin 10 (was STINGER_FLAG_3)
+      NAV_LEFT   → pin 11 (was STINGER_FLAG_1)
+      NAV_RIGHT  → pin 33 (was STINGER_EN_3; port 3 always-on via 10k pull-up)
+      NAV_CENTER → pin 37 (was JOY_SW; same GPIO, same wake-blocker wiring)
     """
-    Resistor  = Part("Device", "R", dest=TEMPLATE, footprint=FP_R0402)
-    Capacitor = Part("Device", "C", dest=TEMPLATE, footprint=FP_C0402)
+    Resistor = Part("Device", "R", dest=TEMPLATE, footprint=FP_R0402)
 
-    conn      = Part("Connector_Generic", "Conn_01x05", footprint=FP_JOY_CONN)
-    sw_pullup = Resistor(value="10k")
-    vcc_bypass = Capacitor(value="100n")
-
-    # ── TI ADS1015 I2C ADC ────────────────────────────────────────────────────
-    adc = Part(
-        "Analog_ADC", "ADS1015IDGS",
-        footprint="Package_SO:VSSOP-10_3x3mm_P0.5mm",
-        value="ADS1015",
+    # ── Alps SKRHABE010 5-way navigation switch ─────────────────────────────
+    nav = Part(
+        "Daemon_V0", "SKRHABE010",
+        footprint=FP_NAV_SWITCH,
+        value="SKRHABE010",
     )
-    adc_bypass = Capacitor(value="100n")
 
-    # ── Connector wiring ─────────────────────────────────────────────────────
-    conn[1] += gnd
-    conn[2] += vcc_3v3
-    conn[3] += joy_vrx
-    conn[4] += joy_vry
-    conn[5] += joy_sw
+    # ── Switch pin wiring ────────────────────────────────────────────────────
+    nav["A"]      += nav_up
+    nav["B"]      += nav_left
+    nav["C"]      += nav_down
+    nav["D"]      += nav_right
+    nav["Center"] += nav_center
+    nav["Common"] += gnd
 
-    # ── ADC wiring ───────────────────────────────────────────────────────────
-    adc["VDD"] += vcc_3v3
-    adc["GND"] += gnd
-    adc["SDA"] += i2c1_sda
-    adc["SCL"] += i2c1_scl
-    adc["ADDR"] += gnd         # I2C Address = 0x48
-    adc["AIN0"] += joy_vrx
-    adc["AIN1"] += joy_vry
-    adc["AIN2"] += gnd         # Unused
-    adc["AIN3"] += gnd         # Unused
-    adc["ALERT/RDY"] += Net("ADC_ALERT")
-
-    adc_bypass[1] += vcc_3v3
-    adc_bypass[2] += gnd
-
-    # ── SW pull-up ───────────────────────────────────────────────────────────
-    sw_pullup[1] += vcc_3v3
-    sw_pullup[2] += joy_sw
-
-    # ── VCC bypass ───────────────────────────────────────────────────────────
-    vcc_bypass[1] += vcc_3v3
-    vcc_bypass[2] += gnd
+    # ── Pull-ups: 10 kΩ to 3V3_SYS (active-low, idle = high) ───────────────
+    for sig in [nav_up, nav_down, nav_left, nav_right, nav_center]:
+        pu = Resistor(value="10k")
+        pu[1] += vcc_3v3
+        pu[2] += sig
 
 
 # ── Subsystem F: 40-Pin Radxa Expansion Header ────────────────────────────────
@@ -860,21 +869,23 @@ def _build_radxa_header(
     screen_dc:  Net,
     screen_rst: Net,
     screen_bl:  Net,
-    # Joystick button (VRX/VRY are handled by ADS1015 on I2C1; only SW on header)
-    joy_sw:     Net,
+    # Navigation switch (ECO #2026-03-NAV: replaces analog joystick)
+    nav_up:     Net,    # pin 8  (was STINGER_FLAG_2)
+    nav_down:   Net,    # pin 10 (was STINGER_FLAG_3)
+    nav_left:   Net,    # pin 11 (was STINGER_FLAG_1)
+    nav_right:  Net,    # pin 33 (was STINGER_EN_3)
+    nav_center: Net,    # pin 37 (was JOY_SW)
     # SoftSPI bus (bit-banged; CC1101 on free GPIOs to avoid SPI0 collision)
     soft_spi_sck:  Net,   # RF_CLK  → pin 16
     soft_spi_mosi: Net,   # RF_MOSI → pin 13
     soft_spi_miso: Net,   # RF_MISO → pin 15
-    # Stinger port enable / flag GPIOs
-    stinger_en:   list[Net],   # len == 4
-    stinger_flag: list[Net],   # len == 4 (FLAG_4 not on header; pulled up at hub)
-    # I2C1 bus (general peripherals + IP5328P telemetry – pins 3/5)
+    # Stinger port enable GPIOs (3 of 4; EN_3 sacrificed for NAV_RIGHT)
+    stinger_en:   list[Net],   # len == 4 (only [0],[1],[3] on header; [2] always-on)
+    # I2C1 bus (IP5328P telemetry – pins 3/5)
     i2c1_sda:   Net,
     i2c1_scl:   Net,
-    # SPI chip selects / interrupts for protocol analyzer subsystems (H, J)
-    rf_cs_n:    Net,    # CC1101 SPI chip select      (pin 26)
-    rf_gdo0:    Net,    # CC1101 GDO0 (not on header; polling mode; ECO #2026-03-F)
+    # SPI chip selects for protocol analyzer subsystems (H, J)
+    rf_cs_n:    Net,    # CC1101 SPI chip select      (pin 18)
     # ECO #2026-02-V2: CAN bus removed; pin 36 → WS2812B LED data chain
     led_din:    Net,    # WS2812B data chain DIN       (pin 36)
 ) -> None:
@@ -886,9 +897,9 @@ def _build_radxa_header(
     │  1 │ 3V3_SYS              5V_SYS     │  2 │
     │  3 │ I2C1_SDA (GPIO2)     5V_SYS     │  4 │
     │  5 │ I2C1_SCL (GPIO3)     GND        │  6 │
-    │  7 │ SCREEN_BL (GPIO4)    STINGER_FLAG_2│  8 │
-    │  9 │ GND                  STINGER_FLAG_3│ 10 │
-    │ 11 │ STINGER_FLAG_1       I2S_BCLK   │ 12 │
+    │  7 │ SCREEN_BL (GPIO4)    NAV_UP     │  8 │
+    │  9 │ GND                  NAV_DOWN   │ 10 │
+    │ 11 │ NAV_LEFT             I2S_BCLK   │ 12 │
     │ 13 │ RF_MOSI (SoftSPI)    GND        │ 14 │
     │ 15 │ RF_MISO (SoftSPI)    RF_CLK     │ 16 │
     │ 17 │ 3V3_SYS              RF_CS_N    │ 18 │
@@ -899,28 +910,29 @@ def _build_radxa_header(
     │ 27 │ NC/GND               NC/GND     │ 28 │
     │ 29 │ STINGER_EN_1         GND        │ 30 │
     │ 31 │ STINGER_EN_2         SCREEN_DC  │ 32 │
-    │ 33 │ STINGER_EN_3         GND        │ 34 │
-    │ 35 │ I2S_LRCLK (I2S excl.) LED_DIN  │ 36 │
-    │ 37 │ JOY_SW   (GPIO26)    I2S_DATA_IN│ 38 │
+    │ 33 │ NAV_RIGHT            GND        │ 34 │
+    │ 35 │ I2S_LRCLK            LED_DIN    │ 36 │
+    │ 37 │ NAV_CENTER (GPIO26)  I2S_DATA_IN│ 38 │
     │ 39 │ GND                  I2S_DATA_OUT│ 40 │
     └────┴─────────────────────────────────┴────┘
 
-    Notes:
-    · Pin 7  (GPIO4): hardware-PWM-capable; SCREEN_BL for flicker-free backlight.
-    · Pins 13/15/16/18 (ECO #2026-03-F): RF SoftSPI on safe GPIOs, away from UART
-      pins 8/10. Separating from SPI3 (pins 19/23/24) eliminates CS conflicts.
-      RF_GDO0 is NOT on any header pin (CC1101 polling mode).
-    · Pin 36 (GPIO16): LED_DIN – WS2812B addressable LED data chain (ECO #2026-02-V2).
-    · Pin 35 (I2S3_LRCK_M0): exclusively I2S_LRCLK; joystick VRX/VRY offloaded
-      to ADS1015 on I2C1 so audio and ADC run concurrently.
-    · Pins 8/10/11 carry open-drain SY6280 FLAG signals (10 kΩ pull-ups in _build_stinger_port).
-    · ECO #2026-03-H: Pins 27/28 (I2C0) are NC/GND — disconnected on Zero 3W.
-      IP5328P I2C telemetry on pins 3/5 (I2C1, Always-On, 470Ω protection).
-    · PIN LOCK — NO OVERLAP CONFIRMED:
+    ECO #2026-03-NAV changes:
+    · Pins 8/10/11 repurposed: STINGER_FLAG_1/2/3 → NAV_UP/DOWN/LEFT.
+      Stinger overcurrent is now polled via SL2.1A USB hub status registers
+      (the OC_N lines still connect to the hub IC; only the Radxa GPIO
+      monitoring path is removed).
+    · Pin 33 repurposed: STINGER_EN_3 → NAV_RIGHT.
+      Port 3 (USB-A female) stays always-on via the 10 kΩ EN pull-up to
+      3V3_SYS in _build_stinger_port. Firmware cannot individually disable
+      port 3; this is acceptable for a device-input receptacle.
+    · Pin 37: JOY_SW → NAV_CENTER (same GPIO, same BSS84 wake-blocker wiring).
+
+    PIN LOCK — NO OVERLAP CONFIRMED:
         Screen  = SPI3  (pins 19/23/24 — SPI3_MOSI/CLK/CS; pin 21 → STINGER_EN_4)
         Audio   = I2S0  (pins 12/35/38/40 — PCM_CLK/LRCK/DIN/DOUT)
         RF      = SoftSPI (pins 13/15/16 + CS on 18)
-        I2C1    = pins 3/5 (ADS1015 + IP5328P; shared bus, different addresses)
+        Nav     = pins 8/10/11/33/37 (5-way switch, all digital GPIO)
+        I2C1    = pins 3/5 (IP5328P telemetry only; ADS1015 removed)
     """
 
     conn = Part(
@@ -932,48 +944,46 @@ def _build_radxa_header(
     conn[1]  += vcc_3v3
     # BRINGUP-CRITICAL: GPIO0_B3/B4 (I2C1 SDA/SCL) are on the RK3566 GPIO0 bank.
     # Probe pin 3 and pin 5 under power to confirm VCCIO voltage.
-    # If VCCIO = 1.8V: ADS1015 V_IH(min) = 2.31V will never be met → bus dead.
+    # If VCCIO = 1.8V: IP5328P V_IH(min) may not be met → I2C dead.
     # Fix: insert TXS0102 bidirectional level shifter between header and I2C bus.
     # If VCCIO = 3.3V: no action required.
-    # Additionally: disable Radxa internal pull-ups in device tree (i2c1 node);
-    # rely solely on IP5328P internal 4.7kΩ pull-ups to avoid over-driving the bus.
     conn[3]  += i2c1_sda
     conn[5]  += i2c1_scl
     conn[7]  += screen_bl         # SCREEN_BL → GPIO4 (hardware PWM)
     conn[9]  += gnd
-    conn[11] += stinger_flag[0]   # STINGER_FLAG_1 (SY6280 port 1 FLAG)
-    conn[13] += soft_spi_mosi     # RF_MOSI (ECO #2026-03-F: safe GPIO; was pin 8 UART TX)
-    conn[15] += soft_spi_miso     # RF_MISO (ECO #2026-03-F: safe GPIO; was pin 10 UART RX)
+    conn[11] += nav_left          # NAV_LEFT (ECO #2026-03-NAV; was STINGER_FLAG_1)
+    conn[13] += soft_spi_mosi     # RF_MOSI (ECO #2026-03-F: safe GPIO)
+    conn[15] += soft_spi_miso     # RF_MISO (ECO #2026-03-F: safe GPIO)
     conn[17] += vcc_3v3
     conn[19] += spi_mosi          # SPI3_MOSI → screen SDA
     conn[21] += stinger_en[3]     # STINGER_EN_4 (was SPI3_MISO; screen doesn't use it)
     conn[23] += spi_sck           # SPI3_CLK  → screen SCL
     conn[25] += gnd
-    conn[27] += gnd               # NC/GND (ECO #2026-03-H: was I2C0_SDA; pin disconnected on Zero 3W)
+    conn[27] += gnd               # NC/GND (ECO #2026-03-H: pin disconnected on Zero 3W)
     conn[29] += stinger_en[0]     # STINGER_EN_1 → SY6280 port 1 EN
     conn[31] += stinger_en[1]     # STINGER_EN_2
-    conn[33] += stinger_en[2]     # STINGER_EN_3
+    conn[33] += nav_right         # NAV_RIGHT (ECO #2026-03-NAV; was STINGER_EN_3)
     conn[35] += i2s_lrclk         # I2S3_LRCK_M0 exclusively
-    conn[37] += joy_sw            # JOY_SW (GPIO26)
+    conn[37] += nav_center        # NAV_CENTER (ECO #2026-03-NAV; was JOY_SW / GPIO26)
     conn[39] += gnd
 
     # ── Even column (pins 2, 4, 6 … 40) ──────────────────────────────────────
     conn[2]  += vcc_5v
     conn[4]  += vcc_5v
     conn[6]  += gnd
-    conn[8]  += stinger_flag[1]   # STINGER_FLAG_2 (ECO #2026-03-F: displaced from pin 13)
-    conn[10] += stinger_flag[2]   # STINGER_FLAG_3 (ECO #2026-03-F: displaced from pin 15)
+    conn[8]  += nav_up            # NAV_UP (ECO #2026-03-NAV; was STINGER_FLAG_2)
+    conn[10] += nav_down          # NAV_DOWN (ECO #2026-03-NAV; was STINGER_FLAG_3)
     conn[12] += i2s_bclk          # PCM_CLK / I2S BCLK
     conn[14] += gnd
-    conn[16] += soft_spi_sck      # RF_CLK (ECO #2026-03-F: moved from pin 32; RF_GDO0 removed)
-    conn[18] += rf_cs_n           # RF_CS_N (ECO #2026-03-F: moved from pin 26 to safe GPIO)
+    conn[16] += soft_spi_sck      # RF_CLK (ECO #2026-03-F)
+    conn[18] += rf_cs_n           # RF_CS_N (ECO #2026-03-F)
     conn[20] += gnd
     conn[22] += screen_rst        # SCREEN_RST (GPIO25)
     conn[24] += screen_cs         # SPI3_CS0 → screen CS
-    conn[26] += gnd               # NC/GND (ECO #2026-03-F: was RF_CS_N; Radxa SoC pin NC)
-    conn[28] += gnd               # NC/GND (ECO #2026-03-H: was I2C0_SCL; pin disconnected on Zero 3W)
+    conn[26] += gnd               # NC/GND (Radxa SoC pin NC)
+    conn[28] += gnd               # NC/GND (ECO #2026-03-H: pin disconnected on Zero 3W)
     conn[30] += gnd
-    conn[32] += screen_dc         # SCREEN_DC (ECO #2026-03-F: moved from pin 18; pin 32 freed)
+    conn[32] += screen_dc         # SCREEN_DC (ECO #2026-03-F)
     conn[34] += gnd
     conn[36] += led_din           # LED_DIN – WS2812B data chain (Subsystem E2)
     conn[38] += i2s_din           # PCM_DIN / I2S data in (microphone)
@@ -1123,55 +1133,6 @@ def _build_clean_3v3_rail(gnd: Net, vcc_5v: Net) -> Net:
     return vcc_clean
 
 
-# ── Subsystem A3: USB Charging MUX Hardening (PDN-USB-01) ────────────────────
-
-
-def _build_usb_charging_mux(gnd: Net, vcc_5v: Net) -> Net:
-    """
-    PDN-USB-01 – Harden the USB charging MUX against host-to-host backfeeding.
-
-    Two SS14 Schottky diodes (DO-214AC / SMA) form an OR-diode from VBUS_A and
-    VBUS_C into MUX_VIN, preventing a powered host on one port from backfeeding
-    through the MUX body diode into a host on the other port.
-
-    A resistor voltage divider sets the MUX_SEL logic level to ~2.95 V from the
-    5 V_SYS rail, satisfying the USB MUX IC's VIH threshold without requiring a
-    separate LDO:
-        V_SEL = 5 V × 620k / (430k + 620k) ≈ 2.952 V
-    """
-    Resistor = Part("Device", "R", dest=TEMPLATE, footprint=FP_R0402)
-    Diode    = Part("Device", "D_Schottky", dest=TEMPLATE, footprint=FP_SCHOTTKY_SMA)
-
-    # ── SS14 Schottky anti-backfeed diodes ────────────────────────────────────
-    d_vbus_a = Diode(value="SS14")   # VBUS_A → MUX_VIN
-    d_vbus_c = Diode(value="SS14")   # VBUS_C → MUX_VIN
-
-    # ── MUX_SEL voltage divider (5V → ~2.95V) ────────────────────────────────
-    r_series = Resistor(value="430k")   # series arm
-    r_shunt  = Resistor(value="620k")   # shunt arm
-
-    # ── Nets ──────────────────────────────────────────────────────────────────
-    # NOTE: VBUS_A and VBUS_C are created but not connected to external VBUS
-    # sources. This MUX circuit is a design placeholder — the OR-diode anodes
-    # need to be wired to the Goobay bridge VBUS and/or a USB-A charging port.
-    # Currently the Goobay bridge connects VBUS directly to vcc_5v, bypassing
-    # this MUX entirely. The voltage divider (MUX_SEL) return value is also
-    # unused at the call site. TODO: integrate or remove.
-    vbus_a  = Net("VBUS_A")    # upstream VBUS from host port A
-    vbus_c  = Net("VBUS_C")    # upstream VBUS from host port C
-    mux_vin = Net("MUX_VIN")   # OR-diode output into MUX common input
-    mux_sel = Net("MUX_SEL")   # logic-level select: ~2.95 V
-
-    # ── Schottky OR-diode connections ─────────────────────────────────────────
-    d_vbus_a["A"] += vbus_a;  d_vbus_a["K"] += mux_vin
-    d_vbus_c["A"] += vbus_c;  d_vbus_c["K"] += mux_vin
-
-    # ── Voltage divider: 5V_SYS → 430kΩ → MUX_SEL → 620kΩ → GND ────────────
-    r_series[1] += vcc_5v;   r_series[2] += mux_sel
-    r_shunt[1]  += mux_sel;  r_shunt[2]  += gnd
-
-    return mux_sel
-
 
 # ── Subsystem A6: Advanced Power UX (ECO #2026-03-D) ─────────────────────────
 
@@ -1179,7 +1140,7 @@ def _build_usb_charging_mux(gnd: Net, vcc_5v: Net) -> Net:
 def _build_power_ux(
     gnd: Net,
     vcc_5v: Net,
-    joy_sw: Net,         # joystick button net → PMOS drain (wake source)
+    nav_center: Net,     # NAV_CENTER net → PMOS drain (wake source; ECO #2026-03-NAV)
     pmic_kill: Net,      # Radxa GPIO → 2N7002 gate (software kill)
     sw_pwr_gpio: Net,    # Radxa GPIO → long-press detect (monitors KEY)
     key_net: Net,        # PMIC_KEY shared with _build_power_system ic["KEY"]
@@ -1191,8 +1152,8 @@ def _build_power_ux(
 
     1. BSS84 PMOS Wake-Blocker:
        When 5V_SYS is OFF (board sleeping), Gate=0V → Vgs<Vth → PMOS ON.
-       Joystick button press pulls KEY to GND → wakes the PMIC.
-       When 5V_SYS is ON, Gate=5V → Vgs≈0V → PMOS OFF. Joystick isolated.
+       Nav switch center press pulls KEY to GND → wakes the PMIC.
+       When 5V_SYS is ON, Gate=5V → Vgs≈0V → PMOS OFF. Nav switch isolated.
        100kΩ gate pull-down ensures Gate=0V when 5V rail collapses.
 
     2. 2N7002 NMOS Software Kill:
@@ -1210,7 +1171,7 @@ def _build_power_ux(
     Nfet     = Part("Device", "Q_NMOS_GDS", dest=TEMPLATE, footprint=FP_NFET_SOT23)
 
     # ── Passives ──────────────────────────────────────────────────────────────
-    gate_pulldown = Resistor(value="100k")   # BSS84 Gate pull-down → GND
+    gate_pulldown = Resistor(value="10k")    # BSS84 Gate pull-down → GND (fast wake: ~2s)
 
     # ── Components ────────────────────────────────────────────────────────────
     pmos = Pfet(value="BSS84")     # P-channel wake-blocker (SOT-23)
@@ -1230,7 +1191,7 @@ def _build_power_ux(
     # ── BSS84 wake-blocker connections ────────────────────────────────────────
     # Gate=5V_SYS: PMOS OFF when board is on; Gate=0V via pull-down when board off
     pmos["S"] += key_net       # Source: PMIC_KEY (shared with IC KEY pin)
-    pmos["D"] += joy_sw        # Drain: joystick switch (wake trigger)
+    pmos["D"] += nav_center    # Drain: nav switch center press (wake trigger)
     pmos["G"] += vcc_5v        # Gate: 5V_SYS (holds PMOS off during operation)
     gate_pulldown[1] += vcc_5v # pull-down top: connects to Gate node (5V_SYS)
     gate_pulldown[2] += gnd    # pull-down bottom: GND (acts when 5V collapses)
@@ -1239,6 +1200,10 @@ def _build_power_ux(
     nmos["G"] += pmic_kill     # Gate: PMIC_KILL GPIO (active-high pulls KEY low)
     nmos["D"] += key_net       # Drain: KEY net → simulates double-tap
     nmos["S"] += gnd           # Source: GND
+    # PMIC_KILL pull-down (100k) — prevent spurious shutdown during Radxa boot
+    kill_pd = Resistor(value="100k", footprint=FP_R0402)
+    kill_pd[1] += pmic_kill
+    kill_pd[2] += gnd
 
     # ── Physical power button ──────────────────────────────────────────────────
     sw_pwr[1] += key_net       # one terminal: KEY (grounds KEY when pressed)
@@ -1303,7 +1268,7 @@ def _build_rf_transceiver(
 
     # ── Passives ──────────────────────────────────────────────────────────────
     cxtal_a, cxtal_b = Capacitor(num_copies=2, value="22p")   # crystal load caps
-    rbias_res         = Resistor(value="10k")                  # RBIAS → GND
+    rbias_res         = Resistor(value="56k")                  # RBIAS → GND (CC1101 datasheet: 56.2k ±1%)
     # VDD decoupling: 100 nF on each VDD supply group
     cvdd_a, cvdd_b, cvdd_c = Capacitor(num_copies=3, value="100n")
 
@@ -1320,6 +1285,11 @@ def _build_rf_transceiver(
     ic["SO"]    += spi_miso
     ic["CSN"]   += rf_cs_n
     ic["GDO0"]  += rf_gdo0
+    # GDO0 pull-down: no spare GPIO for interrupt; CC1101 runs in polling mode.
+    # 100kΩ to GND prevents float (GDO0 defaults to CHIP_RDYn after reset).
+    gdo0_pd = Resistor(value="100k")
+    gdo0_pd[1] += rf_gdo0
+    gdo0_pd[2] += gnd
     ic["GDO1"]  += Net("RF_GDO1")    # optional; configurable output / MISO alt
     ic["GDO2"]  += Net("RF_GDO2")    # optional; leave as named net
     ic["RF_P"]  += Net("RF_ANT_P")   # → Pi-network matching → chip antenna
@@ -1730,6 +1700,178 @@ def _build_ir_blaster(
     fet["G"]    += ir_gpio    # Gate: driven by Radxa GPIO (active-high)
     fet["D"]    += ir_cathode # Drain: connected to LED cathode
     fet["S"]    += gnd        # Source: GND
+    # IR_GPIO pull-down (100k) — prevent spurious IR flash during Radxa boot
+    ir_pd = Resistor(value="100k", footprint=FP_R0402)
+    ir_pd[1] += ir_gpio
+    ir_pd[2] += gnd
+
+
+# ── Subsystem K: Audio Subsystem (merged from audio_subsystem.py) ─────────────
+# ECO #2026-03-MERGE: Integrated into full_system.py for single-netlist output.
+# audio_subsystem.py is retained for standalone audio-only testing.
+
+
+def _build_audio_subsystem(
+    gnd: Net,
+    vcc_5v: Net,
+    vcc_3v3: Net,
+    i2s_bclk: Net,
+    i2s_lrclk: Net,
+    i2s_din: Net,       # microphone → MCU
+    i2s_dout: Net,      # MCU → amplifier
+) -> None:
+    """
+    Subsystem K – MAX98357A + INMP441 + TRRS + Speaker (I2S Audio)
+
+    Components:
+      - MAX98357A: I2S Class-D BTL amplifier (filterless, 3.2W @ 4Ω)
+      - INMP441: omnidirectional MEMS I2S microphone (left channel)
+      - SJ2-2531X-SMT: switched 3.5mm TRRS jack (NC interrupt for speaker disconnect)
+      - JST-SH 2-pin: internal micro speaker connector (1W / 8Ω)
+      - 2× ESD9B5.0ST5G: BTL output TVS diodes (SM-AUD-01)
+      - 2× BLM18AG601SN1: ferrite bead EMI filters on BTL outputs (SM-AUD-02)
+      - RED LED: hardware mic-active privacy indicator (always-on when mic powered)
+
+    Power topology:
+      5V_SYS → [BLM18AG601SN1 ferrite bead] → 5V_AUDIO → MAX98357A VDD
+      3V3_SYS → INMP441 VDD (shared with nav switch / screen)
+
+    TRRS NC switch topology (speaker auto-disconnect):
+      AMP_OUT_P → [TVS] → [Ferrite] → AMP_OUT_P_FILT → TipSwitch(NC) → Tip → SPK+
+      AMP_OUT_N → [TVS] → [Ferrite] → AMP_OUT_N_FILT → Ring1Switch(NC) → Ring1 → SPK−
+      On plug insertion: NC contacts open → speaker disconnected → headphone path active.
+
+    SD_MODE pull-up (SM-LOG-03):
+      R = 222.2 × V_DDIO − 100 = 633 kΩ at 3.3V → L/2+R/2 mono mix mode.
+      TRRS detect → RC debounce (10kΩ/100nF, τ=1ms) → SD_MODE (shutdown on insert).
+    """
+    Resistor  = Part("Device", "R", dest=TEMPLATE, footprint=FP_R0402)
+    Capacitor = Part("Device", "C", dest=TEMPLATE, footprint=FP_C0402)
+
+    # ── 5V_AUDIO: isolated supply for amplifier via ferrite bead ─────────────
+    # BLM18AG601SN1 (~600Ω @ 100MHz) filters IP5328P 300kHz switching noise
+    # from reaching the Class-D amp and radiating via the speaker cable.
+    fb_supply = Part("Device", "FerriteBead", footprint=FP_FERRITE_0402,
+                     value="BLM18AG601SN1")
+    vcc_5v_audio = Net("5V_AUDIO")
+    fb_supply[1] += vcc_5v
+    fb_supply[2] += vcc_5v_audio
+    # Bulk decoupling on the 5V_AUDIO rail
+    c_5v_audio = Capacitor(value="10u")
+    c_5v_audio[1] += vcc_5v_audio
+    c_5v_audio[2] += gnd
+
+    # ── MAX98357A – filterless, BTL, I2S Class-D amplifier ───────────────────
+    amp = Part("Audio", "MAX98357A", footprint=FP_AMP_QFN16)
+
+    # ── INMP441 – omnidirectional MEMS I2S microphone ────────────────────────
+    mic = Part("Daemon_V0", "INMP441", footprint=FP_INMP441)
+
+    # ── 3.5mm TRRS jack with NC tip and ring switches ────────────────────────
+    trrs_jack = Part("Daemon_V0", "AudioJack4_Switch", footprint=FP_TRRS)
+
+    # ── JST-SH 2-pin – internal micro speaker connector ─────────────────────
+    speaker_conn = Part("Connector_Generic", "Conn_01x02", footprint=FP_JST_SH2)
+
+    # ── SM-AUD-01: ESD9B5.0ST5G TVS diodes on BTL output nodes ──────────────
+    tvs_btl_p = Part("Daemon_V0", "ESD9B5.0ST5G", footprint=FP_TVS_SC70,
+                     value="ESD9B5.0ST5G")
+    tvs_btl_n = Part("Daemon_V0", "ESD9B5.0ST5G", footprint=FP_TVS_SC70,
+                     value="ESD9B5.0ST5G")
+
+    # ── SM-AUD-02: Ferrite bead EMI filter on BTL outputs ────────────────────
+    fb_p = Part("Device", "FerriteBead", footprint=FP_FERRITE_0402,
+                value="BLM18AG601SN1")
+    fb_n = Part("Device", "FerriteBead", footprint=FP_FERRITE_0402,
+                value="BLM18AG601SN1")
+    c_filt_p = Capacitor(value="1n")   # post-bead shunt cap, OUTP side
+    c_filt_n = Capacitor(value="1n")   # post-bead shunt cap, OUTN side
+
+    # ── Passives ─────────────────────────────────────────────────────────────
+    # SM-LOG-03: SD_MODE pull-up (633kΩ at 3.3V VDDIO; connects to VDDIO, NOT VDD)
+    pullup_sd = Resistor(value=SD_MODE_PULLUP_VALUE)
+    # INMP441 L/R pin → 10kΩ pull-down → left channel output
+    mic_lr_pulldown = Resistor(value="10k")
+    # SM-AUD-01: RC debounce for TRRS detect (τ = 10kΩ × 100nF = 1ms)
+    r_detect_debounce = Resistor(value="10k")
+    c_detect_debounce = Capacitor(value="100n")
+    # Bulk decoupling
+    amp_decap_a, amp_decap_b = Capacitor(num_copies=2, value="0.1uF")
+    mic_decap_a, mic_decap_b = Capacitor(num_copies=2, value="0.1uF")
+
+    # ── Mic-active privacy LED (hardware indicator; can't be disabled) ───────
+    mic_led = Part("Device", "LED", footprint=FP_LED_0402, value="RED_0402")
+    mic_led_r = Resistor(value="1k")
+    mic_led_r[1] += vcc_3v3
+    mic_led_r[2] += mic_led["A"]
+    mic_led["K"] += gnd
+
+    # ── Power ────────────────────────────────────────────────────────────────
+    amp["VDD"] += vcc_5v_audio
+    amp["GND"] += gnd
+    amp_decap_a[1] += vcc_5v_audio; amp_decap_a[2] += gnd
+    amp_decap_b[1] += vcc_5v_audio; amp_decap_b[2] += gnd
+
+    mic["VDD"] += vcc_3v3
+    mic["GND"] += gnd
+    mic_decap_a[1] += vcc_3v3; mic_decap_a[2] += gnd
+    mic_decap_b[1] += vcc_3v3; mic_decap_b[2] += gnd
+
+    # ── I2S bus ──────────────────────────────────────────────────────────────
+    amp["BCLK"]  += i2s_bclk
+    amp["LRCLK"] += i2s_lrclk
+    amp["DIN"]   += i2s_dout     # MCU data out → amplifier data in
+
+    mic["SCK"]   += i2s_bclk
+    mic["WS"]    += i2s_lrclk
+    mic["SD"]    += i2s_din      # microphone data → MCU data in
+
+    mic["L/R"]   += mic_lr_pulldown[1]
+    mic_lr_pulldown[2] += gnd
+
+    # ── BTL output routing with TVS + ferrite bead + TRRS NC switch ──────────
+    btl_out_p = Net("AMP_OUT_P")
+    btl_out_n = Net("AMP_OUT_N")
+    amp["OUTP"] += btl_out_p
+    amp["OUTN"] += btl_out_n
+
+    # TVS clamps on raw amplifier output
+    tvs_btl_p["A"] += btl_out_p; tvs_btl_p["K"] += gnd
+    tvs_btl_n["A"] += btl_out_n; tvs_btl_n["K"] += gnd
+
+    # Ferrite bead EMI filter: amp → TVS → bead → 1nF shunt → TRRS switch
+    btl_filt_p = Net("AMP_OUT_P_FILT")
+    btl_filt_n = Net("AMP_OUT_N_FILT")
+    fb_p[1] += btl_out_p;    fb_p[2] += btl_filt_p
+    c_filt_p[1] += btl_filt_p; c_filt_p[2] += gnd
+    fb_n[1] += btl_out_n;    fb_n[2] += btl_filt_n
+    c_filt_n[1] += btl_filt_n; c_filt_n[2] += gnd
+
+    # TRRS NC switch: filtered BTL → switch input (NC contacts)
+    trrs_jack["TipSwitch"]   += btl_filt_p
+    trrs_jack["Ring1Switch"] += btl_filt_n
+    # NC switch output → speaker connector (when jack empty: NC closed = speaker plays)
+    spk_p = Net("SPK_P")
+    spk_n = Net("SPK_N")
+    trrs_jack["Tip"]   += spk_p
+    trrs_jack["Ring1"] += spk_n
+    speaker_conn[1] += spk_p
+    speaker_conn[2] += spk_n
+
+    # ── SD_MODE shutdown via TRRS insertion detect ───────────────────────────
+    amp_sd = Net("AMP_SD")
+    amp["~{SD_MODE}"] += amp_sd
+    pullup_sd[1] += vcc_3v3   # pull-up to VDDIO (3.3V), NOT VDD (5V)
+    pullup_sd[2] += amp_sd
+
+    detect_raw = Net("TRRS_DETECT_RAW")
+    trrs_jack["Detect"] += detect_raw
+    r_detect_debounce[1] += detect_raw
+    r_detect_debounce[2] += amp_sd
+    c_detect_debounce[1] += amp_sd
+    c_detect_debounce[2] += gnd
+
+    trrs_jack["Sleeve"] += gnd
 
 
 # ── Top-level assembly ────────────────────────────────────────────────────────
@@ -1750,7 +1892,7 @@ def generate_daemon_v0_full_system() -> None:
     vcc_5v  = Net("5V_SYS")   # IP5328P VOUT_ISO; also feeds Radxa header 5V pins
     vcc_3v3 = Net("3V3_SYS")  # sourced from Radxa SBC 3.3V LDO (via header pin 1/17)
 
-    # ── Shared I2S bus (bridged from audio_subsystem.py conventions) ──────────
+    # ── Shared I2S bus (used by Subsystem K audio, Radxa header) ──────────────
     i2s_bclk  = Net("I2S_BCLK")
     i2s_lrclk = Net("I2S_LRCLK")
     i2s_din   = Net("I2S_DATA_IN")
@@ -1772,18 +1914,25 @@ def generate_daemon_v0_full_system() -> None:
     screen_rst = Net("SCREEN_RST")   # GPIO25
     screen_bl  = Net("SCREEN_BL")    # GPIO4 / pin 7 (hardware PWM)
 
-    # ── Joystick signals ──────────────────────────────────────────────────────
-    joy_vrx = Net("JOY_VRX")    # analog X → Radxa ADC / external ADS1015
-    joy_vry = Net("JOY_VRY")    # analog Y → Radxa ADC / external ADS1015
-    joy_sw  = Net("JOY_SW")     # digital button → GPIO26
+    # ── Navigation switch signals (ECO #2026-03-NAV) ───────────────────────────
+    # Alps SKRHABE010 5-way SMD nav switch replaces breakout analog joystick.
+    # All digital GPIO, active-low with on-board 10k pull-ups.
+    nav_up     = Net("NAV_UP")      # pin 8  (was STINGER_FLAG_2)
+    nav_down   = Net("NAV_DOWN")    # pin 10 (was STINGER_FLAG_3)
+    nav_left   = Net("NAV_LEFT")    # pin 11 (was STINGER_FLAG_1)
+    nav_right  = Net("NAV_RIGHT")   # pin 33 (was STINGER_EN_3)
+    nav_center = Net("NAV_CENTER")  # pin 37 (was JOY_SW; same GPIO26)
 
     # ── Stinger port control (one GPIO per port) ──────────────────────────────
+    # ECO #2026-03-NAV: EN_3 no longer on header (pin 33 → NAV_RIGHT).
+    # Port 3 stays always-on via the 10k EN pull-up in _build_stinger_port.
+    # FLAG signals removed from header; polled via SL2.1A USB hub status regs.
     stinger_en   = [Net(f"STINGER_EN_{i}")   for i in range(1, 5)]
     stinger_flag = [Net(f"STINGER_FLAG_{i}") for i in range(1, 5)]
 
-    # ── I2C1 bus (pins 3/5 – ADS1015 joystick ADC + IP5328P telemetry) ───────
-    # ECO #2026-03-H: I2C0 (pins 27/28) removed — those lines are disconnected
-    # on Zero 3W.  IP5328P telemetry moved here (shared with ADS1015 on I2C1).
+    # ── I2C1 bus (pins 3/5 – IP5328P telemetry) ─────────────────────────────
+    # ECO #2026-03-NAV: ADS1015 removed (no analog joystick). I2C1 bus now
+    # serves only IP5328P telemetry. Bus is lightly loaded.
     i2c1_sda = Net("I2C1_SDA")
     i2c1_scl = Net("I2C1_SCL")
 
@@ -1874,22 +2023,17 @@ def generate_daemon_v0_full_system() -> None:
     )
 
     # ──────────────────────────────────────────────────────────────────────────
-    # E – Analog joystick
+    # E – Alps SKRHABE010 5-way navigation switch (ECO #2026-03-NAV)
     # ──────────────────────────────────────────────────────────────────────────
-    _build_joystick(
-        gnd     = gnd,
-        vcc_3v3 = vcc_3v3,
-        joy_vrx = joy_vrx,
-        joy_vry = joy_vry,
-        joy_sw  = joy_sw,
-        i2c1_sda= i2c1_sda,
-        i2c1_scl= i2c1_scl,
+    _build_nav_switch(
+        gnd        = gnd,
+        vcc_3v3    = vcc_3v3,
+        nav_up     = nav_up,
+        nav_down   = nav_down,
+        nav_left   = nav_left,
+        nav_right  = nav_right,
+        nav_center = nav_center,
     )
-
-    # ──────────────────────────────────────────────────────────────────────────
-    # A3 – USB charging MUX hardening (PDN-USB-01)
-    # ──────────────────────────────────────────────────────────────────────────
-    _build_usb_charging_mux(gnd, vcc_5v)
 
     # ──────────────────────────────────────────────────────────────────────────
     # A6 – Advanced power UX (BSS84 wake-blocker, 2N7002 kill, SW_PWR button)
@@ -1897,7 +2041,7 @@ def generate_daemon_v0_full_system() -> None:
     _build_power_ux(
         gnd         = gnd,
         vcc_5v      = vcc_5v,
-        joy_sw      = joy_sw,
+        nav_center  = nav_center,   # ECO #2026-03-NAV: center press wakes PMIC
         pmic_kill   = pmic_kill,
         sw_pwr_gpio = sw_pwr_gpio,
         key_net     = key_net,
@@ -1943,6 +2087,20 @@ def generate_daemon_v0_full_system() -> None:
     _build_ir_blaster(gnd, vcc_5v, ir_gpio)
 
     # ──────────────────────────────────────────────────────────────────────────
+    # K – Audio subsystem (MAX98357A + INMP441 + TRRS + Speaker)
+    # ECO #2026-03-MERGE: merged from audio_subsystem.py into unified netlist
+    # ──────────────────────────────────────────────────────────────────────────
+    _build_audio_subsystem(
+        gnd       = gnd,
+        vcc_5v    = vcc_5v,
+        vcc_3v3   = vcc_3v3,
+        i2s_bclk  = i2s_bclk,
+        i2s_lrclk = i2s_lrclk,
+        i2s_din   = i2s_din,
+        i2s_dout  = i2s_dout,
+    )
+
+    # ──────────────────────────────────────────────────────────────────────────
     # J – ISO1212 industrial 24V logic isolation (PLC integration)
     # ──────────────────────────────────────────────────────────────────────────
     _build_industrial_iso(
@@ -1979,17 +2137,19 @@ def generate_daemon_v0_full_system() -> None:
         screen_cs    = screen_cs,
         screen_dc    = screen_dc,
         screen_rst   = screen_rst,
-        screen_bl      = screen_bl,
-        joy_sw         = joy_sw,
+        screen_bl    = screen_bl,
+        nav_up       = nav_up,
+        nav_down     = nav_down,
+        nav_left     = nav_left,
+        nav_right    = nav_right,
+        nav_center   = nav_center,
         soft_spi_sck   = rf_clk,
         soft_spi_mosi  = rf_mosi,
         soft_spi_miso  = rf_miso,
         stinger_en   = stinger_en,
-        stinger_flag = stinger_flag,
         i2c1_sda     = i2c1_sda,
         i2c1_scl     = i2c1_scl,
         rf_cs_n      = rf_cs_n,
-        rf_gdo0      = rf_gdo0,
         led_din      = led_din,
     )
 
