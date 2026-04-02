@@ -27,9 +27,27 @@ _autosave-*
 
 # Large binaries
 tools/
+daemon_v0*.step
+*.apk
+web/public/apk
+
+# Android/Watch build artifacts
+**/build/
+local.properties
+.gradle/
 
 # SKiDL generated lib caches
 *_sklib.py
+
+# Data / runtime
+data/
+output/
+*.jar
+freerouting_log*.txt
+
+# Node
+node_modules/
+.next/
 
 # macOS
 .DS_Store
@@ -37,3 +55,8 @@ tools/
 # Editor
 .vscode/
 .idea/
+
+# Temp
+*.pdf
+*.txt
+!requirements.txt
