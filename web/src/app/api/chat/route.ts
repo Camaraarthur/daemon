@@ -79,7 +79,7 @@ store_conversation_turn(os.environ["USER_MSG"], os.environ["DAEMON_MSG"])`,
   }
 }
 
-async function getUserTier(token: string): Promise<{ tier: ModelTier; email: string }> {
+async function getUserTier(token: string): Promise<{ tier: ModelTier; email: string; userId: string }> {
   try {
     const { stdout } = await execFileAsync(VENV_PYTHON, ['-c', `
 import sys,json,os; sys.path.insert(0,os.environ["DAEMON_SERVER"])
@@ -88,7 +88,7 @@ u=get_user_by_token(os.environ["AUTH_TOKEN"])
 if u:
     import json as j
     settings = j.loads(u.get("settings","{}") or "{}")
-    print(j.dumps({"ok":True,"email":u["email"],"tier":settings.get("model_tier","free")}))
+    print(j.dumps({"ok":True,"email":u["email"],"tier":settings.get("model_tier","free"),"userId":str(u["id"])}))
 else:
     print(j.dumps({"ok":False}))
 `], { timeout: 3000, env: { ...process.env, PYTHONPATH: join(DAEMON_ROOT, 'server'), DAEMON_SERVER: join(DAEMON_ROOT, 'server'), AUTH_TOKEN: token } })
@@ -96,13 +96,14 @@ else:
     if (!result.ok) throw new Error('Invalid token')
     // Arthur (tutucamara@gmail.com) always gets premium
     const tier = result.email === 'tutucamara@gmail.com' ? 'premium' : (result.tier || 'free')
-    return { tier: tier as ModelTier, email: result.email }
+    return { tier: tier as ModelTier, email: result.email, userId: result.userId || '0' }
   } catch {
     throw new Error('Authentication failed')
   }
 }
 
-const TOOLS_REGEX = /ssh|device|esp32|sensor|distance|temperature|phone|battery|pixel|msi|arturito|screen|display|hardware|run|execute|check|what.*running|connect|plot|stream|live|data|web.*page|key|pendant|show|monitor/i
+// Detect messages that need tool use (code execution, file ops, system commands)
+const TOOLS_REGEX = /ssh|device|esp32|sensor|distance|temperature|phone|battery|pixel|msi|arturito|screen|display|hardware|run|execute|check|what.*running|connect|plot|stream|live|data|web.*page|key|pendant|show|monitor|write.*(?:code|script|file|program)|create.*(?:file|script|app)|build|install|compile|test|debug|fix.*(?:code|bug)|python|javascript|node|pip|npm|git|curl|wget|mkdir|docker/i
 
 export async function POST(req: NextRequest) {
   try {
@@ -111,7 +112,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Not authenticated' }, { status: 401 })
     }
 
-    const { tier, email } = await getUserTier(token)
+    const { tier, email, userId } = await getUserTier(token)
     const { message, threadId, modelOverride } = await req.json()
 
     if (!message) {
@@ -140,6 +141,7 @@ export async function POST(req: NextRequest) {
       systemPrompt,
       threadId: threadKey,
       needsTools,
+      userId,
     })
 
     // Update personality interaction count
@@ -157,6 +159,7 @@ export async function POST(req: NextRequest) {
       model: result.model,
       tier: result.tier,
       usage: result.usage,
+      toolCalls: result.toolCalls,
     })
   } catch (error: any) {
     console.error('[chat api]', error?.message || error)

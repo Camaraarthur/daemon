@@ -11,6 +11,7 @@ import { spawn } from 'child_process'
 import { readFileSync, writeFileSync, existsSync, mkdirSync, unlinkSync } from 'fs'
 import { join } from 'path'
 import { randomUUID } from 'crypto'
+import { runAgentLoop, type AgentResult } from './agent-loop'
 
 export type ModelTier = 'free' | 'mid' | 'premium'
 
@@ -25,6 +26,7 @@ interface RouterResult {
   tier: ModelTier
   sessionId?: string
   usage?: { prompt_tokens: number; completion_tokens: number }
+  toolCalls?: AgentResult['toolCalls']
 }
 
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY || ''
@@ -118,8 +120,12 @@ const claudeSessions: Record<string, string> = {}
 
 function execClaude(args: string[]): Promise<{ stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
-    const child = spawn('claude', args, {
+    const claudeBin = process.env.CLAUDE_BIN || '/home/arthur/.local/bin/claude'
+    // Unset ANTHROPIC_API_KEY so claude uses Max subscription, not the pay-per-token API
+    const claudeEnv = { ...process.env, PATH: `/home/arthur/.local/bin:${process.env.PATH}`, ANTHROPIC_API_KEY: '' }
+    const child = spawn(claudeBin, args, {
       stdio: ['pipe', 'pipe', 'pipe'],
+      env: claudeEnv,
     })
     child.stdin.end()
 
@@ -197,6 +203,19 @@ async function callClaude(
   }
 }
 
+// --- Provider config helpers ---
+
+function getProviderConfig(tier: 'free' | 'mid') {
+  const provider = PROVIDERS[tier]
+  return {
+    baseUrl: provider.baseUrl,
+    model: tier === 'free' ? 'qwen/qwen3-coder' : provider.model, // Use paid Qwen for tool use (more reliable)
+    apiKey: provider.getApiKey(),
+    extraHeaders: provider.extraHeaders as Record<string, string>,
+    maxTokens: provider.maxTokens,
+  }
+}
+
 // --- Main router ---
 
 export async function routeChat(opts: {
@@ -205,17 +224,40 @@ export async function routeChat(opts: {
   systemPrompt: string
   threadId: string
   needsTools: boolean
+  userId?: string
 }): Promise<RouterResult> {
-  const { message, tier, systemPrompt, threadId, needsTools } = opts
+  const { message, tier, systemPrompt, threadId, needsTools, userId } = opts
 
-  // Premium tier: tools need Claude CLI
-  // If user is on free/mid but message needs tools, we still use those tiers
-  // (they won't have tool access — that's a premium feature)
+  // Premium tier: Claude CLI handles everything including tools
   if (tier === 'premium') {
     return callClaude(message, systemPrompt, threadId, needsTools)
   }
 
-  // Free/mid: build messages array for OpenAI-compatible API
+  // Free/mid with tool use: run the agent loop in a Docker sandbox
+  if (needsTools && userId) {
+    const providerConfig = getProviderConfig(tier)
+    try {
+      const agentResult = await runAgentLoop({
+        provider: providerConfig,
+        systemPrompt,
+        userMessage: message,
+        userId,
+        maxIterations: 10,
+      })
+      return {
+        response: agentResult.response,
+        model: agentResult.model,
+        tier,
+        usage: agentResult.totalUsage,
+        toolCalls: agentResult.toolCalls,
+      }
+    } catch (err: any) {
+      // If agent loop fails (e.g. sandbox issue), fall back to plain chat
+      console.warn(`[router] Agent loop failed (${err.message}), falling back to plain chat`)
+    }
+  }
+
+  // Plain chat (no tools)
   const messages: ChatMessage[] = [
     { role: 'system', content: systemPrompt },
     { role: 'user', content: message },
@@ -224,30 +266,9 @@ export async function routeChat(opts: {
   try {
     return await callOpenAICompatible(tier, messages)
   } catch (err: any) {
-    // Fallback chain: free → paid Qwen (cheap) → DeepSeek
+    // Fallback chain: free → paid Qwen → DeepSeek
     if (tier === 'free') {
-      console.warn(`[router] Free tier failed (${err.message}), trying paid Qwen`)
-      try {
-        // Try paid Qwen3-Coder via OpenRouter (~$0.20/MTok — cheaper than DeepSeek)
-        const paidProvider = { ...PROVIDERS.free, name: 'Qwen3-Coder (paid)', model: 'qwen/qwen3-coder' }
-        const paidRes = await fetch(paidProvider.baseUrl, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${OPENROUTER_API_KEY}`,
-            ...paidProvider.extraHeaders,
-          },
-          body: JSON.stringify({ model: paidProvider.model, messages, max_tokens: paidProvider.maxTokens, temperature: 0.7 }),
-        })
-        if (paidRes.ok) {
-          const data = await paidRes.json()
-          let content = data.choices?.[0]?.message?.content || ''
-          content = content.replace(/<think>[\s\S]*?<\/think>/g, '').trim()
-          return { response: content, model: data.model || paidProvider.model, tier: 'free' as ModelTier, usage: data.usage }
-        }
-      } catch {}
-      // Final fallback: DeepSeek
-      console.warn(`[router] Paid Qwen also failed, falling back to DeepSeek`)
+      console.warn(`[router] Free tier failed (${err.message}), falling back to mid`)
       try {
         return await callOpenAICompatible('mid', messages)
       } catch (midErr: any) {
