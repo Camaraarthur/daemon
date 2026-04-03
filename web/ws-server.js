@@ -19,6 +19,7 @@ const PING_INTERVAL = 15_000
 const PONG_TIMEOUT = 10_000
 
 const devices = new Map() // deviceId -> { ws, info, capabilities, stats }
+let clipboardHistory = [] // last 50 clipboard entries across all devices
 
 const server = http.createServer((req, res) => {
   // CORS headers for local requests
@@ -178,6 +179,30 @@ wss.on('connection', (ws, req) => {
           if (device?.pendingRequests?.[msg.request_id]) {
             device.pendingRequests[msg.request_id](msg.result || msg)
             delete device.pendingRequests[msg.request_id]
+          }
+          break
+
+        case 'clipboard_update':
+          // Broadcast to all OTHER connected devices
+          console.log(`[ws] Clipboard from ${deviceId}: ${(msg.content || '').slice(0, 40)}...`)
+          // Store in history
+          if (!clipboardHistory) clipboardHistory = []
+          clipboardHistory.push({
+            content: msg.content,
+            source: deviceId,
+            timestamp: Date.now(),
+          })
+          if (clipboardHistory.length > 50) clipboardHistory.shift()
+          // Broadcast to all other devices
+          for (const [otherId, otherDevice] of devices) {
+            if (otherId !== deviceId && otherDevice.ws.readyState === WebSocket.OPEN) {
+              otherDevice.ws.send(JSON.stringify({
+                type: 'clipboard_update',
+                content: msg.content,
+                source_device: deviceId,
+                timestamp: Date.now(),
+              }))
+            }
           }
           break
 

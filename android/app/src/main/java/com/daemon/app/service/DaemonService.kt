@@ -83,6 +83,10 @@ class DaemonService : Service() {
     // Network listener
     private var networkCallback: ConnectivityManager.NetworkCallback? = null
 
+    // Clipboard sync
+    private var lastClipboard = ""
+    private var clipboardJob: Job? = null
+
     override fun onCreate() {
         super.onCreate()
         createNotificationChannel()
@@ -298,6 +302,7 @@ class DaemonService : Service() {
 
                 // Start client-side heartbeat
                 startHeartbeat()
+                startClipboardSync()
             }
 
             override fun onMessage(webSocket: WebSocket, text: String) {
@@ -368,6 +373,55 @@ class DaemonService : Service() {
         heartbeatJob = null
     }
 
+    // ── Clipboard Sync ──────────────────────────────────────────────
+
+    private fun startClipboardSync() {
+        stopClipboardSync()
+        val cm = getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+        clipboardJob = scope.launch {
+            while (isActive && isConnected) {
+                delay(1500) // Check every 1.5s
+                try {
+                    val clip = cm.primaryClip
+                    if (clip != null && clip.itemCount > 0) {
+                        val text = clip.getItemAt(0).coerceToText(this@DaemonService).toString()
+                        if (text.isNotEmpty() && text != lastClipboard && text.length < 50000) {
+                            lastClipboard = text
+                            val msg = JSONObject().apply {
+                                put("type", "clipboard_update")
+                                put("content", text)
+                                put("source_device", android.os.Build.MODEL)
+                                put("timestamp", System.currentTimeMillis())
+                            }
+                            webSocket?.send(msg.toString())
+                            Log.d(TAG, "Clipboard sent: ${text.take(40)}...")
+                        }
+                    }
+                } catch (e: Exception) {
+                    Log.d(TAG, "Clipboard read error: ${e.message}")
+                }
+            }
+        }
+    }
+
+    private fun stopClipboardSync() {
+        clipboardJob?.cancel()
+        clipboardJob = null
+    }
+
+    private fun handleClipboardUpdate(content: String, sourceDevice: String) {
+        if (sourceDevice == android.os.Build.MODEL) return // Ignore our own
+        lastClipboard = content // Prevent echo
+        try {
+            val cm = getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+            val clip = android.content.ClipData.newPlainText("daemon", content)
+            cm.setPrimaryClip(clip)
+            Log.d(TAG, "Clipboard received from $sourceDevice: ${content.take(40)}...")
+        } catch (e: Exception) {
+            Log.e(TAG, "Clipboard write error: ${e.message}")
+        }
+    }
+
     // ── Command Handling ─────────────────────────────────────────────
 
     private fun handleCommand(message: String) {
@@ -405,9 +459,15 @@ class DaemonService : Service() {
                         put("uptime_since_connect", System.currentTimeMillis() - lastPongTime)
                         put("connect_attempt", connectAttempt)
                     }
+                    "clipboard_update" -> {
+                        val content = cmd.optString("content", "")
+                        val source = cmd.optString("source_device", "")
+                        if (content.isNotEmpty()) handleClipboardUpdate(content, source)
+                        null
+                    }
                     "heartbeat_ack" -> {
                         lastPongTime = System.currentTimeMillis()
-                        null // Don't send a response for heartbeat acks
+                        null
                     }
                     "registered" -> {
                         Log.d(TAG, "Registration acknowledged: ${cmd.optString("message")}")

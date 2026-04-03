@@ -26,6 +26,7 @@ import com.daemon.app.ui.chat.ChatScreen
 import com.daemon.app.ui.chat.DarkBg
 import com.daemon.app.ui.chat.DaemonRed
 import com.daemon.app.ui.chat.DarkSurface
+import com.daemon.app.ui.voice.VoiceCompanionScreen
 import android.net.Uri
 import android.util.Base64
 import android.webkit.MimeTypeMap
@@ -80,15 +81,23 @@ class MainActivity : ComponentActivity() {
                 }
             }
 
+            var showVoice by remember { mutableStateOf(false) }
+
             if (token == null) {
                 LoginScreen(onLogin = { t ->
                     token = t
                     prefs.edit().putString("token", t).apply()
                 })
+            } else if (showVoice) {
+                VoiceCompanionScreen(
+                    serverUrl = "ws://100.124.245.114:4803/ws",
+                    onBack = { showVoice = false },
+                )
             } else {
                 ChatScreen(
                     daemonName = "My",
                     onSendMessage = { message -> sendToServer(message, token!!) },
+                    onVoiceClick = { showVoice = true },
                 )
             }
         }

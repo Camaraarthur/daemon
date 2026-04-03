@@ -10,6 +10,7 @@ import net from 'net'
 const PORT = 4800
 const NEXT_PORT = 4802
 const WS_PORT = 4801
+const VOICE_PORT = 4803
 
 const server = http.createServer((req, res) => {
   // Proxy all HTTP to Next.js
@@ -33,7 +34,10 @@ const server = http.createServer((req, res) => {
 
 // Handle WebSocket upgrades
 server.on('upgrade', (req, socket, head) => {
-  const targetPort = req.url?.startsWith('/ws') ? WS_PORT : NEXT_PORT
+  // /ws/voice → voice companion server, /ws/* → device WS server, else → Next.js
+  const targetPort = req.url?.startsWith('/ws/voice') ? VOICE_PORT
+    : req.url?.startsWith('/ws') ? WS_PORT
+    : NEXT_PORT
 
   const proxy = net.connect(targetPort, '127.0.0.1', () => {
     // Reconstruct the HTTP upgrade request

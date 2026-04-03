@@ -49,6 +49,7 @@ val TextDark = Color(0xFF555555)
 fun ChatScreen(
     daemonName: String = "My",
     onSendMessage: suspend (String) -> String,
+    onVoiceClick: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     var messages by remember { mutableStateOf(listOf<ChatMessage>()) }
@@ -139,6 +140,10 @@ fun ChatScreen(
                 color = TextDark,
                 fontSize = 13.sp,
             )
+            Spacer(Modifier.weight(1f))
+            TextButton(onClick = onVoiceClick) {
+                Text("voice ◉", color = TextDark, fontSize = 12.sp)
+            }
         }
 
         // Messages

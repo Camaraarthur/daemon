@@ -97,6 +97,70 @@ async function runClaudeCli(prompt, options = {}) {
   })
 }
 
+// ── Clipboard Sync ───────────────────────────────────────
+
+let lastClipboard = ''
+let clipboardInterval = null
+
+async function getClipboard() {
+  const plat = platform()
+  try {
+    if (plat === 'darwin') {
+      return (await new Promise((resolve) => {
+        exec('pbpaste', { timeout: 2000 }, (_, stdout) => resolve(stdout || ''))
+      }))
+    } else if (plat === 'win32') {
+      return (await new Promise((resolve) => {
+        exec('powershell -c "Get-Clipboard"', { timeout: 2000 }, (_, stdout) => resolve(stdout?.trim() || ''))
+      }))
+    } else {
+      // Linux — try xclip, then xsel
+      return (await new Promise((resolve) => {
+        exec('xclip -selection clipboard -o 2>/dev/null || xsel --clipboard --output 2>/dev/null', { timeout: 2000 }, (_, stdout) => resolve(stdout || ''))
+      }))
+    }
+  } catch { return '' }
+}
+
+async function setClipboard(text) {
+  const plat = platform()
+  try {
+    if (plat === 'darwin') {
+      const proc = exec('pbcopy')
+      proc.stdin?.write(text)
+      proc.stdin?.end()
+    } else if (plat === 'win32') {
+      exec(`powershell -c "Set-Clipboard -Value '${text.replace(/'/g, "''")}'"`);
+    } else {
+      const proc = exec('xclip -selection clipboard 2>/dev/null || xsel --clipboard --input 2>/dev/null')
+      proc.stdin?.write(text)
+      proc.stdin?.end()
+    }
+  } catch {}
+}
+
+function startClipboardSync() {
+  clipboardInterval = setInterval(async () => {
+    if (!isConnected || !ws) return
+    try {
+      const current = await getClipboard()
+      if (current && current !== lastClipboard && current.length < 50000) {
+        lastClipboard = current
+        ws.send(JSON.stringify({
+          type: 'clipboard_update',
+          content: current,
+          source_device: DEVICE_ID,
+          timestamp: Date.now(),
+        }))
+      }
+    } catch {}
+  }, 1000) // Check every second
+}
+
+function stopClipboardSync() {
+  if (clipboardInterval) { clearInterval(clipboardInterval); clipboardInterval = null }
+}
+
 // ── Connection State ─────────────────────────────────────
 
 let ws = null
@@ -204,14 +268,26 @@ async function handleCommand(msg) {
     case 'receive_file':
       result = await receiveFile(msg.filename || 'file', msg.data || '')
       break
+    case 'clipboard_update':
+      // Another device copied something — write to our clipboard
+      if (msg.content && msg.source_device !== DEVICE_ID) {
+        lastClipboard = msg.content // prevent echo
+        await setClipboard(msg.content)
+        log(`Clipboard synced from ${msg.source_device} (${msg.content.slice(0, 40)}...)`)
+      }
+      return null
+    case 'clipboard_history':
+      result = { history: msg.history || [] }
+      break
     case 'ping':
       result = { status: 'alive', uptime: process.uptime() }
       break
     case 'heartbeat_ack':
       lastPong = Date.now()
-      return null // No response needed
+      return null
     case 'registered':
       log(`Registered: ${msg.message}`)
+      startClipboardSync()
       return null
     default:
       result = { error: `Unknown command: ${type}` }
