@@ -52,8 +52,24 @@ export async function GET(req: NextRequest) {
     const subscription = db.getSubscription(userId)
 
     const plan = subscription?.plan || 'free'
-    const subPrice = plan === 'pro' ? 15.00 : 0
-    const totalDue = subPrice + thisMonth.cost
+    const subPrice = plan === 'pro' ? 10.00 : 0
+
+    // Credits system: Pro gets $5 included, usage deducted from credits first
+    let creditsUsed = 0
+    let creditBalance = 0
+    let creditBreakdown: { api_name: string; total_cost: number; total_units: number }[] = []
+
+    if (plan === 'pro') {
+      db.maybeResetCredits(userId)
+      const updatedSub = db.getSubscription(userId)
+      creditsUsed = updatedSub?.credits_used_this_month || 0
+      creditBalance = updatedSub?.credit_balance_usd || 5.0
+      const creditUsage = db.getCreditUsageThisMonth(userId)
+      creditBreakdown = creditUsage.entries
+    }
+
+    // Total due = platform + any API costs beyond credits
+    const totalDue = subPrice + Math.max(0, thisMonth.cost - creditsUsed)
 
     return NextResponse.json({
       today: {
@@ -75,6 +91,9 @@ export async function GET(req: NextRequest) {
         stripe_customer_id: subscription?.stripe_customer_id || null,
       },
       total_due: Math.round(totalDue * 100) / 100,
+      credits_used: Math.round(creditsUsed * 10000) / 10000,
+      credit_balance: Math.round(creditBalance * 10000) / 10000,
+      credit_breakdown: creditBreakdown,
     })
   } catch (err: any) {
     console.error('[usage api]', err?.message || err)

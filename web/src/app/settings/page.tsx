@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import Image from 'next/image'
 import Link from 'next/link'
+import type { ApiService } from '@/lib/api-registry'
 
 // ── Model definitions ────────────────────────────────────
 
@@ -239,6 +240,9 @@ interface UsageData {
     stripe_customer_id: string | null
   }
   total_due: number
+  credits_used?: number
+  credit_balance?: number
+  credit_breakdown?: { api_name: string; total_cost: number; total_units: number }[]
 }
 
 // ── Cost bar chart component ────────────────────────────
@@ -283,6 +287,8 @@ export default function SettingsPage() {
   const [saved, setSaved] = useState(false)
   const [usage, setUsage] = useState<UsageData | null>(null)
   const [billingLoading, setBillingLoading] = useState(false)
+  const [apiData, setApiData] = useState<{ apis: ApiService[]; byCategory: Record<string, ApiService[]>; stats: { total: number; active: number; proOnly: number; freeIncluded: number } } | null>(null)
+  const [apiFilter, setApiFilter] = useState<string>('all')
 
   // Load settings
   useEffect(() => {
@@ -307,6 +313,14 @@ export default function SettingsPage() {
       .then(r => r.json())
       .then(data => {
         if (!data.error) setUsage(data)
+      })
+      .catch(() => {})
+
+    // Load API registry
+    fetch('/api/apis')
+      .then(r => r.json())
+      .then(data => {
+        if (!data.error) setApiData(data)
       })
       .catch(() => {})
   }, [])
@@ -511,15 +525,184 @@ export default function SettingsPage() {
           )}
         </section>
 
+        {/* ── APIs & Integrations ─────────────────────────── */}
+        <section>
+          <div className="flex items-center justify-between mb-1">
+            <h2 className="text-lg font-medium text-white">APIs & Integrations</h2>
+            {apiData && (
+              <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-emerald-500/10 border border-emerald-500/30 text-emerald-400">
+                {apiData.stats.active} active
+              </span>
+            )}
+          </div>
+          <p className="text-xs text-[#555] mb-4">
+            {apiData ? `${apiData.stats.total} APIs available. Pro includes ${apiData.stats.proOnly} premium APIs + $5/mo credits.` : 'Loading API inventory...'}
+          </p>
+
+          {apiData && (
+            <>
+              {/* Category filter */}
+              <div className="flex flex-wrap gap-1.5 mb-4">
+                <button
+                  onClick={() => setApiFilter('all')}
+                  className={`text-[10px] px-2 py-1 rounded-lg border transition-colors ${
+                    apiFilter === 'all'
+                      ? 'border-[#ff0505] bg-[#ff0505]/10 text-white'
+                      : 'border-[#222] bg-[#141414] text-[#666] hover:border-[#444]'
+                  }`}
+                >
+                  All ({apiData.stats.total})
+                </button>
+                {Object.entries(apiData.byCategory).map(([cat, apis]) => (
+                  <button
+                    key={cat}
+                    onClick={() => setApiFilter(cat)}
+                    className={`text-[10px] px-2 py-1 rounded-lg border transition-colors ${
+                      apiFilter === cat
+                        ? 'border-[#ff0505] bg-[#ff0505]/10 text-white'
+                        : 'border-[#222] bg-[#141414] text-[#666] hover:border-[#444]'
+                    }`}
+                  >
+                    {cat} ({(apis as ApiService[]).length})
+                  </button>
+                ))}
+              </div>
+
+              {/* API cards grid */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                {(apiFilter === 'all' ? apiData.apis : (apiData.byCategory[apiFilter] || [])).map((api: ApiService) => (
+                  <div
+                    key={api.id}
+                    className={`p-3 rounded-xl border transition-all ${
+                      api.status === 'active'
+                        ? 'border-[#222] bg-[#141414] hover:border-[#333]'
+                        : 'border-[#1a1a1a] bg-[#0e0e0e] opacity-50'
+                    }`}
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2">
+                          <span className="text-sm">{api.emoji || '~'}</span>
+                          <span className="text-xs font-medium text-white truncate">{api.name}</span>
+                        </div>
+                        <p className="text-[10px] text-[#666] mt-1 line-clamp-2">{api.description}</p>
+                      </div>
+                      <div className="flex flex-col items-end gap-1 shrink-0">
+                        <span className={`text-[9px] font-mono px-1.5 py-0.5 rounded border ${
+                          api.status === 'active'
+                            ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400'
+                            : api.status === 'test'
+                              ? 'bg-amber-500/10 border-amber-500/30 text-amber-400'
+                              : 'bg-[#222] border-[#333] text-[#555]'
+                        }`}>
+                          {api.status}
+                        </span>
+                        {api.includedInPro && !api.includedInFree && (
+                          <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-[#ff0505]/10 border border-[#ff0505]/30 text-[#ff4444]">
+                            PRO
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                    <div className="mt-2 pt-2 border-t border-[#1a1a1a] flex items-center justify-between">
+                      <span className="text-[10px] font-mono text-[#555]">{api.costModel}</span>
+                      {api.docsUrl && (
+                        <a
+                          href={api.docsUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-[10px] text-[#444] hover:text-[#888] transition-colors"
+                        >
+                          docs
+                        </a>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
+        </section>
+
         {/* ── Usage & Billing ─────────────────────────────── */}
         <section>
           <h2 className="text-lg font-medium text-white mb-1">Usage & Billing</h2>
           <p className="text-xs text-[#555] mb-4">
-            Transparent pricing. API costs passed through at cost, no markup.
+            $10/mo platform + $5 API credits included. Transparent pass-through pricing.
           </p>
 
           {usage ? (
             <div className="space-y-4">
+              {/* Credits balance (Pro only) */}
+              {usage.subscription.plan === 'pro' && (
+                <div className="p-4 rounded-xl border border-[#222] bg-[#141414]">
+                  <div className="flex items-center justify-between mb-3">
+                    <p className="text-xs text-[#888]">API Credits</p>
+                    <p className="text-sm font-mono text-white">
+                      ${(5.0 - (usage.credits_used || 0)).toFixed(2)}
+                      <span className="text-[#555] text-[10px] ml-1">remaining</span>
+                    </p>
+                  </div>
+
+                  {/* Progress bar */}
+                  <div className="w-full h-2 rounded-full bg-[#1a1a1a] overflow-hidden mb-2">
+                    <div
+                      className="h-full rounded-full transition-all bg-gradient-to-r from-emerald-500 to-emerald-400"
+                      style={{ width: `${Math.max(0, Math.min(100, ((5.0 - (usage.credits_used || 0)) / 5.0) * 100))}%` }}
+                    />
+                  </div>
+
+                  <div className="flex items-center justify-between">
+                    <p className="text-[10px] text-[#555]">
+                      You used ${(usage.credits_used || 0).toFixed(2)} of $5.00 included ({Math.round(((usage.credits_used || 0) / 5.0) * 100)}%)
+                    </p>
+                    <p className="text-[10px] text-[#444]">Resets monthly</p>
+                  </div>
+
+                  {/* Usage breakdown by API */}
+                  {usage.credit_breakdown && usage.credit_breakdown.length > 0 && (
+                    <div className="mt-3 pt-3 border-t border-[#1a1a1a] space-y-1.5">
+                      <p className="text-[10px] text-[#666] font-medium mb-1">Credit usage by API</p>
+                      {usage.credit_breakdown.map((entry: { api_name: string; total_cost: number; total_units: number }, i: number) => (
+                        <div key={i} className="flex items-center justify-between">
+                          <span className="text-[10px] text-[#888]">{entry.api_name}</span>
+                          <span className="text-[10px] font-mono text-[#666]">${entry.total_cost.toFixed(4)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Top-up buttons */}
+                  <div className="mt-3 pt-3 border-t border-[#1a1a1a]">
+                    <p className="text-[10px] text-[#555] mb-2">Need more credits?</p>
+                    <div className="flex gap-2">
+                      {[5, 10, 25].map(amount => (
+                        <button
+                          key={amount}
+                          onClick={async () => {
+                            setBillingLoading(true)
+                            try {
+                              const res = await fetch('/api/billing', {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ action: 'credit_topup', amount }),
+                              })
+                              const data = await res.json()
+                              if (data.url) window.location.href = data.url
+                            } catch {}
+                            setBillingLoading(false)
+                          }}
+                          disabled={billingLoading}
+                          className="flex-1 px-2 py-1.5 rounded-lg border border-[#333] text-[#888] text-[10px] font-mono hover:border-[#555] hover:text-white transition-colors disabled:opacity-50"
+                        >
+                          +${amount}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              )}
+
               {/* Today's usage */}
               <div className="p-4 rounded-xl border border-[#222] bg-[#141414]">
                 <div className="flex items-center justify-between mb-3">
@@ -561,7 +744,7 @@ export default function SettingsPage() {
                     </p>
                     <p className="text-[11px] text-[#555]">
                       {usage.subscription.plan === 'pro'
-                        ? `$15/mo platform + API usage at cost`
+                        ? `$10/mo platform + $5 API credits included`
                         : 'BYOK for premium models, 50 free msgs/day on Qwen'}
                     </p>
                   </div>
@@ -580,11 +763,19 @@ export default function SettingsPage() {
                   <div className="mt-3 pt-3 border-t border-[#1a1a1a]">
                     <div className="flex justify-between text-xs text-[#888]">
                       <span>Platform subscription</span>
-                      <span className="text-white font-mono">$15.00</span>
+                      <span className="text-white font-mono">$10.00</span>
                     </div>
                     <div className="flex justify-between text-xs text-[#888] mt-1">
-                      <span>API usage this month</span>
-                      <span className="text-white font-mono">${usage.this_month.cost.toFixed(2)}</span>
+                      <span>Included API credits</span>
+                      <span className="text-emerald-400 font-mono">$5.00</span>
+                    </div>
+                    <div className="flex justify-between text-xs text-[#888] mt-1">
+                      <span>Credits used this month</span>
+                      <span className="text-white font-mono">-${(usage.credits_used || 0).toFixed(2)}</span>
+                    </div>
+                    <div className="flex justify-between text-xs text-[#888] mt-1">
+                      <span>Additional API usage</span>
+                      <span className="text-white font-mono">${Math.max(0, usage.this_month.cost - (usage.credits_used || 0)).toFixed(2)}</span>
                     </div>
                     <div className="flex justify-between text-xs mt-2 pt-2 border-t border-[#1a1a1a]">
                       <span className="text-white font-medium">Total due</span>
@@ -619,7 +810,7 @@ export default function SettingsPage() {
                         disabled={billingLoading}
                         className="flex-1 px-4 py-2.5 rounded-xl bg-[#ff0505] text-white text-xs font-medium hover:bg-[#cc0404] transition-colors disabled:opacity-50"
                       >
-                        {billingLoading ? 'Loading...' : 'Upgrade to Pro — $15/mo'}
+                        {billingLoading ? 'Loading...' : 'Upgrade to Pro — $10/mo + $5 credits'}
                       </button>
                       <button
                         onClick={async () => {
@@ -669,8 +860,10 @@ export default function SettingsPage() {
               <div className="p-3 rounded-lg bg-[#0a0a0a] border border-[#1a1a1a]">
                 <p className="text-[11px] text-[#888] mb-2 font-medium">How billing works</p>
                 <ul className="text-[10px] text-[#666] space-y-1">
-                  <li>Platform: $15/mo flat for hosting, device mesh, memory, daemon.page</li>
-                  <li>API usage: passed through at exact cost. No markup, no hidden fees.</li>
+                  <li>Platform: $10/mo for hosting, device mesh, memory, daemon.page</li>
+                  <li>Credits: $5/mo included. Use on any API. Resets monthly.</li>
+                  <li>Overage: API usage beyond credits billed at cost. No markup.</li>
+                  <li>Top-ups: buy $5, $10, or $25 credit packs anytime</li>
                   <li>BYOK: use your own API keys and skip API charges entirely</li>
                   <li>Free tier: 50 messages/day on Qwen3-Coder, no subscription needed</li>
                 </ul>

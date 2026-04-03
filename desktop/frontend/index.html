@@ -24,17 +24,31 @@
     }
     #toolbar button:hover { background: #333; color: #fff; }
     #webview-frame { flex: 1; border: none; }
-    #loading {
-      flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center;
-      gap: 16px; color: #666;
+
+    /* Login screen */
+    #login-screen {
+      flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px;
     }
-    #loading h2 { font-size: 20px; font-weight: 400; color: #999; }
-    #loading p { font-size: 14px; }
-    .spinner {
-      width: 32px; height: 32px; border: 3px solid #333; border-top-color: #4ade80;
-      border-radius: 50%; animation: spin 1s linear infinite;
+    #login-screen h2 { font-size: 18px; font-weight: 400; color: #fff; }
+    #login-screen p { font-size: 13px; color: #666; text-align: center; max-width: 280px; }
+    #login-screen .login-btn {
+      display: flex; align-items: center; gap: 8px; padding: 10px 24px;
+      background: #ff0505; color: white; border: none; border-radius: 12px;
+      font-size: 14px; font-weight: 500; cursor: pointer; transition: background 0.2s;
     }
-    @keyframes spin { to { transform: rotate(360deg); } }
+    #login-screen .login-btn:hover { background: #cc0404; }
+    #login-screen .login-btn.google {
+      background: white; color: #333; border: 1px solid #333;
+    }
+    #login-screen .login-btn.google:hover { background: #f0f0f0; }
+    #login-screen .or { font-size: 11px; color: #444; }
+    #login-screen input {
+      width: 260px; padding: 10px 14px; background: #161616; border: 1px solid #282828;
+      border-radius: 10px; color: white; font-size: 13px; outline: none;
+    }
+    #login-screen input:focus { border-color: #ff0505; }
+    #login-screen .error { font-size: 12px; color: #ff0505; }
+    .hidden { display: none !important; }
   </style>
 </head>
 <body>
@@ -48,65 +62,129 @@
         <button id="btn-reload" title="Reload">&#x21bb;</button>
       </div>
     </div>
-    <div id="loading">
-      <div class="spinner"></div>
+
+    <!-- Login screen — shown when no token -->
+    <div id="login-screen">
+      <img src="https://my.daemon.page/favicon.png" width="48" height="48" style="opacity:0.8" />
       <h2>daemon</h2>
-      <p id="loading-msg">Loading web UI...</p>
+      <p>Sign in to connect this device to your daemon</p>
+
+      <button class="login-btn google" id="btn-google">
+        <svg width="18" height="18" viewBox="0 0 18 18"><path d="M17.64 9.2c0-.637-.057-1.251-.164-1.84H9v3.481h4.844a4.14 4.14 0 0 1-1.796 2.716v2.259h2.908c1.702-1.567 2.684-3.875 2.684-6.615Z" fill="#4285F4"/><path d="M9 18c2.43 0 4.467-.806 5.956-2.18l-2.908-2.259c-.806.54-1.837.86-3.048.86-2.344 0-4.328-1.584-5.036-3.711H.957v2.332A8.997 8.997 0 0 0 9 18Z" fill="#34A853"/><path d="M3.964 10.71A5.41 5.41 0 0 1 3.682 9c0-.593.102-1.17.282-1.71V4.958H.957A8.997 8.997 0 0 0 0 9c0 1.452.348 2.827.957 4.042l3.007-2.332Z" fill="#FBBC05"/><path d="M9 3.58c1.321 0 2.508.454 3.44 1.345l2.582-2.58C13.463.891 11.426 0 9 0A8.997 8.997 0 0 0 .957 4.958L3.964 6.29C4.672 4.163 6.656 2.58 9 2.58Z" fill="#EA4335"/></svg>
+        Continue with Google
+      </button>
+
+      <span class="or">— or sign in with email —</span>
+
+      <input type="email" id="login-email" placeholder="email" />
+      <input type="password" id="login-password" placeholder="password" />
+      <div class="error hidden" id="login-error"></div>
+      <button class="login-btn" id="btn-email-login">Sign in</button>
     </div>
-    <iframe id="webview-frame" style="display:none"></iframe>
+
+    <!-- Main content — iframe to daemon web -->
+    <iframe id="webview-frame" class="hidden"></iframe>
   </div>
+
   <script>
-    const iframe = document.getElementById('webview-frame');
-    const loading = document.getElementById('loading');
-    const loadingMsg = document.getElementById('loading-msg');
-    const wsDot = document.getElementById('ws-dot');
-    const wsStatus = document.getElementById('ws-status');
+    const loginScreen = document.getElementById('login-screen')
+    const iframe = document.getElementById('webview-frame')
+    const wsDot = document.getElementById('ws-dot')
+    const wsStatus = document.getElementById('ws-status')
+    const loginError = document.getElementById('login-error')
 
-    const URLS = ['https://my.daemon.page', 'http://localhost:4800'];
-    let currentUrl = null;
+    const BASE_URL = 'https://my.daemon.page'
+    let authToken = localStorage.getItem('daemon_token')
 
-    // Try loading URLs in order
-    async function tryLoad(urls) {
-      for (const url of urls) {
-        loadingMsg.textContent = `Trying ${url}...`;
-        try {
-          iframe.src = url;
-          await new Promise((resolve, reject) => {
-            const t = setTimeout(() => reject(new Error('timeout')), 8000);
-            iframe.onload = () => { clearTimeout(t); resolve(); };
-            iframe.onerror = () => { clearTimeout(t); reject(new Error('error')); };
-          });
-          currentUrl = url;
-          loading.style.display = 'none';
-          iframe.style.display = 'block';
-          return;
-        } catch (e) {
-          console.log(`Failed to load ${url}: ${e.message}`);
-        }
-      }
-      loadingMsg.textContent = 'Could not connect. Retrying in 5s...';
-      setTimeout(() => tryLoad(urls), 5000);
+    // If we have a token, go straight to the chat
+    if (authToken) {
+      showChat()
     }
 
-    document.getElementById('btn-reload').addEventListener('click', () => {
-      if (currentUrl) {
-        iframe.src = currentUrl;
+    // Google login — open system browser, use redirect flow
+    document.getElementById('btn-google').addEventListener('click', () => {
+      // Open system browser for Google OAuth
+      const loginUrl = `${BASE_URL}/login?redirect=${encodeURIComponent(BASE_URL + '/api/auth?action=token_redirect')}`
+      if (window.__TAURI__) {
+        window.__TAURI__.shell.open(loginUrl)
       } else {
-        tryLoad(URLS);
+        window.open(loginUrl, '_blank')
       }
-    });
+      // Show a message
+      loginError.textContent = 'Complete login in your browser, then paste your token below'
+      loginError.classList.remove('hidden')
 
-    // Listen for WS status updates from Tauri backend
-    if (window.__TAURI__) {
-      const { listen } = window.__TAURI__.event;
-      listen('ws-status', (event) => {
-        const { status } = event.payload;
-        wsStatus.textContent = `daemon - ${status}`;
-        wsDot.className = 'dot ' + (status === 'connected' ? 'connected' : status === 'connecting' ? 'connecting' : '');
-      });
+      // Add a token paste input
+      if (!document.getElementById('token-paste')) {
+        const tokenInput = document.createElement('input')
+        tokenInput.id = 'token-paste'
+        tokenInput.placeholder = 'Paste token from browser...'
+        tokenInput.style.marginTop = '8px'
+        tokenInput.className = document.getElementById('login-email').className
+        tokenInput.addEventListener('input', () => {
+          if (tokenInput.value.length > 20) {
+            localStorage.setItem('daemon_token', tokenInput.value)
+            authToken = tokenInput.value
+            showChat()
+          }
+        })
+        loginScreen.appendChild(tokenInput)
+      }
+    })
+
+    // Email login
+    document.getElementById('btn-email-login').addEventListener('click', async () => {
+      const email = document.getElementById('login-email').value
+      const password = document.getElementById('login-password').value
+      if (!email || !password) return
+
+      try {
+        const res = await fetch(`${BASE_URL}/api/auth`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'login', email, password }),
+        })
+        const data = await res.json()
+        if (data.token) {
+          localStorage.setItem('daemon_token', data.token)
+          authToken = data.token
+          showChat()
+        } else {
+          loginError.textContent = data.error || 'Login failed'
+          loginError.classList.remove('hidden')
+        }
+      } catch (e) {
+        loginError.textContent = 'Connection error'
+        loginError.classList.remove('hidden')
+      }
+    })
+
+    // Enter key on password field
+    document.getElementById('login-password').addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') document.getElementById('btn-email-login').click()
+    })
+
+    function showChat() {
+      loginScreen.classList.add('hidden')
+      iframe.classList.remove('hidden')
+      // Load chat with token cookie
+      iframe.src = `${BASE_URL}/chat`
     }
 
-    tryLoad(URLS);
+    // Reload button
+    document.getElementById('btn-reload').addEventListener('click', () => {
+      if (iframe.src) iframe.src = iframe.src
+      else if (authToken) showChat()
+    })
+
+    // Listen for WS status from Tauri backend
+    if (window.__TAURI__) {
+      window.__TAURI__.event.listen('ws-status', (event) => {
+        const { status } = event.payload
+        wsStatus.textContent = `daemon — ${status}`
+        wsDot.className = 'dot ' + (status === 'connected' ? 'connected' : status === 'connecting' ? 'connecting' : '')
+      })
+    }
   </script>
 </body>
 </html>

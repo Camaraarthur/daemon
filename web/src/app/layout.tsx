@@ -8,10 +8,28 @@ const geist = Geist({
 });
 
 export const metadata: Metadata = {
-  title: "daemons",
-  description: "One AI agent. Every device. Yours.",
+  title: "daemon — one AI agent, every device, yours",
+  description: "A personal AI coding agent that runs across all your devices. Connect your laptop, phone, and server into one AI-powered workspace. Multi-model support, project memory, built-in deployment. Open source.",
+  keywords: ["AI coding agent", "multi-device AI", "vibe coding", "Claude Code alternative", "AI development tool", "daemon.page"],
+  authors: [{ name: "Arthur Camara" }],
+  openGraph: {
+    title: "daemon — one AI agent, every device, yours",
+    description: "A personal AI coding agent that runs across all your devices. Multi-model, project memory, built-in deployment.",
+    url: "https://daemon.page",
+    siteName: "daemon",
+    type: "website",
+    images: [{ url: "https://daemon.page/brand/logo-screen.png", width: 1200, height: 630, alt: "daemon" }],
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "daemon — one AI agent, every device, yours",
+    description: "A personal AI coding agent across all your devices.",
+    images: ["https://daemon.page/brand/logo-screen.png"],
+  },
+  metadataBase: new URL("https://daemon.page"),
+  robots: { index: true, follow: true },
   icons: {
-    icon: "/favicon.png",
+    icon: "/favicon2.png",
     apple: "/app-icon.png",
   },
 };

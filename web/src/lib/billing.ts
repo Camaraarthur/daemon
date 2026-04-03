@@ -78,7 +78,7 @@ export function getStripe(): Stripe {
   return _stripe
 }
 
-const SUBSCRIPTION_PRICE = 1500 // $15.00 in cents
+const SUBSCRIPTION_PRICE = 1000 // $10.00 in cents (platform) + $5 credits included
 
 /**
  * Create a Stripe Checkout session for a $15/mo subscription.
@@ -111,7 +111,7 @@ export async function createSubscriptionCheckout(params: {
         currency: 'usd',
         product_data: {
           name: 'Daemon Pro',
-          description: 'Platform hosting, device mesh, memory, daemon.page deployment',
+          description: '$10/mo platform + $5 API credits included monthly',
         },
         unit_amount: SUBSCRIPTION_PRICE,
         recurring: { interval: 'month' },
