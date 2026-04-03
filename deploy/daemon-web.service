@@ -11,7 +11,7 @@ Environment=NODE_ENV=production
 Environment=PATH=/home/arthur/.local/bin:/usr/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 Environment=HOME=/home/arthur
 EnvironmentFile=/home/arthur/.secrets/vault.env
-ExecStart=/usr/bin/npx next start -p 4800
+ExecStart=/bin/bash /home/arthur/daemon/web/start.sh
 Restart=always
 RestartSec=5
 

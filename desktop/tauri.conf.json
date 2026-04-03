@@ -1,0 +1,56 @@
+{
+  "$schema": "https://raw.githubusercontent.com/nicholascormier/tauri-schema/refs/heads/main/tauri.conf.json.schema",
+  "productName": "daemon",
+  "version": "0.1.0",
+  "identifier": "page.daemon.desktop",
+  "build": {
+    "frontendDist": "frontend",
+    "devUrl": "http://localhost:1420"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [
+      {
+        "title": "daemon",
+        "width": 1200,
+        "height": 800,
+        "minWidth": 400,
+        "minHeight": 300,
+        "center": true,
+        "decorations": true,
+        "transparent": false,
+        "url": "https://my.daemon.page/chat"
+      }
+    ],
+    "trayIcon": {
+      "id": "daemon-tray",
+      "iconPath": "icons/icon.png",
+      "iconAsTemplate": true,
+      "tooltip": "daemon"
+    },
+    "security": {
+      "csp": "default-src 'self' https://my.daemon.page wss://my.daemon.page https://fonts.googleapis.com https://fonts.gstatic.com; script-src 'self' 'unsafe-inline' https://my.daemon.page; style-src 'self' 'unsafe-inline' https://my.daemon.page https://fonts.googleapis.com; img-src 'self' data: https://my.daemon.page; connect-src 'self' https://my.daemon.page wss://my.daemon.page http://localhost:* ws://localhost:*; frame-src https://my.daemon.page http://localhost:4800"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["msi", "deb", "appimage"],
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "windows": {
+      "wix": {
+        "language": "en-US"
+      }
+    }
+  },
+  "plugins": {
+    "shell": {
+      "open": true
+    }
+  }
+}

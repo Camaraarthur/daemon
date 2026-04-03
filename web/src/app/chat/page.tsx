@@ -1,77 +1,12 @@
 'use client'
 
-import { useState, useRef, useEffect, useCallback } from 'react'
+import { useState, useRef, useEffect, useCallback, useMemo } from 'react'
 import { useChatStore, Message } from '@/store/chat'
-import { useDeviceStore, Device } from '@/store/devices'
-import { VoiceClient } from '@/lib/voice-client'
+import { useProjectsStore } from '@/store/projects'
+import { MessageBubble } from '@/components/chat/MessageBubble'
+import { ActivityIndicator } from '@/components/chat/ActivityIndicator'
+import ProjectSidebar from '@/components/ProjectSidebar'
 import Image from 'next/image'
-
-interface DeviceInfo {
-  id: string
-  name: string
-  platform: string
-  ip: string
-  status: string
-  capabilities: string[]
-  network: string
-}
-
-function DevicePanel() {
-  const [devices, setDevices] = useState<DeviceInfo[]>([])
-  const [expanded, setExpanded] = useState(false)
-  const [wsDevices, setWsDevices] = useState<any[]>([])
-
-  useEffect(() => {
-    fetch('/api/devices')
-      .then(r => r.json())
-      .then(d => {
-        if (d.devices) {
-          setDevices(d.devices.map((dev: any) => ({
-            id: dev.id,
-            name: dev.name,
-            platform: dev.platform,
-            ip: dev.ip,
-            status: dev.status,
-            network: dev.connection,
-            capabilities: dev.capabilities || [],
-          })))
-        }
-      })
-      .catch(() => {})
-  }, [])
-
-  // Use the real device data from API — no hardcoded devices
-  const allDevices = devices
-
-  return (
-    <div className="p-2 space-y-2">
-      <div className="text-[10px] text-[#444] px-1 mb-2">
-        {allDevices.filter(d => d.status === 'online').length}/{allDevices.length} online
-      </div>
-      {allDevices.map(d => (
-        <div key={d.id} className="bg-[#111] border border-[#222] rounded-xl p-3">
-          <div className="flex items-center justify-between mb-1.5">
-            <div className="flex items-center gap-2">
-              <div className={`w-2 h-2 rounded-full ${d.status === 'online' ? 'bg-green-500' : 'bg-[#333]'}`} />
-              <span className="text-xs font-medium text-white">{d.name}</span>
-            </div>
-            <span className="text-[9px] text-[#333]">{d.platform}</span>
-          </div>
-          <div className="flex items-center gap-1 mb-1">
-            <span className="text-[9px] text-[#444]">{d.network}</span>
-            <span className="text-[9px] text-[#333]">·</span>
-            <span className="text-[9px] text-[#333]">{d.ip}</span>
-          </div>
-          <div className="flex flex-wrap gap-1">
-            {d.capabilities.map(c => (
-              <span key={c} className="text-[9px] px-1.5 py-0.5 bg-[#1a1a1a] text-[#555] rounded">{c}</span>
-            ))}
-          </div>
-        </div>
-      ))}
-    </div>
-  )
-}
 
 function MicButton({ onTranscript }: { onTranscript: (text: string) => void }) {
   const [listening, setListening] = useState(false)
@@ -80,7 +15,6 @@ function MicButton({ onTranscript }: { onTranscript: (text: string) => void }) {
 
   const toggle = useCallback(async () => {
     if (listening) {
-      // Stop
       mediaRec?.stop()
       ws?.close()
       setListening(false)
@@ -90,17 +24,14 @@ function MicButton({ onTranscript }: { onTranscript: (text: string) => void }) {
     }
 
     try {
-      // Get Deepgram key
       const keyRes = await fetch('/api/voice')
       const { key } = await keyRes.json()
       if (!key) return
 
-      // Get mic
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: { echoCancellation: true, noiseSuppression: true },
       })
 
-      // Connect to Deepgram
       const dgWs = new WebSocket(
         `wss://api.deepgram.com/v1/listen?model=nova-3&language=en&smart_format=true&interim_results=false&endpointing=300`,
         ['token', key]
@@ -157,21 +88,6 @@ function MicButton({ onTranscript }: { onTranscript: (text: string) => void }) {
   )
 }
 
-function ChatBubble({ message }: { message: Message }) {
-  const isUser = message.role === 'user'
-  return (
-    <div className={`flex ${isUser ? 'justify-end' : 'justify-start'} mb-2.5`}>
-      <div className={`max-w-[85%] sm:max-w-[70%] rounded-2xl px-4 py-2.5 text-[13px] leading-relaxed ${
-        isUser
-          ? 'bg-[#ff0505] text-white'
-          : 'bg-[#181818] text-[#ddd] border border-[#252525]'
-      }`}>
-        <p className="whitespace-pre-wrap">{message.content}</p>
-      </div>
-    </div>
-  )
-}
-
 export default function DaemonChat() {
   const [authed, setAuthed] = useState<boolean | null>(null)
   const [user, setUser] = useState<any>(null)
@@ -196,12 +112,10 @@ export default function DaemonChat() {
       .catch(() => setAuthed(false))
   }, [])
 
-  // Not loaded yet
   if (authed === null) {
     return <div className="min-h-[100dvh] bg-[#0a0a0a] flex items-center justify-center"><div className="text-[#333] text-sm">loading...</div></div>
   }
 
-  // Not authenticated — show login form
   if (!authed) {
     return <LoginPage />
   }
@@ -252,27 +166,115 @@ function LoginPage() {
 
 function AuthedChat({ user }: { user: any }) {
   const {
-    getActiveThread, addMessage, setInputDraft, inputDraft,
-    isProcessing, setProcessing, createThread, activeThreadId, threads,
-    setActiveThread,
+    getActiveThread, addMessage, appendToLastDaemon, addToolCallToLastDaemon,
+    updateToolCallResult, updateLastDaemon,
+    setInputDraft, inputDraft,
+    isProcessing, setProcessing, createThread: createChatThread, activeThreadId: chatActiveThreadId,
+    setActiveThread: setChatActiveThread,
   } = useChatStore()
+
+  const {
+    activeProjectId,
+    setActiveProject,
+    projects,
+  } = useProjectsStore()
+
   const endRef = useRef<HTMLDivElement>(null)
+  const scrollContainerRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const [statusText, setStatusText] = useState('')
   const [showSidebar, setShowSidebar] = useState(false)
+  const [initialScrollDone, setInitialScrollDone] = useState(false)
+  const [showModelPicker, setShowModelPicker] = useState(false)
+  const [currentModel, setCurrentModel] = useState('qwen3-coder')
 
-  const thread = getActiveThread()
-
+  // Load model preference
   useEffect(() => {
-    endRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [thread?.messages])
+    fetch('/api/settings')
+      .then(r => r.json())
+      .then(d => { if (d.model) setCurrentModel(d.model) })
+      .catch(() => {})
+  }, [])
+
+  const MODEL_SHORT_NAMES: Record<string, string> = {
+    'qwen3-coder': 'Qwen',
+    'deepseek-v3': 'DeepSeek',
+    'claude-sonnet': 'Sonnet',
+    'claude-opus': 'Opus',
+    'gemini-3-flash': 'Flash',
+    'gemini-3-pro': 'Gemini Pro',
+  }
+
+  const QUICK_MODELS = [
+    { id: 'qwen3-coder', label: 'Qwen3-Coder', tag: 'FREE' },
+    { id: 'deepseek-v3', label: 'DeepSeek V3', tag: '$' },
+    { id: 'claude-sonnet', label: 'Claude Sonnet', tag: '$$' },
+    { id: 'claude-opus', label: 'Claude Opus', tag: '$$$' },
+    { id: 'gemini-3-flash', label: 'Gemini Flash', tag: '$' },
+  ]
+
+  const switchModel = useCallback((modelId: string) => {
+    setCurrentModel(modelId)
+    setShowModelPicker(false)
+    fetch('/api/settings', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model: modelId }),
+    }).catch(() => {})
+  }, [])
+
+  // Restore draft from localStorage on mount
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem('daemon_draft')
+      if (saved) setInputDraft(saved)
+    } catch {}
+  }, [])
+
+  // Every view is a live chat. Imported history lives in memory, not the chat.
+  const chatThread = getActiveThread()
+  const displayMessages: Message[] = chatThread?.messages || []
+
+  // Load project context when switching projects
+  const [projectContext, setProjectContext] = useState<string | null>(null)
+  useEffect(() => {
+    if (activeProjectId) {
+      fetch(`/api/memory?action=context&projectId=${activeProjectId}`)
+        .then(r => r.json())
+        .then(d => setProjectContext(d.context || null))
+        .catch(() => setProjectContext(null))
+    } else {
+      setProjectContext(null)
+    }
+  }, [activeProjectId])
+
+  // Get active project name for header
+  const activeProjectName = useMemo(() => {
+    if (!activeProjectId) return null
+    return projects.find(p => p.id === activeProjectId)?.display_name || null
+  }, [activeProjectId, projects])
+
+  // Scroll to bottom on new messages
+  useEffect(() => {
+    endRef.current?.scrollIntoView({ behavior: initialScrollDone ? 'smooth' : 'instant' })
+    if (!initialScrollDone && displayMessages.length > 0) {
+      setInitialScrollDone(true)
+    }
+  }, [displayMessages, initialScrollDone])
+
+  // Reset scroll on project switch
+  useEffect(() => {
+    setInitialScrollDone(false)
+  }, [activeProjectId])
+
+  const handleScroll = useCallback(() => {}, [])
 
   const send = useCallback(async () => {
     const text = inputDraft.trim()
     if (!text || isProcessing) return
 
-    let tid = activeThreadId
-    if (!tid) tid = createThread()
+    let tid = chatActiveThreadId
+    if (!tid) tid = createChatThread()
 
     addMessage(tid!, {
       id: crypto.randomUUID(),
@@ -280,150 +282,251 @@ function AuthedChat({ user }: { user: any }) {
       content: text,
       timestamp: new Date().toISOString(),
     })
+
+    const daemonMsgId = crypto.randomUUID()
+    addMessage(tid!, {
+      id: daemonMsgId,
+      role: 'daemon',
+      content: '',
+      timestamp: new Date().toISOString(),
+      isStreaming: true,
+    })
+
     setInputDraft('')
     setProcessing(true)
-    setStatusText('thinking...')
-
-    // Animate status
-    const steps = ['thinking...', 'reasoning...', 'checking devices...', 'processing...']
-    let i = 0
-    const interval = setInterval(() => { setStatusText(steps[++i % steps.length]) }, 3000)
+    setStatusText('Thinking...')
 
     try {
       const res = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: text, threadId: tid }),
+        body: JSON.stringify({ message: text, threadId: tid, stream: true }),
       })
-      const data = await res.json()
-      addMessage(tid!, {
-        id: crypto.randomUUID(),
-        role: 'daemon',
-        content: data.response || data.error || 'No response',
-        timestamp: new Date().toISOString(),
-      })
+
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({ error: 'Request failed' }))
+        updateLastDaemon(tid!, { content: errData.error || 'Request failed', isStreaming: false })
+        return
+      }
+
+      const reader = res.body?.getReader()
+      if (!reader) {
+        updateLastDaemon(tid!, { content: 'No response body', isStreaming: false })
+        return
+      }
+
+      const decoder = new TextDecoder()
+      let buffer = ''
+
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+
+        buffer += decoder.decode(value, { stream: true })
+        const lines = buffer.split('\n\n')
+        buffer = lines.pop() || ''
+
+        for (const chunk of lines) {
+          if (!chunk.startsWith('data: ')) continue
+          const payload = chunk.slice(6).trim()
+          if (!payload) continue
+
+          try {
+            const event = JSON.parse(payload)
+            switch (event.type) {
+              case 'thinking':
+                setStatusText(event.data.text || 'Thinking...')
+                break
+              case 'text':
+                appendToLastDaemon(tid!, event.data.text || '')
+                break
+              case 'tool_call':
+                setStatusText(event.data.name || 'Running tool...')
+                addToolCallToLastDaemon(tid!, {
+                  id: event.data.id,
+                  name: event.data.name,
+                  args: event.data.args || {},
+                })
+                break
+              case 'tool_result':
+                updateToolCallResult(tid!, event.data.id, event.data.output || '')
+                setStatusText('Thinking...')
+                break
+              case 'done':
+                if (event.data.response) {
+                  updateLastDaemon(tid!, {
+                    content: event.data.response,
+                    model: event.data.model,
+                    isStreaming: false,
+                  })
+                } else {
+                  updateLastDaemon(tid!, { isStreaming: false })
+                }
+                break
+              case 'error':
+                updateLastDaemon(tid!, {
+                  content: event.data.message || 'An error occurred',
+                  isStreaming: false,
+                })
+                break
+            }
+          } catch {
+            // Skip malformed SSE events
+          }
+        }
+      }
+
+      updateLastDaemon(tid!, { isStreaming: false })
+
     } catch (err) {
-      addMessage(tid!, {
-        id: crypto.randomUUID(),
-        role: 'system',
+      updateLastDaemon(tid!, {
         content: `Connection error: ${err}`,
-        timestamp: new Date().toISOString(),
+        isStreaming: false,
       })
     } finally {
-      clearInterval(interval)
       setProcessing(false)
       setStatusText('')
       inputRef.current?.focus()
     }
-  }, [inputDraft, isProcessing, activeThreadId, createThread, addMessage, setInputDraft, setProcessing])
-
-  const [showDevices, setShowDevices] = useState(true)
+  }, [inputDraft, isProcessing, chatActiveThreadId, createChatThread, addMessage, appendToLastDaemon, addToolCallToLastDaemon, updateToolCallResult, updateLastDaemon, setInputDraft, setProcessing])
 
   return (
     <div className="flex h-[100dvh] bg-[#0a0a0a] text-[#bfbfbf]">
-      {/* Left sidebar — chat threads, hidden on mobile */}
-      {showSidebar && (
-        <div className="fixed inset-0 z-50 flex sm:relative sm:inset-auto">
-          <div className="w-56 bg-[#111] border-r border-[#222] flex flex-col">
-            <div className="p-4 flex items-center justify-between border-b border-[#222]">
-              <Image src="/brand/favicon.png" alt="d" width={24} height={24} />
-              <button onClick={() => createThread()} className="text-[10px] px-2 py-1 bg-[#1a1a1a] rounded-md text-[#888] hover:text-white">+ new</button>
-            </div>
-            <div className="flex-1 overflow-y-auto p-2">
-              {threads.map((t) => (
-                <button
-                  key={t.id}
-                  onClick={() => { setActiveThread(t.id); setShowSidebar(false) }}
-                  className={`w-full text-left p-2.5 rounded-xl text-xs mb-1 truncate ${
-                    activeThreadId === t.id ? 'bg-[#1a1a1a] text-white' : 'text-[#888] hover:bg-[#181818]'
-                  }`}
-                >
-                  {t.title}
-                </button>
-              ))}
-            </div>
-          </div>
-          <div className="flex-1 bg-black/50 sm:hidden" onClick={() => setShowSidebar(false)} />
+      {/* Left sidebar — projects + devices */}
+      <div className={`${showSidebar ? 'fixed inset-0 z-50 flex' : 'hidden'} sm:relative sm:flex sm:inset-auto sm:z-auto`}>
+        <div className="w-64 border-r border-[#222] shrink-0">
+          <ProjectSidebar onClose={() => setShowSidebar(false)} />
         </div>
-      )}
+        {/* Mobile backdrop */}
+        <div className="flex-1 bg-black/50 sm:hidden" onClick={() => setShowSidebar(false)} />
+      </div>
 
       {/* Main chat area */}
       <div className="flex-1 flex flex-col min-w-0">
         {/* Header */}
         <div className="h-12 border-b border-[#222] flex items-center justify-between px-3 bg-[#111] shrink-0">
           <div className="flex items-center gap-3">
-            <button onClick={() => setShowSidebar(!showSidebar)} className="p-1">
+            <button onClick={() => setShowSidebar(!showSidebar)} className="p-1 sm:hidden">
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#666" strokeWidth="2"><path d="M3 12h18M3 6h18M3 18h18"/></svg>
             </button>
             <Image src="/brand/favicon.png" alt="daemon" width={20} height={20} />
-            <span className="text-sm font-medium text-white">My</span>
-            <span className="text-xs text-[#888]">daemon</span>
+            {activeProjectName ? (
+              <span className="text-sm font-medium text-white">{activeProjectName}</span>
+            ) : (
+              <>
+                <span className="text-sm font-medium text-white">My</span>
+                <span className="text-xs text-[#888]">daemon</span>
+              </>
+            )}
           </div>
-          <button onClick={() => setShowDevices(!showDevices)} className="p-1 sm:hidden">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={showDevices ? '#ff0505' : '#666'} strokeWidth="2"><circle cx="12" cy="12" r="3"/><path d="M12 1v4M12 19v4M4.22 4.22l2.83 2.83M16.95 16.95l2.83 2.83M1 12h4M19 12h4M4.22 19.78l2.83-2.83M16.95 7.05l2.83-2.83"/></svg>
-          </button>
+          <div className="flex items-center gap-2">
+            {/* Model picker pill */}
+            <div className="relative">
+              <button
+                onClick={() => setShowModelPicker(!showModelPicker)}
+                className="flex items-center gap-1 px-2 py-1 rounded-full bg-[#1a1a1a] border border-[#282828] hover:border-[#444] transition-colors"
+              >
+                <span className="text-[11px] text-[#888] font-medium">{MODEL_SHORT_NAMES[currentModel] || currentModel}</span>
+                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#666" strokeWidth="2.5"><path d="m6 9 6 6 6-6"/></svg>
+              </button>
+              {showModelPicker && (
+                <>
+                  <div className="fixed inset-0 z-40" onClick={() => setShowModelPicker(false)} />
+                  <div className="absolute right-0 top-full mt-1 z-50 w-52 bg-[#161616] border border-[#282828] rounded-xl shadow-xl overflow-hidden">
+                    {QUICK_MODELS.map(m => (
+                      <button
+                        key={m.id}
+                        onClick={() => switchModel(m.id)}
+                        className={`w-full text-left px-3 py-2 flex items-center justify-between hover:bg-[#222] transition-colors ${
+                          m.id === currentModel ? 'bg-[#ff0505]/5' : ''
+                        }`}
+                      >
+                        <span className={`text-xs ${m.id === currentModel ? 'text-white' : 'text-[#888]'}`}>{m.label}</span>
+                        <span className="text-[9px] text-[#555] font-mono">{m.tag}</span>
+                      </button>
+                    ))}
+                    <a
+                      href="/settings"
+                      className="block w-full text-left px-3 py-2 text-[10px] text-[#555] hover:text-[#888] hover:bg-[#1a1a1a] border-t border-[#222] transition-colors"
+                    >
+                      All models & API keys...
+                    </a>
+                  </div>
+                </>
+              )}
+            </div>
+            {/* Settings gear */}
+            <a href="/settings" className="p-1 text-[#555] hover:text-[#888] transition-colors">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <circle cx="12" cy="12" r="3"/>
+                <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+              </svg>
+            </a>
+          </div>
         </div>
 
         {/* Messages */}
-        <div className="flex-1 overflow-y-auto px-4 py-4">
-          {!thread || thread.messages.length === 0 ? (
+        <div
+          ref={scrollContainerRef}
+          onScroll={handleScroll}
+          className="flex-1 overflow-y-auto px-4 py-4"
+        >
+          {displayMessages.length === 0 ? (
             <div className="flex items-center justify-center h-full">
               <div className="text-center">
-                <Image src="/brand/app-icon.png" alt="daemon" width={60} height={60} className="mx-auto mb-4" />
-                <p className="text-xs text-[#777]">say something</p>
+                {projectContext && (
+                  <div className="mb-6 max-w-md text-left bg-[#161616] border border-[#222] rounded-lg p-3">
+                    <div className="text-[10px] text-[#555] uppercase tracking-wider mb-1">Project context</div>
+                    <p className="text-[11px] text-[#888] whitespace-pre-wrap">{projectContext.slice(0, 500)}</p>
+                  </div>
+                )}
+                <Image src="/favicon.png" alt="daemon" width={48} height={48} className="mx-auto mb-3 opacity-30" />
+                <p className="text-xs text-[#555]">{activeProjectId ? `start working on ${activeProjectName || 'this project'}` : 'select a project or start chatting'}</p>
               </div>
             </div>
           ) : (
             <>
-              {thread.messages.map((m) => (
-                <ChatBubble key={m.id} message={m} />
+              {displayMessages.map((m) => (
+                m.role === ('divider' as any) ? (
+                  <div key={m.id} className="flex items-center gap-3 my-4">
+                    <div className="flex-1 h-px bg-[#222]" />
+                    <span className="text-[10px] text-[#555] whitespace-nowrap">{m.content}</span>
+                    <div className="flex-1 h-px bg-[#222]" />
+                  </div>
+                ) : (
+                  <MessageBubble key={m.id} message={m} />
+                )
               ))}
               {isProcessing && (
-                <div className="flex items-center gap-2 mb-2.5 px-1">
-                  <div className="flex gap-1">
-                    {[0, 1, 2].map((i) => (
-                      <div key={i} className="w-1.5 h-1.5 bg-[#ff0505] rounded-full animate-bounce" style={{ animationDelay: `${i * 0.15}s` }} />
-                    ))}
-                  </div>
-                  <span className="text-[10px] text-[#777]">{statusText}</span>
-                </div>
+                <ActivityIndicator status={statusText} active={true} />
               )}
               <div ref={endRef} />
             </>
           )}
         </div>
 
-        {/* Input */}
+        {/* Input — always live */}
         <div className="border-t border-[#222] p-3 bg-[#111] shrink-0">
-          <div className="flex items-end gap-2 max-w-2xl mx-auto">
-            <textarea
-              ref={inputRef}
-              value={inputDraft}
-              onChange={(e) => setInputDraft(e.target.value)}
-              onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send() } }}
-              placeholder="Message your daemon..."
-              rows={1}
-              className="flex-1 resize-none rounded-2xl border border-[#282828] bg-[#161616] px-4 py-2.5 text-sm text-white placeholder-[#666] focus:outline-none focus:border-[#ff0505]/40"
-            />
-            <MicButton onTranscript={(text) => setInputDraft(inputDraft + (inputDraft ? ' ' : '') + text)} />
-            <button
-              onClick={send}
-              disabled={isProcessing || !inputDraft.trim()}
-              className="p-2.5 rounded-full bg-[#ff0505] text-white disabled:opacity-40 hover:bg-[#dd0404] transition-colors shrink-0"
-            >
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="m5 12 7-7 7 7"/><path d="M12 19V5"/></svg>
-            </button>
-          </div>
+            <div className="flex items-end gap-2 max-w-2xl mx-auto">
+              <textarea
+                ref={inputRef}
+                value={inputDraft}
+                onChange={(e) => setInputDraft(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send() } }}
+                placeholder="Message your daemon..."
+                rows={1}
+                className="flex-1 resize-none rounded-2xl border border-[#282828] bg-[#161616] px-4 py-2.5 text-sm text-white placeholder-[#666] focus:outline-none focus:border-[#ff0505]/40"
+              />
+              <MicButton onTranscript={(text) => setInputDraft(inputDraft + (inputDraft ? ' ' : '') + text)} />
+              <button
+                onClick={send}
+                disabled={isProcessing || !inputDraft.trim()}
+                className="p-2.5 rounded-full bg-[#ff0505] text-white disabled:opacity-40 hover:bg-[#dd0404] transition-colors shrink-0"
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="m5 12 7-7 7 7"/><path d="M12 19V5"/></svg>
+              </button>
+            </div>
         </div>
-      </div>
-
-      {/* Right sidebar — devices (always visible on desktop, toggleable on mobile) */}
-      <div className={`${showDevices ? 'block' : 'hidden'} sm:block w-full sm:w-72 border-l border-[#222] bg-[#111] fixed right-0 top-0 h-full sm:relative sm:right-auto z-40 overflow-y-auto`}>
-        <div className="p-3 border-b border-[#222] flex items-center justify-between">
-          <span className="text-xs font-semibold text-[#888] uppercase tracking-wider">Devices</span>
-          <button onClick={() => setShowDevices(false)} className="sm:hidden text-[#555]">✕</button>
-        </div>
-        <DevicePanel />
       </div>
     </div>
   )

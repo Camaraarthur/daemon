@@ -60,3 +60,17 @@ node_modules/
 *.pdf
 *.txt
 !requirements.txt
+
+# Desktop build artifacts
+desktop/target/
+desktop/node_modules/
+
+# Web build
+web/.next/
+web/node_modules/
+
+# CLI
+cli/node_modules/
+
+# Data
+data/

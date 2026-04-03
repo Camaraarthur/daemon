@@ -47,14 +47,18 @@ function LoginInner() {
       }
     }
 
-    // Render Google button after script loads
+    // Render Google button + auto-prompt One Tap
     const interval = setInterval(() => {
       if ((window as any).google?.accounts?.id) {
         clearInterval(interval)
         ;(window as any).google.accounts.id.initialize({
           client_id: '1023759738343-ttdbos5so4nof6698o3l3ies6e40gku2.apps.googleusercontent.com',
           callback: (window as any).handleGoogleAuth,
+          auto_select: true,  // Auto-select if only one Google account
         })
+        // Auto-trigger One Tap popup (one click instead of two)
+        ;(window as any).google.accounts.id.prompt()
+        // Also render button as fallback
         const container = document.getElementById('google-btn')
         if (container) {
           ;(window as any).google.accounts.id.renderButton(container, {

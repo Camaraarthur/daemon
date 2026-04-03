@@ -1,11 +1,20 @@
 import { create } from 'zustand'
 
+export interface ToolCallData {
+  id?: string
+  name: string
+  args: Record<string, any>
+  output?: string
+}
+
 export interface Message {
   id: string
   role: 'user' | 'daemon' | 'system'
   content: string
   timestamp: string
   isStreaming?: boolean
+  toolCalls?: ToolCallData[]
+  model?: string
 }
 
 export interface ChatThread {
@@ -26,6 +35,9 @@ interface ChatState {
   createThread: () => string
   addMessage: (threadId: string, message: Message) => void
   appendToLastDaemon: (threadId: string, text: string) => void
+  updateLastDaemon: (threadId: string, updates: Partial<Message>) => void
+  addToolCallToLastDaemon: (threadId: string, toolCall: ToolCallData) => void
+  updateToolCallResult: (threadId: string, toolCallId: string, output: string) => void
   setInputDraft: (text: string) => void
   setProcessing: (processing: boolean) => void
   getActiveThread: () => ChatThread | null
@@ -88,7 +100,64 @@ export const useChatStore = create<ChatState>((set, get) => ({
       ),
     })),
 
-  setInputDraft: (text) => set({ inputDraft: text }),
+  updateLastDaemon: (threadId, updates) =>
+    set((s) => ({
+      threads: s.threads.map((t) =>
+        t.id === threadId
+          ? {
+              ...t,
+              messages: t.messages.map((m, i) =>
+                i === t.messages.length - 1 && m.role === 'daemon'
+                  ? { ...m, ...updates }
+                  : m
+              ),
+            }
+          : t
+      ),
+    })),
+
+  addToolCallToLastDaemon: (threadId, toolCall) =>
+    set((s) => ({
+      threads: s.threads.map((t) =>
+        t.id === threadId
+          ? {
+              ...t,
+              messages: t.messages.map((m, i) =>
+                i === t.messages.length - 1 && m.role === 'daemon'
+                  ? { ...m, toolCalls: [...(m.toolCalls || []), toolCall] }
+                  : m
+              ),
+            }
+          : t
+      ),
+    })),
+
+  updateToolCallResult: (threadId, toolCallId, output) =>
+    set((s) => ({
+      threads: s.threads.map((t) =>
+        t.id === threadId
+          ? {
+              ...t,
+              messages: t.messages.map((m, i) =>
+                i === t.messages.length - 1 && m.role === 'daemon'
+                  ? {
+                      ...m,
+                      toolCalls: (m.toolCalls || []).map((tc) =>
+                        tc.id === toolCallId ? { ...tc, output } : tc
+                      ),
+                    }
+                  : m
+              ),
+            }
+          : t
+      ),
+    })),
+
+  setInputDraft: (text) => {
+    set({ inputDraft: text })
+    // Persist draft to localStorage so it survives refresh
+    try { localStorage.setItem('daemon_draft', text) } catch {}
+  },
   setProcessing: (processing) => set({ isProcessing: processing }),
 
   getActiveThread: () => {

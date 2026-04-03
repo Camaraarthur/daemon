@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="en" style="height:100%;margin:0;padding:0;background:#0a0a0a">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>daemon</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body { height: 100%; background: #0a0a0a; color: #e0e0e0; font-family: system-ui, -apple-system, sans-serif; overflow: hidden; }
+    #app { height: 100%; display: flex; flex-direction: column; }
+    #toolbar {
+      height: 36px; display: flex; align-items: center; justify-content: space-between;
+      padding: 0 12px; background: #111; border-bottom: 1px solid #222;
+      -webkit-app-region: drag; user-select: none; flex-shrink: 0;
+    }
+    #toolbar .status { display: flex; align-items: center; gap: 8px; font-size: 13px; color: #888; }
+    #toolbar .dot { width: 8px; height: 8px; border-radius: 50%; background: #555; transition: background 0.3s; }
+    #toolbar .dot.connected { background: #4ade80; }
+    #toolbar .dot.connecting { background: #facc15; }
+    #toolbar .actions { display: flex; gap: 4px; -webkit-app-region: no-drag; }
+    #toolbar button {
+      background: #222; border: 1px solid #333; color: #aaa; padding: 2px 10px;
+      border-radius: 4px; cursor: pointer; font-size: 12px;
+    }
+    #toolbar button:hover { background: #333; color: #fff; }
+    #webview-frame { flex: 1; border: none; }
+    #loading {
+      flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center;
+      gap: 16px; color: #666;
+    }
+    #loading h2 { font-size: 20px; font-weight: 400; color: #999; }
+    #loading p { font-size: 14px; }
+    .spinner {
+      width: 32px; height: 32px; border: 3px solid #333; border-top-color: #4ade80;
+      border-radius: 50%; animation: spin 1s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <div id="toolbar">
+      <div class="status">
+        <span class="dot" id="ws-dot"></span>
+        <span id="ws-status">daemon</span>
+      </div>
+      <div class="actions">
+        <button id="btn-reload" title="Reload">&#x21bb;</button>
+      </div>
+    </div>
+    <div id="loading">
+      <div class="spinner"></div>
+      <h2>daemon</h2>
+      <p id="loading-msg">Loading web UI...</p>
+    </div>
+    <iframe id="webview-frame" style="display:none"></iframe>
+  </div>
+  <script>
+    const iframe = document.getElementById('webview-frame');
+    const loading = document.getElementById('loading');
+    const loadingMsg = document.getElementById('loading-msg');
+    const wsDot = document.getElementById('ws-dot');
+    const wsStatus = document.getElementById('ws-status');
+
+    const URLS = ['https://my.daemon.page', 'http://localhost:4800'];
+    let currentUrl = null;
+
+    // Try loading URLs in order
+    async function tryLoad(urls) {
+      for (const url of urls) {
+        loadingMsg.textContent = `Trying ${url}...`;
+        try {
+          iframe.src = url;
+          await new Promise((resolve, reject) => {
+            const t = setTimeout(() => reject(new Error('timeout')), 8000);
+            iframe.onload = () => { clearTimeout(t); resolve(); };
+            iframe.onerror = () => { clearTimeout(t); reject(new Error('error')); };
+          });
+          currentUrl = url;
+          loading.style.display = 'none';
+          iframe.style.display = 'block';
+          return;
+        } catch (e) {
+          console.log(`Failed to load ${url}: ${e.message}`);
+        }
+      }
+      loadingMsg.textContent = 'Could not connect. Retrying in 5s...';
+      setTimeout(() => tryLoad(urls), 5000);
+    }
+
+    document.getElementById('btn-reload').addEventListener('click', () => {
+      if (currentUrl) {
+        iframe.src = currentUrl;
+      } else {
+        tryLoad(URLS);
+      }
+    });
+
+    // Listen for WS status updates from Tauri backend
+    if (window.__TAURI__) {
+      const { listen } = window.__TAURI__.event;
+      listen('ws-status', (event) => {
+        const { status } = event.payload;
+        wsStatus.textContent = `daemon - ${status}`;
+        wsDot.className = 'dot ' + (status === 'connected' ? 'connected' : status === 'connecting' ? 'connecting' : '');
+      });
+    }
+
+    tryLoad(URLS);
+  </script>
+</body>
+</html>
