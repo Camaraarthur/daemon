@@ -171,6 +171,7 @@ function AuthedChat({ user }: { user: any }) {
     setInputDraft, inputDraft,
     isProcessing, setProcessing, createThread: createChatThread, activeThreadId: chatActiveThreadId,
     setActiveThread: setChatActiveThread,
+    loadProjectThread, loadingHistory,
   } = useChatStore()
 
   const {
@@ -235,6 +236,15 @@ function AuthedChat({ user }: { user: any }) {
   const chatThread = getActiveThread()
   const displayMessages: Message[] = chatThread?.messages || []
 
+  // Load most recent thread when switching projects
+  useEffect(() => {
+    if (activeProjectId) {
+      loadProjectThread(activeProjectId)
+    } else {
+      setChatActiveThread('')
+    }
+  }, [activeProjectId, loadProjectThread, setChatActiveThread])
+
   // Load project context when switching projects
   const [projectContext, setProjectContext] = useState<string | null>(null)
   useEffect(() => {
@@ -274,7 +284,28 @@ function AuthedChat({ user }: { user: any }) {
     if (!text || isProcessing) return
 
     let tid = chatActiveThreadId
-    if (!tid) tid = createChatThread()
+    if (!tid) {
+      // If we have an active project, create a thread in the DB via API
+      if (activeProjectId) {
+        try {
+          const res = await fetch('/api/threads', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ projectId: activeProjectId, title: text.slice(0, 40) }),
+          })
+          const data = await res.json()
+          if (data.thread?.id) {
+            tid = data.thread.id as string
+            // Create thread in the Zustand store with this DB ID
+            const { loadThreadFromDB } = useChatStore.getState()
+            loadThreadFromDB(tid!, [])
+          }
+        } catch {
+          // Fallback to local thread
+        }
+      }
+      if (!tid) tid = createChatThread()
+    }
 
     addMessage(tid!, {
       id: crypto.randomUUID(),
@@ -471,7 +502,11 @@ function AuthedChat({ user }: { user: any }) {
           onScroll={handleScroll}
           className="flex-1 overflow-y-auto px-4 py-4"
         >
-          {displayMessages.length === 0 ? (
+          {loadingHistory ? (
+            <div className="flex items-center justify-center h-full">
+              <div className="text-xs text-[#555]">loading history...</div>
+            </div>
+          ) : displayMessages.length === 0 ? (
             <div className="flex items-center justify-center h-full">
               <div className="text-center">
                 {projectContext && (

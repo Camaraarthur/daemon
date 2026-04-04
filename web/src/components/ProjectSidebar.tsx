@@ -285,6 +285,113 @@ function NewProjectForm({
   )
 }
 
+function PairingModal({ onClose }: { onClose: () => void }) {
+  const [code, setCode] = useState<string | null>(null)
+  const [expiresAt, setExpiresAt] = useState<number>(0)
+  const [timeLeft, setTimeLeft] = useState(0)
+  const [error, setError] = useState('')
+  const [loading, setLoading] = useState(false)
+
+  const generateCode = async () => {
+    setLoading(true)
+    setError('')
+    try {
+      const res = await fetch('/api/pair', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'generate' }),
+      })
+      const data = await res.json()
+      if (data.error) {
+        setError(data.error)
+      } else {
+        setCode(data.code)
+        setExpiresAt(new Date(data.expiresAt).getTime())
+      }
+    } catch {
+      setError('Failed to generate code')
+    }
+    setLoading(false)
+  }
+
+  // Auto-generate on mount
+  useEffect(() => {
+    generateCode()
+  }, [])
+
+  // Countdown timer
+  useEffect(() => {
+    if (!expiresAt) return
+    const interval = setInterval(() => {
+      const remaining = Math.max(0, Math.floor((expiresAt - Date.now()) / 1000))
+      setTimeLeft(remaining)
+      if (remaining <= 0) {
+        setCode(null)
+        clearInterval(interval)
+      }
+    }, 1000)
+    return () => clearInterval(interval)
+  }, [expiresAt])
+
+  const mins = Math.floor(timeLeft / 60)
+  const secs = timeLeft % 60
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm" onClick={onClose}>
+      <div className="bg-[#111] border border-[#222] rounded-2xl p-6 w-[380px] space-y-4 shadow-2xl" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between">
+          <h3 className="text-white text-sm font-medium">Link a Device</h3>
+          <button onClick={onClose} className="text-[#555] hover:text-white text-lg leading-none">&times;</button>
+        </div>
+
+        {error && <p className="text-[#ff0505] text-xs">{error}</p>}
+
+        {code ? (
+          <>
+            <div className="text-center py-4">
+              <div className="font-mono text-3xl tracking-[0.3em] text-white font-bold">{code}</div>
+              <div className="text-[10px] text-[#555] mt-2">
+                expires in {mins}:{secs.toString().padStart(2, '0')}
+              </div>
+            </div>
+
+            <div className="space-y-3">
+              <div className="bg-[#0a0a0a] border border-[#222] rounded-lg p-3">
+                <div className="text-[10px] text-[#555] uppercase tracking-wider mb-1.5">macOS / Linux</div>
+                <code className="text-[11px] text-[#aaa] break-all select-all">
+                  curl -sSL daemon.page/install.sh | bash && daemon pair {code}
+                </code>
+              </div>
+              <div className="bg-[#0a0a0a] border border-[#222] rounded-lg p-3">
+                <div className="text-[10px] text-[#555] uppercase tracking-wider mb-1.5">Windows</div>
+                <code className="text-[11px] text-[#aaa] break-all select-all">
+                  daemon pair {code}
+                </code>
+              </div>
+              <div className="bg-[#0a0a0a] border border-[#222] rounded-lg p-3">
+                <div className="text-[10px] text-[#555] uppercase tracking-wider mb-1.5">Android</div>
+                <span className="text-[11px] text-[#aaa]">
+                  Enter code <span className="text-white font-mono">{code}</span> in the Daemon app
+                </span>
+              </div>
+            </div>
+          </>
+        ) : (
+          <div className="text-center py-6">
+            <button
+              onClick={generateCode}
+              disabled={loading}
+              className="px-4 py-2 bg-[#ff0505] text-white text-sm rounded-lg hover:bg-[#dd0404] disabled:opacity-50 transition-colors"
+            >
+              {loading ? 'Generating...' : 'Generate New Code'}
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
 export default function ProjectSidebar({
   onClose,
 }: {
@@ -371,9 +478,10 @@ export default function ProjectSidebar({
   }
 
   // Devices section
-  const [devices, setDevices] = useState<Array<{ id: string; name: string; platform: string; status: string }>>([])
+  const [devices, setDevices] = useState<Array<{ id: string; name: string; platform: string; status: string; token_id?: number }>>([])
+  const [showPairing, setShowPairing] = useState(false)
 
-  useEffect(() => {
+  const refreshDevices = () => {
     fetch('/api/devices')
       .then(r => r.json())
       .then(d => {
@@ -383,10 +491,24 @@ export default function ProjectSidebar({
             name: dev.name,
             platform: dev.platform,
             status: dev.status,
+            token_id: dev.token_id,
           })))
         }
       })
       .catch(() => {})
+  }
+
+  const revokeDevice = async (tokenId: number) => {
+    await fetch('/api/devices', {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token_id: tokenId }),
+    })
+    refreshDevices()
+  }
+
+  useEffect(() => {
+    refreshDevices()
   }, [])
 
   return (
@@ -455,17 +577,41 @@ export default function ProjectSidebar({
       </div>
 
       {/* Devices section */}
-      {devices.length > 0 && (
-        <div className="border-t border-[#222] px-3 py-2 shrink-0">
-          <div className="text-[10px] font-semibold text-[#555] uppercase tracking-widest mb-2">Devices</div>
-          {devices.map(d => (
-            <div key={d.id} className="flex items-center gap-2 py-1">
-              <div className={`w-1.5 h-1.5 rounded-full ${d.status === 'online' ? 'bg-green-500' : 'bg-[#333]'}`} />
-              <span className="text-[11px] text-[#888]">{d.name}</span>
-              <span className="text-[9px] text-[#444]">({d.platform})</span>
-            </div>
-          ))}
+      <div className="border-t border-[#222] px-3 py-2 shrink-0">
+        <div className="flex items-center justify-between mb-2">
+          <span className="text-[10px] font-semibold text-[#555] uppercase tracking-widest">Devices</span>
+          <button
+            onClick={() => setShowPairing(true)}
+            className="text-[10px] text-[#555] hover:text-[#ff0505] transition-colors"
+            title="Link a device"
+          >
+            + link
+          </button>
         </div>
+        {devices.map(d => (
+          <div key={d.id} className="flex items-center gap-2 py-1 group">
+            <div className={`w-1.5 h-1.5 rounded-full ${d.status === 'online' ? 'bg-green-500' : 'bg-[#333]'}`} />
+            <span className="text-[11px] text-[#888] flex-1 truncate">{d.name}</span>
+            <span className="text-[9px] text-[#444]">{d.platform}</span>
+            {d.token_id && (
+              <button
+                onClick={() => revokeDevice(d.token_id!)}
+                className="opacity-0 group-hover:opacity-100 text-[9px] text-[#555] hover:text-[#ff0505] transition-all"
+                title="Unlink device"
+              >
+                x
+              </button>
+            )}
+          </div>
+        ))}
+        {devices.length === 0 && (
+          <div className="text-[10px] text-[#444] py-1">no devices linked</div>
+        )}
+      </div>
+
+      {/* Pairing Modal */}
+      {showPairing && (
+        <PairingModal onClose={() => { setShowPairing(false); refreshDevices() }} />
       )}
     </div>
   )

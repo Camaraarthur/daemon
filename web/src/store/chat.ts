@@ -29,6 +29,7 @@ interface ChatState {
   activeThreadId: string | null
   inputDraft: string
   isProcessing: boolean
+  loadingHistory: boolean
 
   // Actions
   setActiveThread: (id: string) => void
@@ -41,6 +42,8 @@ interface ChatState {
   setInputDraft: (text: string) => void
   setProcessing: (processing: boolean) => void
   getActiveThread: () => ChatThread | null
+  loadThreadFromDB: (threadId: string, messages: Message[]) => void
+  loadProjectThread: (projectId: number) => Promise<string | null>
 }
 
 const generateId = () => Math.random().toString(36).substring(2, 10)
@@ -50,6 +53,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   activeThreadId: null,
   inputDraft: '',
   isProcessing: false,
+  loadingHistory: false,
 
   setActiveThread: (id) => set({ activeThreadId: id }),
 
@@ -66,6 +70,77 @@ export const useChatStore = create<ChatState>((set, get) => ({
       activeThreadId: id,
     }))
     return id
+  },
+
+  // Load an existing thread from the DB into the Zustand store
+  loadThreadFromDB: (threadId: string, messages: Message[]) => {
+    const { threads } = get()
+    const existing = threads.find((t) => t.id === threadId)
+    if (existing) {
+      // Thread already in store — replace messages
+      set({
+        threads: threads.map((t) =>
+          t.id === threadId ? { ...t, messages } : t
+        ),
+        activeThreadId: threadId,
+      })
+    } else {
+      // Create thread entry in store with loaded messages
+      const thread: ChatThread = {
+        id: threadId,
+        title: messages[0]?.content?.slice(0, 40) || 'Conversation',
+        messages,
+        createdAt: messages[0]?.timestamp || new Date().toISOString(),
+      }
+      set((s) => ({
+        threads: [thread, ...s.threads],
+        activeThreadId: threadId,
+      }))
+    }
+  },
+
+  // Fetch the most recent thread for a project from DB and load it
+  loadProjectThread: async (projectId: number): Promise<string | null> => {
+    set({ loadingHistory: true })
+    try {
+      // Get most recent thread for this project
+      const threadsRes = await fetch(`/api/threads?projectId=${projectId}`)
+      const threadsData = await threadsRes.json()
+      const dbThreads = threadsData.threads || []
+
+      if (dbThreads.length === 0) {
+        // No existing thread — clear active so user sees empty state
+        set({ activeThreadId: null, loadingHistory: false })
+        return null
+      }
+
+      // Most recent thread (already sorted by last_message_at DESC from the API)
+      const latestThread = dbThreads[0]
+
+      // Fetch its messages
+      const msgsRes = await fetch(`/api/threads/${latestThread.id}/messages?limit=50`)
+      const msgsData = await msgsRes.json()
+      const dbMessages = msgsData.messages || []
+
+      // Convert DB messages to chat store Message format
+      const messages: Message[] = dbMessages.map((m: any) => ({
+        id: m.id,
+        role: m.role === 'assistant' ? 'daemon' : m.role,
+        content: m.content || '',
+        timestamp: m.created_at,
+        model: m.model || undefined,
+        toolCalls: m.tool_calls ? JSON.parse(m.tool_calls) : undefined,
+      }))
+
+      // Load into store
+      get().loadThreadFromDB(latestThread.id, messages)
+      set({ loadingHistory: false })
+      return latestThread.id
+    } catch (e) {
+      console.error('Failed to load project thread:', e)
+      set({ loadingHistory: false })
+      return null
+    }
   },
 
   addMessage: (threadId, message) =>

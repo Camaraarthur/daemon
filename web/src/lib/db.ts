@@ -173,6 +173,22 @@ function runMigrations(db: Database.Database) {
       CREATE INDEX IF NOT EXISTS idx_credit_usage_user ON credit_usage(user_id);
       CREATE INDEX IF NOT EXISTS idx_credit_usage_month ON credit_usage(user_id, substr(created_at, 1, 7));
     `],
+    ['011_device_tokens', `
+      CREATE TABLE IF NOT EXISTS device_tokens (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL,
+        device_id TEXT NOT NULL,
+        device_name TEXT,
+        platform TEXT,
+        token_hash TEXT NOT NULL UNIQUE,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        last_seen TEXT,
+        revoked INTEGER DEFAULT 0,
+        FOREIGN KEY (user_id) REFERENCES users(id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_device_tokens_hash ON device_tokens(token_hash);
+      CREATE INDEX IF NOT EXISTS idx_device_tokens_user ON device_tokens(user_id);
+    `],
   ]
 
   const insertMigration = db.prepare('INSERT INTO migrations (name, applied_at) VALUES (?, datetime(\'now\'))')
@@ -717,6 +733,81 @@ export function getCreditUsageThisMonth(userId: number): {
   `).get(userId, month) as { total: number }
 
   return { entries, total: totalRow.total }
+}
+
+// ── Device Tokens ──────────────────────────────────────
+
+import { createHash, randomBytes } from 'crypto'
+
+function hashToken(raw: string): string {
+  return createHash('sha256').update(raw).digest('hex')
+}
+
+export interface DeviceToken {
+  id: number
+  user_id: number
+  device_id: string
+  device_name: string | null
+  platform: string | null
+  token_hash: string
+  created_at: string
+  last_seen: string | null
+  revoked: number
+}
+
+/**
+ * Create a new device token. Returns the raw token (only shown once).
+ * The hash is stored in the database.
+ */
+export function createDeviceToken(userId: number, deviceId: string, deviceName?: string, platform?: string): string {
+  const rawToken = randomBytes(32).toString('hex')
+  const hash = hashToken(rawToken)
+  getDb().prepare(`
+    INSERT INTO device_tokens (user_id, device_id, device_name, platform, token_hash)
+    VALUES (?, ?, ?, ?, ?)
+  `).run(userId, deviceId, deviceName || null, platform || null, hash)
+  return rawToken
+}
+
+/**
+ * Validate a raw device token. Returns user_id and device_id if valid, null if not.
+ */
+export function validateDeviceToken(rawToken: string): { userId: number; deviceId: string } | null {
+  const hash = hashToken(rawToken)
+  const row = getDb().prepare(
+    'SELECT user_id, device_id FROM device_tokens WHERE token_hash = ? AND revoked = 0'
+  ).get(hash) as { user_id: number; device_id: string } | undefined
+  if (!row) return null
+  return { userId: row.user_id, deviceId: row.device_id }
+}
+
+/**
+ * Revoke a device token by its ID.
+ */
+export function revokeDeviceToken(tokenId: number): boolean {
+  const result = getDb().prepare(
+    'UPDATE device_tokens SET revoked = 1 WHERE id = ?'
+  ).run(tokenId)
+  return result.changes > 0
+}
+
+/**
+ * List all device tokens for a user.
+ */
+export function listDeviceTokens(userId: number): DeviceToken[] {
+  return getDb().prepare(
+    'SELECT * FROM device_tokens WHERE user_id = ? AND revoked = 0 ORDER BY last_seen DESC NULLS LAST, created_at DESC'
+  ).all(userId) as DeviceToken[]
+}
+
+/**
+ * Update the last_seen timestamp for a device token (by hash).
+ */
+export function updateLastSeen(rawToken: string): void {
+  const hash = hashToken(rawToken)
+  getDb().prepare(
+    "UPDATE device_tokens SET last_seen = datetime('now') WHERE token_hash = ?"
+  ).run(hash)
 }
 
 export default getDb

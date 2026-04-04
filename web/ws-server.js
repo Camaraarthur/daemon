@@ -13,6 +13,49 @@
 
 import { WebSocketServer, WebSocket } from "ws"
 import http from 'http'
+import Database from 'better-sqlite3'
+import { createHash } from 'crypto'
+import { join } from 'path'
+
+// ── Device Token Validation (SQLite) ────────────────────
+const DB_PATH = join(process.cwd(), '..', 'data', 'users.db')
+let _tokenDb = null
+
+function getTokenDb() {
+  if (!_tokenDb) {
+    _tokenDb = new Database(DB_PATH, { readonly: false })
+    _tokenDb.pragma('journal_mode = WAL')
+  }
+  return _tokenDb
+}
+
+function hashToken(raw) {
+  return createHash('sha256').update(raw).digest('hex')
+}
+
+function validateDeviceToken(rawToken) {
+  try {
+    const hash = hashToken(rawToken)
+    const row = getTokenDb().prepare(
+      'SELECT user_id, device_id FROM device_tokens WHERE token_hash = ? AND revoked = 0'
+    ).get(hash)
+    return row ? { userId: row.user_id, deviceId: row.device_id } : null
+  } catch (e) {
+    console.error('[ws] Token validation error:', e.message)
+    return null
+  }
+}
+
+function updateLastSeen(rawToken) {
+  try {
+    const hash = hashToken(rawToken)
+    getTokenDb().prepare(
+      "UPDATE device_tokens SET last_seen = datetime('now') WHERE token_hash = ?"
+    ).run(hash)
+  } catch (e) {
+    console.error('[ws] updateLastSeen error:', e.message)
+  }
+}
 
 const PORT = 4801
 const PING_INTERVAL = 15_000
@@ -44,6 +87,7 @@ const server = http.createServer((req, res) => {
         platform: d.info?.platform,
         connected: d.ws.readyState === WebSocket.OPEN,
         stats: d.stats,
+        userId: d.userId || null,
       })),
     }))
     return
@@ -55,7 +99,7 @@ const server = http.createServer((req, res) => {
     req.on('data', chunk => { body += chunk })
     req.on('end', () => {
       try {
-        const { device_id, command } = JSON.parse(body)
+        const { device_id, command, user_id: requestUserId } = JSON.parse(body)
 
         // Find device by exact ID or fuzzy match
         let device = devices.get(device_id)
@@ -68,6 +112,13 @@ const server = http.createServer((req, res) => {
               break
             }
           }
+        }
+
+        // Enforce same-user ownership if both sides have user IDs
+        if (device && requestUserId && device.userId && device.userId !== requestUserId) {
+          res.writeHead(403, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify({ error: 'Device belongs to a different user' }))
+          return
         }
 
         if (!device || device.ws.readyState !== WebSocket.OPEN) {
@@ -142,7 +193,22 @@ wss.on('connection', (ws, req) => {
       const msg = JSON.parse(data.toString())
 
       switch (msg.type) {
-        case 'device_register':
+        case 'device_register': {
+          // Token-based auth: validate device_token if provided
+          let authUserId = null
+          if (msg.device_token) {
+            const tokenResult = validateDeviceToken(msg.device_token)
+            if (!tokenResult) {
+              console.log(`[ws] Invalid device token from ${req.socket.remoteAddress}`)
+              ws.send(JSON.stringify({ type: 'auth_error', message: 'Invalid device token' }))
+              ws.close(4001, 'Invalid device token')
+              return
+            }
+            authUserId = tokenResult.userId
+            updateLastSeen(msg.device_token)
+            console.log(`[ws] Token auth OK: user_id=${authUserId}, device=${tokenResult.deviceId}`)
+          }
+
           // If device was previously registered, count as reconnection
           const oldDevice = devices.get(msg.device_id)
           if (oldDevice) {
@@ -159,8 +225,10 @@ wss.on('connection', (ws, req) => {
             capabilities: msg.capabilities || {},
             registeredAt: new Date().toISOString(),
             stats,
+            userId: authUserId,
+            deviceToken: msg.device_token || null,
           })
-          console.log(`[ws] Device registered: ${deviceId} (${msg.device_name || 'unknown'})`)
+          console.log(`[ws] Device registered: ${deviceId} (${msg.device_name || 'unknown'})${authUserId ? ` [user:${authUserId}]` : ''}`)
           console.log(`[ws] Capabilities:`, msg.capabilities)
 
           // Acknowledge
@@ -171,6 +239,7 @@ wss.on('connection', (ws, req) => {
             server_time: Date.now(),
           }))
           break
+        }
 
         case 'command_response':
           stats.commandsReceived++

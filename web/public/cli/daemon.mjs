@@ -15,17 +15,47 @@
 import { WebSocket } from 'ws' // will be bundled or use import map
 import { exec } from 'child_process'
 import { readFile, writeFile, readdir, stat, mkdir } from 'fs/promises'
-import { existsSync } from 'fs'
+import { existsSync, readFileSync } from 'fs'
 import { hostname, platform, arch, cpus, totalmem, freemem, userInfo } from 'os'
 import { join, dirname } from 'path'
 import { fileURLToPath } from 'url'
+import https from 'https'
+import http from 'http'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
+// ── Version ─────────────────────────────────────────────
+const CLI_VERSION = '0.1.1'
+const VERSION_CHECK_URL = 'https://my.daemon.page/cli/version.json'
+const UPDATE_CHECK_INTERVAL = 6 * 60 * 60 * 1000 // 6 hours
+
 // ── Config ───────────────────────────────────────────────
+
+const CONFIG_DIR = join(userInfo().homedir, '.daemon')
+const CONFIG_PATH = join(CONFIG_DIR, 'config.json')
+
+function loadConfig() {
+  try {
+    if (existsSync(CONFIG_PATH)) {
+      return JSON.parse(readFileSync(CONFIG_PATH, 'utf-8'))
+    }
+  } catch {}
+  return {}
+}
+
+async function saveConfig(data) {
+  if (!existsSync(CONFIG_DIR)) await mkdir(CONFIG_DIR, { recursive: true })
+  const existing = loadConfig()
+  const merged = { ...existing, ...data }
+  await writeFile(CONFIG_PATH, JSON.stringify(merged, null, 2))
+  return merged
+}
+
+const savedConfig = loadConfig()
 
 const SERVER_URL = process.argv.find(a => a.startsWith('--server='))?.split('=')[1]
   || process.env.DAEMON_SERVER
+  || savedConfig.server_url
   || 'wss://my.daemon.page/ws/device'
 
 const DEVICE_NAME = process.argv.find(a => a.startsWith('--name='))?.split('=')[1]
@@ -53,12 +83,7 @@ function detectClaudeCli() {
   for (const p of paths) {
     if (existsSync(p)) return true
   }
-  // Try running it
-  try {
-    const { execSync } = await import('child_process')
-    // Can't use execSync at top level in ESM easily, use a flag
-    return false // Will be detected on first run_claude command
-  } catch { return false }
+  return false // Will be detected on first run_claude command
 }
 
 async function runClaudeCli(prompt, options = {}) {
@@ -95,6 +120,74 @@ async function runClaudeCli(prompt, options = {}) {
       })
     })
   })
+}
+
+// ── Clipboard Sync ───────────────────────────────────────
+
+let lastClipboard = ''
+let clipboardInterval = null
+
+async function getClipboard() {
+  const plat = platform()
+  try {
+    if (plat === 'darwin') {
+      return (await new Promise((resolve) => {
+        exec('pbpaste', { timeout: 2000 }, (_, stdout) => resolve(stdout || ''))
+      }))
+    } else if (plat === 'win32') {
+      return (await new Promise((resolve) => {
+        exec('powershell -c "Get-Clipboard"', { timeout: 2000 }, (_, stdout) => resolve(stdout?.trim() || ''))
+      }))
+    } else {
+      // Linux — try xclip, then xsel
+      return (await new Promise((resolve) => {
+        exec('xclip -selection clipboard -o 2>/dev/null || xsel --clipboard --output 2>/dev/null', { timeout: 2000 }, (_, stdout) => resolve(stdout || ''))
+      }))
+    }
+  } catch { return '' }
+}
+
+async function setClipboard(text) {
+  const plat = platform()
+  try {
+    if (plat === 'darwin') {
+      const proc = exec('pbcopy')
+      proc.stdin?.write(text)
+      proc.stdin?.end()
+    } else if (plat === 'win32') {
+      exec(`powershell -c "Set-Clipboard -Value '${text.replace(/'/g, "''")}'"`);
+    } else {
+      const proc = exec('xclip -selection clipboard 2>/dev/null || xsel --clipboard --input 2>/dev/null')
+      proc.stdin?.write(text)
+      proc.stdin?.end()
+    }
+  } catch {}
+}
+
+function startClipboardSync() {
+  log('Clipboard sync started')
+  clipboardInterval = setInterval(async () => {
+    if (!isConnected || !ws) return
+    try {
+      const current = await getClipboard()
+      if (current && current !== lastClipboard && current.length < 50000) {
+        lastClipboard = current
+        log(`Clipboard changed: "${current.slice(0, 50)}..." → broadcasting`)
+        ws.send(JSON.stringify({
+          type: 'clipboard_update',
+          content: current,
+          source_device: DEVICE_ID,
+          timestamp: Date.now(),
+        }))
+      }
+    } catch (e) {
+      err(`Clipboard poll error: ${e.message}`)
+    }
+  }, 1500)
+}
+
+function stopClipboardSync() {
+  if (clipboardInterval) { clearInterval(clipboardInterval); clipboardInterval = null }
 }
 
 // ── Connection State ─────────────────────────────────────
@@ -204,14 +297,26 @@ async function handleCommand(msg) {
     case 'receive_file':
       result = await receiveFile(msg.filename || 'file', msg.data || '')
       break
+    case 'clipboard_update':
+      // Another device copied something — write to our clipboard
+      if (msg.content && msg.source_device !== DEVICE_ID) {
+        lastClipboard = msg.content // prevent echo
+        await setClipboard(msg.content)
+        log(`Clipboard synced from ${msg.source_device} (${msg.content.slice(0, 40)}...)`)
+      }
+      return null
+    case 'clipboard_history':
+      result = { history: msg.history || [] }
+      break
     case 'ping':
       result = { status: 'alive', uptime: process.uptime() }
       break
     case 'heartbeat_ack':
       lastPong = Date.now()
-      return null // No response needed
+      return null
     case 'registered':
       log(`Registered: ${msg.message}`)
+      startClipboardSync()
       return null
     default:
       result = { error: `Unknown command: ${type}` }
@@ -243,13 +348,15 @@ function connect() {
     backoffMs = 1000
     lastPong = Date.now()
 
-    // Register device
+    // Register device (include device_token if paired)
+    const currentConfig = loadConfig()
     ws.send(JSON.stringify({
       type: 'device_register',
       device_id: DEVICE_ID,
       device_name: DEVICE_NAME,
       platform: platform(),
       arch: arch(),
+      device_token: currentConfig.device_token || undefined,
       capabilities: {
         shell: true,
         files: true,
@@ -434,6 +541,91 @@ async function uninstallService() {
   }
 }
 
+// ── Auto-Update ─────────────────────────────────────────
+
+function httpGet(url) {
+  return new Promise((resolve, reject) => {
+    const client = url.startsWith('https') ? https : http
+    client.get(url, (res) => {
+      if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+        // Follow redirect
+        return httpGet(res.headers.location).then(resolve).catch(reject)
+      }
+      if (res.statusCode !== 200) {
+        res.resume()
+        return reject(new Error(`HTTP ${res.statusCode}`))
+      }
+      let data = ''
+      res.on('data', (chunk) => { data += chunk })
+      res.on('end', () => resolve(data))
+      res.on('error', reject)
+    }).on('error', reject)
+  })
+}
+
+function compareVersions(a, b) {
+  const pa = a.split('.').map(Number)
+  const pb = b.split('.').map(Number)
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    const na = pa[i] || 0
+    const nb = pb[i] || 0
+    if (na < nb) return -1
+    if (na > nb) return 1
+  }
+  return 0
+}
+
+async function checkForUpdate() {
+  try {
+    const raw = await httpGet(VERSION_CHECK_URL)
+    const info = JSON.parse(raw)
+    if (!info.version || !info.url) return false
+
+    if (compareVersions(CLI_VERSION, info.version) >= 0) {
+      return false // already up to date
+    }
+
+    log(`Update available: ${CLI_VERSION} -> ${info.version}`)
+    log(`Downloading from ${info.url}...`)
+
+    const newCode = await httpGet(info.url)
+    if (!newCode || newCode.length < 100) {
+      err('Downloaded file too small, skipping update')
+      return false
+    }
+
+    // Write to the current script location
+    const scriptPath = fileURLToPath(import.meta.url)
+    await writeFile(scriptPath, newCode)
+    log(`Updated from ${CLI_VERSION} to ${info.version}`)
+    return true
+  } catch (e) {
+    err(`Update check failed: ${e.message}`)
+    return false
+  }
+}
+
+async function checkAndRestart() {
+  const updated = await checkForUpdate()
+  if (updated) {
+    log('Restarting with new version...')
+    const scriptPath = fileURLToPath(import.meta.url)
+    const { spawn: spawnProcess } = await import('child_process')
+    const child = spawnProcess(process.execPath, [scriptPath, ...process.argv.slice(2)], {
+      detached: true,
+      stdio: 'inherit',
+    })
+    child.unref()
+    process.exit(0)
+  }
+}
+
+function startUpdateChecker() {
+  setInterval(async () => {
+    await checkAndRestart()
+  }, UPDATE_CHECK_INTERVAL)
+}
+
 // ── Main ─────────────────────────────────────────────────
 
 if (process.argv.includes('--install')) {
@@ -452,6 +644,7 @@ daemon CLI — device bridge for daemon.page
 
 Usage:
   node daemon.mjs                     Connect with defaults
+  node daemon.mjs pair <CODE>         Pair this device with a 6-char code
   node daemon.mjs --install           Install as background service
   node daemon.mjs --uninstall         Remove background service
   node daemon.mjs --server=URL        Custom server URL
@@ -464,12 +657,78 @@ Environment:
   process.exit(0)
 }
 
-log(`daemon CLI v0.1.0`)
+// ── Pair Command ────────────────────────────────────────
+
+if (process.argv.includes('pair')) {
+  const pairIdx = process.argv.indexOf('pair')
+  const code = process.argv[pairIdx + 1]
+
+  if (!code) {
+    console.error('Usage: daemon pair <CODE>')
+    console.error('Get a pairing code from daemon.page → Link Device')
+    process.exit(1)
+  }
+
+  log(`Pairing with code: ${code.toUpperCase()}`)
+
+  try {
+    const pairUrl = 'https://my.daemon.page/api/pair'
+    const body = JSON.stringify({
+      action: 'claim',
+      code: code.toUpperCase(),
+      device_id: DEVICE_ID,
+      device_name: DEVICE_NAME,
+      platform: platform(),
+    })
+
+    const response = await new Promise((resolve, reject) => {
+      const req = https.request(pairUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) },
+      }, (res) => {
+        let data = ''
+        res.on('data', chunk => { data += chunk })
+        res.on('end', () => {
+          try {
+            const parsed = JSON.parse(data)
+            if (res.statusCode !== 200) reject(new Error(parsed.error || `HTTP ${res.statusCode}`))
+            else resolve(parsed)
+          } catch (e) { reject(new Error(`Bad response: ${data}`)) }
+        })
+      })
+      req.on('error', reject)
+      req.write(body)
+      req.end()
+    })
+
+    // Save token
+    await saveConfig({
+      device_token: response.device_token,
+      server_url: response.ws_url,
+    })
+
+    log('Device paired successfully!')
+    log(`Token saved to ${CONFIG_PATH}`)
+    log('Run `daemon` to connect.')
+    process.exit(0)
+  } catch (e) {
+    err(`Pairing failed: ${e.message}`)
+    process.exit(1)
+  }
+}
+
+log(`daemon CLI v${CLI_VERSION}`)
 log(`Device: ${DEVICE_NAME} (${platform()}/${arch()})`)
 log(`Server: ${SERVER_URL}`)
 
 // Handle graceful shutdown
 process.on('SIGINT', () => { log('Shutting down...'); process.exit(0) })
 process.on('SIGTERM', () => { log('Shutting down...'); process.exit(0) })
+
+// Check for updates on startup (blocks before connecting)
+await checkAndRestart().catch(() => {})
+
+// Start periodic update checker (every 6 hours)
+startUpdateChecker()
 
 connect()
