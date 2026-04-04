@@ -6,6 +6,7 @@ import { useProjectsStore } from '@/store/projects'
 import { MessageBubble } from '@/components/chat/MessageBubble'
 import { ActivityIndicator } from '@/components/chat/ActivityIndicator'
 import ProjectSidebar from '@/components/ProjectSidebar'
+import { filterCommands, matchSlashCommand, type SlashCommand } from '@/lib/slash-commands'
 import Image from 'next/image'
 
 function MicButton({ onTranscript }: { onTranscript: (text: string) => void }) {
@@ -283,6 +284,20 @@ function AuthedChat({ user }: { user: any }) {
     const text = inputDraft.trim()
     if (!text || isProcessing) return
 
+    // Handle slash commands
+    const slashMatch = matchSlashCommand(text)
+    let actualMessage = text
+    if (slashMatch && slashMatch.command.type === 'prompt') {
+      // Inject prompt template — the user sees their slash command, the model gets the template + args
+      const args = slashMatch.args
+      actualMessage = `${slashMatch.command.promptTemplate}\n\n${args ? `User request: ${args}` : ''}`.trim()
+    } else if (slashMatch && slashMatch.command.type === 'action') {
+      // Handle action commands client-side
+      if (slashMatch.command.actionId === 'open_settings') window.location.href = '/settings'
+      if (slashMatch.command.actionId === 'clear_chat') { setChatActiveThread(''); setInputDraft('') }
+      return
+    }
+
     let tid = chatActiveThreadId
     if (!tid) {
       // If we have an active project, create a thread in the DB via API
@@ -331,7 +346,7 @@ function AuthedChat({ user }: { user: any }) {
       const res = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: text, threadId: tid, stream: true }),
+        body: JSON.stringify({ message: actualMessage, threadId: tid, stream: true }),
       })
 
       if (!res.ok) {
@@ -541,14 +556,46 @@ function AuthedChat({ user }: { user: any }) {
         </div>
 
         {/* Input — always live */}
-        <div className="border-t border-[#222] p-3 bg-[#111] shrink-0">
+        <div className="border-t border-[#222] p-3 bg-[#111] shrink-0 relative">
+            {/* Slash command dropdown */}
+            {inputDraft.startsWith('/') && !inputDraft.includes(' ') && (
+              <div className="absolute bottom-full left-0 right-0 px-3 pb-1">
+                <div className="max-w-2xl mx-auto bg-[#161616] border border-[#282828] rounded-xl overflow-hidden shadow-xl max-h-64 overflow-y-auto">
+                  {filterCommands(inputDraft).map((cmd, i) => (
+                    <button
+                      key={cmd.name}
+                      onClick={() => {
+                        if (cmd.type === 'action') {
+                          if (cmd.actionId === 'open_settings') window.location.href = '/settings'
+                          if (cmd.actionId === 'clear_chat') { setChatActiveThread(''); setInputDraft('') }
+                          if (cmd.actionId === 'show_pairing') setInputDraft('')
+                        } else {
+                          setInputDraft(`/${cmd.name} `)
+                          inputRef.current?.focus()
+                        }
+                      }}
+                      className={`w-full flex items-center gap-3 px-3 py-2 text-left hover:bg-[#1a1a1a] transition-colors ${i === 0 ? '' : 'border-t border-[#222]'}`}
+                    >
+                      <span className="text-sm">{cmd.icon}</span>
+                      <div>
+                        <span className="text-xs text-white font-mono">/{cmd.name}</span>
+                        <span className="text-[10px] text-[#666] ml-2">{cmd.description}</span>
+                      </div>
+                    </button>
+                  ))}
+                  {filterCommands(inputDraft).length === 0 && (
+                    <div className="px-3 py-2 text-[10px] text-[#555]">no matching commands</div>
+                  )}
+                </div>
+              </div>
+            )}
             <div className="flex items-end gap-2 max-w-2xl mx-auto">
               <textarea
                 ref={inputRef}
                 value={inputDraft}
                 onChange={(e) => setInputDraft(e.target.value)}
                 onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send() } }}
-                placeholder="Message your daemon..."
+                placeholder="Message your daemon... (type / for commands)"
                 rows={1}
                 className="flex-1 resize-none rounded-2xl border border-[#282828] bg-[#161616] px-4 py-2.5 text-sm text-white placeholder-[#666] focus:outline-none focus:border-[#ff0505]/40"
               />
