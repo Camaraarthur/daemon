@@ -41,8 +41,9 @@ export async function GET(req: NextRequest) {
   }
 
   // Also include any WS-connected devices without tokens (legacy/direct connections)
+  // SECURITY: Only show devices belonging to this user
   for (const wsDev of wsDevices) {
-    if (wsDev.connected && !devices.find(d => d.id === wsDev.id)) {
+    if (wsDev.connected && wsDev.userId === userId && !devices.find(d => d.id === wsDev.id)) {
       devices.push({
         id: wsDev.id,
         name: wsDev.name || wsDev.id,
