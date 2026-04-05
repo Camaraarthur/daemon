@@ -73,12 +73,32 @@ export function parseClaudeStreamLine(line: string): SSEEvent | null {
   try {
     const obj = JSON.parse(line)
 
-    // Claude stream-json events:
-    // { type: "assistant", subtype: "text", text: "..." }
-    // { type: "tool_use", name: "...", input: {...} }
-    // { type: "tool_result", tool_use_id: "...", content: "..." }
-    // { type: "result", result: "...", session_id: "..." }
+    // Claude Code CLI stream-json format (v2.1+):
+    // { type: "assistant", message: { content: [{ type: "text", text: "..." }] }, session_id }
+    // { type: "assistant", message: { content: [{ type: "tool_use", id, name, input }] } }
+    // { type: "result", subtype: "success", result: "...", session_id, modelUsage: {...} }
+    // Legacy formats also supported below.
 
+    // New format: assistant with message.content array
+    if (obj.type === 'assistant' && obj.message?.content) {
+      const content = obj.message.content
+      if (Array.isArray(content)) {
+        for (const block of content) {
+          if (block.type === 'text' && block.text) {
+            return { type: 'text', data: { text: block.text } }
+          }
+          if (block.type === 'tool_use') {
+            return {
+              type: 'tool_call',
+              data: { id: block.id, name: block.name, args: block.input },
+            }
+          }
+        }
+      }
+      return null
+    }
+
+    // Legacy: assistant with subtype text
     if (obj.type === 'assistant' && obj.subtype === 'text') {
       return { type: 'text', data: { text: obj.text } }
     }
