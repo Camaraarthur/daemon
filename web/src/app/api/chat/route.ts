@@ -7,8 +7,37 @@ import { randomUUID } from 'crypto'
 import { routeChat, type ModelTier, PROVIDERS } from '@/lib/model-router'
 import { createSSEStream, parseClaudeStreamLine, type SSEEvent } from '@/lib/streaming'
 import { runAgentLoopStreaming } from '@/lib/agent-loop-streaming'
+import { matchSlashCommand } from '@/lib/slash-commands'
 import * as db from '@/lib/db'
-import { calculateCost, detectProvider } from '@/lib/billing'
+// ── Cost Calculation (inlined from removed billing.ts — v0 has no billing) ──
+
+const MODEL_COSTS: Record<string, { input: number; output: number; provider: string }> = {
+  'qwen/qwen3-coder:free': { input: 0, output: 0, provider: 'openrouter' },
+  'qwen/qwen3-coder': { input: 0.20, output: 0.60, provider: 'openrouter' },
+  'qwen3-coder': { input: 0, output: 0, provider: 'openrouter' },
+  'deepseek-chat': { input: 0.14, output: 0.28, provider: 'deepseek' },
+  'deepseek-v3': { input: 0.14, output: 0.28, provider: 'deepseek' },
+  'gemini-3-flash': { input: 0.075, output: 0.30, provider: 'google' },
+  'gemini-3-pro': { input: 1.25, output: 5.00, provider: 'google' },
+  'claude-sonnet': { input: 3.00, output: 15.00, provider: 'anthropic' },
+  'claude-opus': { input: 15.00, output: 75.00, provider: 'anthropic' },
+}
+
+function calculateCost(model: string, inputTokens: number, outputTokens: number): number {
+  const costs = MODEL_COSTS[model]
+  if (!costs) return ((inputTokens * 0.50) + (outputTokens * 1.50)) / 1_000_000
+  return ((inputTokens * costs.input) + (outputTokens * costs.output)) / 1_000_000
+}
+
+function detectProvider(model: string): string {
+  const costs = MODEL_COSTS[model]
+  if (costs) return costs.provider
+  if (model.includes('claude')) return 'anthropic'
+  if (model.includes('gemini')) return 'google'
+  if (model.includes('deepseek')) return 'deepseek'
+  if (model.includes('qwen')) return 'openrouter'
+  return 'unknown'
+}
 
 const execFileAsync = promisify(execFile)
 
@@ -163,6 +192,85 @@ store_conversation_turn(data["user"], data["daemon"])`,
     child.stdin.end()
   } catch {
     // Non-critical
+  }
+}
+
+// ── Project Memory Generation ─────────────────────────────
+// After every N messages in a thread, generate a MEMORY.md summary
+
+const MEMORY_GENERATION_THRESHOLD = 10
+
+async function maybeGenerateMemory(threadKey: string, userId: string) {
+  try {
+    const messages = db.listMessages(threadKey, 200)
+    if (messages.length < MEMORY_GENERATION_THRESHOLD) return
+
+    // Check if memory already exists for this thread (avoid regenerating too often)
+    const memoryDir = join(DAEMON_ROOT, 'data', 'memory', `user_${userId}`)
+    const threadMemoryFlag = join(memoryDir, '.memory_generated_' + threadKey.slice(0, 8))
+    if (existsSync(threadMemoryFlag)) {
+      // Only regenerate every 10 more messages
+      const lastCount = parseInt(readFileSync(threadMemoryFlag, 'utf-8').trim() || '0')
+      if (messages.length - lastCount < MEMORY_GENERATION_THRESHOLD) return
+    }
+
+    // Get thread info for project-specific memory
+    const thread = db.getThread(threadKey)
+    let targetDir = join(memoryDir, 'global')
+
+    if (thread?.project_id) {
+      const project = db.getProject(parseInt(userId) || 0, thread.project_id)
+      if (project) {
+        targetDir = join(memoryDir, 'projects', project.name)
+      }
+    }
+
+    // Build a summary from the conversation
+    const recentMessages = messages.slice(-20)
+    const conversationText = recentMessages
+      .filter(m => m.role === 'user' || m.role === 'assistant')
+      .map(m => `${m.role}: ${(m.content || '').slice(0, 200)}`)
+      .join('\n')
+
+    // Extract key points (simple heuristic — no LLM call to keep it fast)
+    const keyPoints: string[] = []
+    for (const msg of recentMessages) {
+      if (!msg.content) continue
+      // Look for decisions, file paths, tech stack mentions
+      const content = msg.content
+      if (/(?:decided|chose|using|switched to|installed|created|deployed|fixed)\b/i.test(content)) {
+        keyPoints.push(content.slice(0, 150))
+      }
+    }
+
+    const memoryContent = `# Conversation Memory
+Generated: ${new Date().toISOString().slice(0, 19)}
+Thread: ${threadKey.slice(0, 8)}
+Messages: ${messages.length}
+
+## Key Points
+${keyPoints.length > 0 ? keyPoints.map(p => `- ${p}`).join('\n') : '- (no key decisions detected yet)'}
+
+## Recent Context
+${conversationText.slice(0, 2000)}
+`
+
+    mkdirSync(targetDir, { recursive: true })
+    const memoryPath = join(targetDir, 'MEMORY.md')
+
+    // Append to existing memory (don't overwrite)
+    if (existsSync(memoryPath)) {
+      const existing = readFileSync(memoryPath, 'utf-8')
+      writeFileSync(memoryPath, existing + '\n---\n\n' + memoryContent)
+    } else {
+      writeFileSync(memoryPath, memoryContent)
+    }
+
+    // Write flag with current message count
+    mkdirSync(memoryDir, { recursive: true })
+    writeFileSync(threadMemoryFlag, String(messages.length))
+  } catch (e) {
+    console.warn('[chat] Memory generation failed:', e)
   }
 }
 
@@ -436,15 +544,52 @@ export async function POST(req: NextRequest) {
       ? modelOverride as ModelTier
       : tier
 
+    // ── Slash command handling (server-side) ──────────────
+    // Client may already expand these, but we also handle them server-side
+    // to support API-only clients (curl, mobile app, CLI)
+    let effectiveMessage = message
+    const slashMatch = matchSlashCommand(message)
+    if (slashMatch && slashMatch.command.type === 'prompt' && slashMatch.command.promptTemplate) {
+      effectiveMessage = `${slashMatch.command.promptTemplate}\n\n${slashMatch.args ? `User request: ${slashMatch.args}` : ''}`.trim()
+    }
+
     const personality = loadPersonality()
     let systemPrompt = buildSystemPrompt(personality)
 
-    const knowledgeContext = await getKnowledgeContext(message)
+    // ── Project memory (MEMORY.md pattern) ───────────────
+    // Load project memory if a thread is linked to a project
+    try {
+      if (threadId) {
+        const thread = db.getThread(threadId)
+        if (thread?.project_id) {
+          // Load from file-based memory
+          const memoryDir = join(DAEMON_ROOT, 'data', 'memory', `user_${userId}`, 'projects')
+          const project = db.getProject(parseInt(userId) || 0, thread.project_id)
+          if (project) {
+            const projectMemoryPath = join(memoryDir, project.name, 'MEMORY.md')
+            if (existsSync(projectMemoryPath)) {
+              const memoryContent = readFileSync(projectMemoryPath, 'utf-8').slice(0, 4000) // 4K token budget
+              systemPrompt += `\n\n## Project Memory (${project.display_name || project.name})\n${memoryContent}`
+            }
+          }
+        }
+      }
+      // Always load global memory if it exists
+      const globalMemoryPath = join(DAEMON_ROOT, 'data', 'memory', `user_${userId}`, 'global', 'MEMORY.md')
+      if (existsSync(globalMemoryPath)) {
+        const globalMemory = readFileSync(globalMemoryPath, 'utf-8').slice(0, 2000)
+        systemPrompt += `\n\n## Global Memory\n${globalMemory}`
+      }
+    } catch {
+      // Non-critical — memory loading should never break chat
+    }
+
+    const knowledgeContext = await getKnowledgeContext(effectiveMessage)
     if (knowledgeContext) {
       systemPrompt += '\n\n' + knowledgeContext
     }
 
-    const needsTools = TOOLS_REGEX.test(message)
+    const needsTools = TOOLS_REGEX.test(effectiveMessage) || (slashMatch?.command.type === 'prompt')
     const threadKey = threadId || 'default'
 
     // Persist user message to SQLite
@@ -481,7 +626,7 @@ export async function POST(req: NextRequest) {
 
           if (effectiveTier === 'premium') {
             // Claude CLI streaming
-            const r = await streamClaudeCLI(message, systemPrompt, threadKey, needsTools, send)
+            const r = await streamClaudeCLI(effectiveMessage, systemPrompt, threadKey, needsTools, send)
             result = { ...r, toolCalls: [] }
           } else if (needsTools && userId) {
             // Agent loop with streaming events
@@ -489,15 +634,26 @@ export async function POST(req: NextRequest) {
             result = await runAgentLoopStreaming({
               provider: providerConfig,
               systemPrompt,
-              userMessage: message,
+              userMessage: effectiveMessage,
               userId,
               maxIterations: 10,
               onEvent: send,
             })
           } else {
-            // Plain OpenAI-compatible streaming
-            const r = await streamOpenAICompatible(effectiveTier, systemPrompt, message, send)
-            result = { ...r, toolCalls: [] }
+            // Plain OpenAI-compatible streaming with fallback
+            try {
+              const r = await streamOpenAICompatible(effectiveTier, systemPrompt, effectiveMessage, send)
+              result = { ...r, toolCalls: [] }
+            } catch (streamErr: any) {
+              if (effectiveTier === 'free') {
+                console.warn(`[stream] Free tier failed (${streamErr.message}), falling back to mid`)
+                send({ type: 'thinking', data: { text: 'Retrying with backup model...' } })
+                const r = await streamOpenAICompatible('mid', systemPrompt, effectiveMessage, send)
+                result = { ...r, toolCalls: [] }
+              } else {
+                throw streamErr
+              }
+            }
           }
 
           // Persist assistant response
@@ -539,6 +695,9 @@ export async function POST(req: NextRequest) {
 
           storeKnowledge(message, result.response)
 
+          // Generate project memory if enough messages accumulated (async, non-blocking)
+          maybeGenerateMemory(threadKey, userId).catch(() => {})
+
           send({
             type: 'done',
             data: {
@@ -561,7 +720,7 @@ export async function POST(req: NextRequest) {
 
     // ── Non-streaming path (original behavior) ───────────────
     const result = await routeChat({
-      message,
+      message: effectiveMessage,
       tier: effectiveTier,
       systemPrompt,
       threadId: threadKey,
@@ -607,6 +766,9 @@ export async function POST(req: NextRequest) {
 
     // Store in knowledge graph (async, non-blocking)
     storeKnowledge(message, result.response)
+
+    // Generate project memory if enough messages accumulated (async, non-blocking)
+    maybeGenerateMemory(threadKey, userId).catch(() => {})
 
     return NextResponse.json({
       response: result.response,

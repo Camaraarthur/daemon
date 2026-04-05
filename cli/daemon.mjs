@@ -64,6 +64,87 @@ const DEVICE_NAME = process.argv.find(a => a.startsWith('--name='))?.split('=')[
 
 const DEVICE_ID = `${hostname()}-${platform()}-${arch()}`
 
+// ── MCP Tool Definitions ────────────────────────────────
+
+const MCP_TOOLS = [
+  {
+    name: 'run_shell',
+    description: 'Execute a shell command on this device',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        command: { type: 'string', description: 'The shell command to run' },
+        timeout_ms: { type: 'number', description: 'Timeout in milliseconds (default: 30000)' },
+      },
+      required: ['command'],
+    },
+  },
+  {
+    name: 'read_file',
+    description: 'Read the contents of a file',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        path: { type: 'string', description: 'Absolute file path' },
+      },
+      required: ['path'],
+    },
+  },
+  {
+    name: 'write_file',
+    description: 'Write content to a file',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        path: { type: 'string', description: 'Absolute file path' },
+        content: { type: 'string', description: 'File content to write' },
+      },
+      required: ['path', 'content'],
+    },
+  },
+  {
+    name: 'list_directory',
+    description: 'List files and directories at a path',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        path: { type: 'string', description: 'Directory path' },
+      },
+      required: ['path'],
+    },
+  },
+  {
+    name: 'get_system_info',
+    description: 'Get device system information (OS, CPU, memory, etc.)',
+    inputSchema: { type: 'object', properties: {} },
+  },
+]
+
+// ── MCP Tool Executor ───────────────────────────────────
+
+async function executeMcpTool(name, args) {
+  switch (name) {
+    case 'run_shell':
+      return await runCommand(args.command || '', args.timeout_ms || 30000)
+    case 'read_file':
+      return await readFileContent(args.path || '')
+    case 'write_file': {
+      try {
+        await writeFile(args.path, args.content || '')
+        return { path: args.path, written: true, size: (args.content || '').length }
+      } catch (e) {
+        return { error: e.message }
+      }
+    }
+    case 'list_directory':
+      return await listFiles(args.path || userInfo().homedir)
+    case 'get_system_info':
+      return await getDeviceInfo()
+    default:
+      return { error: `Unknown tool: ${name}` }
+  }
+}
+
 // ── Claude CLI Detection ─────────────────────────────────
 
 function detectClaudeCli() {
@@ -279,6 +360,28 @@ async function handleCommand(msg) {
 
   let result
   switch (type) {
+    // ── MCP Protocol Messages ──────────────────────────
+    case 'skill.list':
+      return {
+        type: 'skill.list_result',
+        request_id: requestId,
+        tools: MCP_TOOLS,
+      }
+
+    case 'skill.invoke': {
+      const toolName = msg.name
+      const toolArgs = msg.arguments || {}
+      log(`skill.invoke: ${toolName}(${JSON.stringify(toolArgs).slice(0, 100)})`)
+      result = await executeMcpTool(toolName, toolArgs)
+      return {
+        type: 'skill.result',
+        request_id: requestId,
+        name: toolName,
+        result,
+      }
+    }
+
+    // ── Legacy Command Messages (backward compat) ──────
     case 'run_command':
       result = await runCommand(msg.command || '')
       break
@@ -348,7 +451,7 @@ function connect() {
     backoffMs = 1000
     lastPong = Date.now()
 
-    // Register device (include device_token if paired)
+    // Register device (include device_token if paired + MCP tools)
     const currentConfig = loadConfig()
     ws.send(JSON.stringify({
       type: 'device_register',
@@ -357,6 +460,7 @@ function connect() {
       platform: platform(),
       arch: arch(),
       device_token: currentConfig.device_token || undefined,
+      tools: MCP_TOOLS,
       capabilities: {
         shell: true,
         files: true,

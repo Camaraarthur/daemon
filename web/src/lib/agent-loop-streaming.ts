@@ -31,6 +31,29 @@ function execInSandbox(containerId: string, cmd: string, timeout: number = 30, s
   })
 }
 
+// --- Lint-on-edit: after writing a file, run a quick lint check ---
+
+async function lintFile(containerId: string, filePath: string): Promise<string | null> {
+  const ext = filePath.split('.').pop()?.toLowerCase()
+  let lintCmd: string | null = null
+
+  if (ext === 'ts' || ext === 'tsx' || ext === 'js' || ext === 'jsx') {
+    lintCmd = `npx tsc --noEmit "${filePath}" 2>&1 || true`
+  } else if (ext === 'py') {
+    lintCmd = `python3 -m py_compile "${filePath}" 2>&1 || true`
+  }
+
+  if (!lintCmd) return null
+
+  const output = await execInSandbox(containerId, lintCmd, 15)
+  const trimmed = output.trim()
+  if (!trimmed || trimmed === 'true') return null
+  if (/error TS|SyntaxError|IndentationError|NameError|ImportError/i.test(trimmed)) {
+    return trimmed
+  }
+  return null
+}
+
 async function executeTool(containerId: string, toolName: string, args: Record<string, string>): Promise<string> {
   switch (toolName) {
     case 'bash':
@@ -39,7 +62,14 @@ async function executeTool(containerId: string, toolName: string, args: Record<s
       return execInSandbox(containerId, `cat "${args.path}"`)
     case 'write_file': {
       const b64 = Buffer.from(args.content).toString('base64')
-      return execInSandbox(containerId, `echo "${b64}" | base64 -d > "${args.path}" && echo "Written ${args.path}"`)
+      const writeResult = await execInSandbox(containerId, `echo "${b64}" | base64 -d > "${args.path}" && echo "Written ${args.path}"`)
+
+      // Lint-on-edit: check for syntax errors after writing
+      const lintErrors = await lintFile(containerId, args.path)
+      if (lintErrors) {
+        return `${writeResult}\n\n[LINT ERRORS detected — fix before continuing]\n${lintErrors}`
+      }
+      return writeResult
     }
     case 'list_files':
       return execInSandbox(containerId, `ls -la ${args.path || '.'}`)

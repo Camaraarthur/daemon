@@ -6,10 +6,18 @@
 }
 
 /* Prevent white flash and fix viewport in Android WebView */
-html, body {
+html {
   background: #0a0a0a !important;
-  min-height: 100vh;
-  overflow: hidden;
+  height: 100%;
+  height: -webkit-fill-available;
+  overflow-x: hidden;
+}
+
+body {
+  background: #0a0a0a !important;
+  min-height: 100%;
+  min-height: -webkit-fill-available;
+  overflow-x: hidden;
 }
 
 @theme inline {

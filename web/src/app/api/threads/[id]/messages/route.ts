@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { requireAuth } from '@/lib/auth'
+import { requireAuth, getUserId } from '@/lib/auth'
 import { listMessages, getThread } from '@/lib/db'
 
 export async function GET(
@@ -9,11 +9,14 @@ export async function GET(
   const authErr = requireAuth(req)
   if (authErr) return authErr
 
+  const userId = await getUserId(req)
+  if (!userId) return NextResponse.json({ error: 'Not authenticated' }, { status: 401 })
+
   const { id } = await ctx.params
 
-  // Verify thread exists
+  // SECURITY: Verify thread exists AND belongs to this user
   const thread = getThread(id)
-  if (!thread) {
+  if (!thread || thread.user_id !== userId) {
     return NextResponse.json({ error: 'Thread not found' }, { status: 404 })
   }
 

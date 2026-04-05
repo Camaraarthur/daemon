@@ -6,11 +6,7 @@ import os
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
-try:
-    import bcrypt
-    HAS_BCRYPT = True
-except ImportError:
-    HAS_BCRYPT = False
+import bcrypt
 
 DB_PATH = Path("/home/arthur/daemon/data/users.db")
 DB_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -38,17 +34,31 @@ def get_db():
     return db
 
 def hash_password(password):
-    if HAS_BCRYPT:
-        return "bcrypt:" + bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
-    salt = secrets.token_hex(16)
-    h = hashlib.sha256((salt + password).encode()).hexdigest()
-    return f"{salt}:{h}"
+    return "bcrypt:" + bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
 
 def check_password(stored, password):
     if stored.startswith("bcrypt:"):
         return bcrypt.checkpw(password.encode(), stored[7:].encode())
-    salt, h = stored.split(":", 1)
-    return hashlib.sha256((salt + password).encode()).hexdigest() == h
+    # Legacy SHA-256 password detected — verify and migrate to bcrypt
+    if ":" in stored:
+        salt, h = stored.split(":", 1)
+        if hashlib.sha256((salt + password).encode()).hexdigest() == h:
+            # Password correct — migrate to bcrypt in-place
+            _migrate_password_to_bcrypt(stored, password)
+            return True
+    return False
+
+def _migrate_password_to_bcrypt(old_hash, password):
+    """Migrate a legacy SHA-256 password to bcrypt on successful login."""
+    try:
+        db = get_db()
+        new_hash = hash_password(password)
+        db.execute("UPDATE users SET password_hash = ? WHERE password_hash = ?",
+                   (new_hash, old_hash))
+        db.commit()
+    except Exception as e:
+        # Migration failure is non-fatal — user can still log in
+        print(f"[users] bcrypt migration failed: {e}")
 
 def create_user(email, password, daemon_name):
     db = get_db()

@@ -24,8 +24,8 @@ const PUBLIC_ROUTES = [
 
 const PUBLIC_API_ROUTES = [
   '/api/auth',       // Login/signup/check — obviously public
+  '/api/health',     // Health check — public
   '/api/stream',     // SSE stream (canvas reads this, public)
-  '/api/daemon-chat', // Gemini chat for other users (has its own auth later)
   '/ws/',            // WebSocket device connections (proxied to WS server)
 ]
 

@@ -114,7 +114,7 @@ export default function DaemonChat() {
   }, [])
 
   if (authed === null) {
-    return <div className="min-h-[100dvh] bg-[#0a0a0a] flex items-center justify-center"><div className="text-[#333] text-sm">loading...</div></div>
+    return <div className="min-h-dvh bg-[#0a0a0a] flex items-center justify-center"><div className="text-[#333] text-sm">loading...</div></div>
   }
 
   if (!authed) {
@@ -146,7 +146,7 @@ function LoginPage() {
   }
 
   return (
-    <div className="min-h-[100dvh] bg-[#0a0a0a] flex flex-col items-center justify-center px-6">
+    <div className="min-h-dvh bg-[#0a0a0a] flex flex-col items-center justify-center px-6">
       <div className="w-full max-w-xs space-y-3">
         <h2 className="text-lg text-white font-medium text-center mb-4">Login to your daemon</h2>
         <input type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="email"
@@ -437,7 +437,7 @@ function AuthedChat({ user }: { user: any }) {
   }, [inputDraft, isProcessing, chatActiveThreadId, createChatThread, addMessage, appendToLastDaemon, addToolCallToLastDaemon, updateToolCallResult, updateLastDaemon, setInputDraft, setProcessing])
 
   return (
-    <div className="flex h-screen bg-[#0a0a0a] text-[#bfbfbf]" style={{ height: '100vh', minHeight: '100vh' }}>
+    <div className="flex bg-[#0a0a0a] text-[#bfbfbf]" style={{ height: '100dvh', minHeight: '-webkit-fill-available' }}>
       {/* Left sidebar — projects + devices */}
       <div className={`${showSidebar ? 'fixed inset-0 z-50 flex' : 'hidden'} sm:relative sm:flex sm:inset-auto sm:z-auto`}>
         <div className="w-64 border-r border-[#222] shrink-0">
