@@ -562,6 +562,10 @@ export async function POST(req: NextRequest) {
     try {
       if (threadId) {
         const thread = db.getThread(threadId)
+        // Verify thread belongs to this user
+        if (thread && thread.user_id !== parseInt(userId)) {
+          return NextResponse.json({ error: 'Not authorized' }, { status: 403 })
+        }
         if (thread?.project_id) {
           // Load from file-based memory
           const memoryDir = join(DAEMON_ROOT, 'data', 'memory', `user_${userId}`, 'projects')

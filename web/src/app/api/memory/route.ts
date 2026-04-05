@@ -17,46 +17,48 @@ async function runMemorySearch(args: string[]): Promise<any> {
   // Build a small Python wrapper that imports memory_search and returns JSON
   const [action, ...params] = args
 
-  let script: string
-  if (action === 'search') {
-    const query = params[0] || ''
-    const limit = params[1] || '10'
-    script = `
-import sys, json, os
-sys.path.insert(0, os.environ["DAEMON_SERVER"])
-from memory_search import search_memory
-results = search_memory(${JSON.stringify(query)}, limit=${limit})
-print(json.dumps([r.to_dict() for r in results]))
-`
-  } else if (action === 'grep') {
-    const pattern = params[0] || ''
-    const projectId = params[1] || 'None'
-    script = `
-import sys, json, os
-sys.path.insert(0, os.environ["DAEMON_SERVER"])
-from memory_search import grep_memory
-results = grep_memory(${JSON.stringify(pattern)}, project_id=${projectId})
-print(json.dumps([r.to_dict() for r in results]))
-`
-  } else if (action === 'context') {
-    const projectId = params[0] || '0'
-    script = `
-import sys, json, os
-sys.path.insert(0, os.environ["DAEMON_SERVER"])
-from memory_search import get_project_context
-ctx = get_project_context(${projectId})
-print(json.dumps({"context": ctx}))
-`
-  } else {
-    throw new Error(`Unknown action: ${action}`)
-  }
+  // SECURITY: All parameters passed via stdin as JSON, never interpolated into code
+  const input = JSON.stringify({ action, params })
 
-  const { stdout } = await execFileAsync(VENV_PYTHON, ['-c', script], {
-    timeout: 30000,
-    env: {
-      ...process.env,
-      DAEMON_SERVER: join(DAEMON_ROOT, 'server'),
-    },
+  const script = `
+import sys, json, os
+sys.path.insert(0, os.environ["DAEMON_SERVER"])
+data = json.loads(sys.stdin.read())
+action = data["action"]
+params = data["params"]
+
+if action == "search":
+    from memory_search import search_memory
+    q = str(params[0]) if params else ""
+    limit = int(params[1]) if len(params) > 1 else 10
+    results = search_memory(q, limit=limit)
+    print(json.dumps([r.to_dict() for r in results]))
+elif action == "grep":
+    from memory_search import grep_memory
+    pattern = str(params[0]) if params else ""
+    pid = int(params[1]) if len(params) > 1 and params[1] not in ("None","") else None
+    results = grep_memory(pattern, project_id=pid)
+    print(json.dumps([r.to_dict() for r in results]))
+elif action == "context":
+    from memory_search import get_project_context
+    pid = int(params[0]) if params and params[0] not in ("None","") else 0
+    ctx = get_project_context(pid)
+    print(json.dumps({"context": ctx}))
+else:
+    print(json.dumps({"error": "unknown action"}))
+`
+
+  const { stdout } = await new Promise<{stdout: string}>((resolve, reject) => {
+    const { execFile } = require('child_process')
+    const child = execFile(VENV_PYTHON, ['-c', script], {
+      timeout: 30000,
+      env: { ...process.env, DAEMON_SERVER: join(DAEMON_ROOT, 'server') },
+    }, (err: any, stdout: string, stderr: string) => {
+      if (err) reject(err)
+      else resolve({ stdout })
+    })
+    child.stdin?.write(input)
+    child.stdin?.end()
   })
 
   return JSON.parse(stdout.trim())
