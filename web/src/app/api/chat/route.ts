@@ -334,6 +334,7 @@ async function streamClaudeCLI(
   const args = [
     '-p', message,
     '--output-format', 'stream-json',
+    '--verbose',
     '--model', 'opus',
     '--system-prompt-file', promptFile,
     '--dangerously-skip-permissions', '--allow-dangerously-skip-permissions',
