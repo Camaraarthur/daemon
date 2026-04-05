@@ -4,6 +4,7 @@ import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Bundle
+import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -22,12 +23,15 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import com.daemon.app.service.DaemonService
-import com.daemon.app.ui.chat.ChatScreen
 import com.daemon.app.ui.chat.DarkBg
 import com.daemon.app.ui.chat.DaemonRed
 import com.daemon.app.ui.chat.DarkSurface
-import com.daemon.app.ui.voice.VoiceCompanionScreen
 import android.net.Uri
+import android.webkit.WebView
+import android.webkit.WebViewClient
+import android.webkit.WebSettings
+import android.webkit.CookieManager
+import androidx.compose.ui.viewinterop.AndroidView
 import android.util.Base64
 import android.webkit.MimeTypeMap
 import kotlinx.coroutines.Dispatchers
@@ -60,8 +64,16 @@ class MainActivity : ComponentActivity() {
         // Request battery optimization exemption so the service stays alive
         requestBatteryOptimizationExemption()
 
+        // Check for app update
+        checkForUpdate()
+
         // Handle share intent
         val sharedContent = handleShareIntent(intent)
+
+        // If shared content is text, broadcast it to all devices' clipboards
+        if (sharedContent?.type == "text" && sharedContent.text != null) {
+            broadcastSharedTextToClipboard(sharedContent.text)
+        }
 
         // Check for saved token
         val prefs = getSharedPreferences("daemon", MODE_PRIVATE)
@@ -88,17 +100,9 @@ class MainActivity : ComponentActivity() {
                     token = t
                     prefs.edit().putString("token", t).apply()
                 })
-            } else if (showVoice) {
-                VoiceCompanionScreen(
-                    serverUrl = "ws://100.124.245.114:4803/ws",
-                    onBack = { showVoice = false },
-                )
             } else {
-                ChatScreen(
-                    daemonName = "My",
-                    onSendMessage = { message -> sendToServer(message, token!!) },
-                    onVoiceClick = { showVoice = true },
-                )
+                // WebView-based UI — loads the full web app with projects, memory, slash commands
+                DaemonWebView(token = token!!)
             }
         }
 
@@ -118,9 +122,91 @@ class MainActivity : ComponentActivity() {
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
             startForegroundService(Intent(this, DaemonService::class.java).apply {
                 action = DaemonService.ACTION_START
-                putExtra(DaemonService.EXTRA_SERVER_URL, "ws://100.124.245.114:4801/ws/device")
+                putExtra(DaemonService.EXTRA_SERVER_URL, "wss://my.daemon.page/ws/device")
                 putExtra(DaemonService.EXTRA_USER_ID, "arthur")
             })
+        }
+    }
+
+    // ── Update Check ──────────────────────────────────────────────
+
+    private fun checkForUpdate() {
+        Thread {
+            try {
+                val url = URL("https://my.daemon.page/cli/version.json")
+                val conn = url.openConnection() as HttpURLConnection
+                conn.connectTimeout = 5000
+                conn.readTimeout = 5000
+                if (conn.responseCode == 200) {
+                    val json = JSONObject(conn.inputStream.bufferedReader().readText())
+                    val remoteVersion = json.optString("apk_version", "")
+                    val currentVersion = BuildConfig.VERSION_NAME
+                    if (remoteVersion.isNotEmpty() && remoteVersion != currentVersion && isNewer(remoteVersion, currentVersion)) {
+                        runOnUiThread { showUpdateDialog(remoteVersion) }
+                    }
+                }
+            } catch (e: Exception) {
+                Log.d("MainActivity", "Update check failed: ${e.message}")
+            }
+        }.start()
+    }
+
+    private fun isNewer(remote: String, current: String): Boolean {
+        val r = remote.split(".").map { it.toIntOrNull() ?: 0 }
+        val c = current.split(".").map { it.toIntOrNull() ?: 0 }
+        for (i in 0 until maxOf(r.size, c.size)) {
+            val rv = r.getOrElse(i) { 0 }
+            val cv = c.getOrElse(i) { 0 }
+            if (rv > cv) return true
+            if (rv < cv) return false
+        }
+        return false
+    }
+
+    private fun showUpdateDialog(version: String) {
+        android.app.AlertDialog.Builder(this)
+            .setTitle("Update available")
+            .setMessage("A new version (v$version) is available. Install now?")
+            .setPositiveButton("Install") { _, _ ->
+                startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://my.daemon.page/daemon.apk")))
+            }
+            .setNegativeButton("Later", null)
+            .show()
+    }
+
+    // ── Clipboard Broadcast ─────────────────────────────────────────
+
+    private fun broadcastSharedTextToClipboard(text: String) {
+        // Try via DaemonService's WebSocket first (already connected)
+        val service = DaemonService.instance
+        if (service != null) {
+            service.broadcastClipboard(text)
+            Log.d("MainActivity", "Clipboard broadcast via WS: ${text.take(40)}...")
+        } else {
+            // Fallback: POST to server which will push to connected devices
+            Thread {
+                try {
+                    val prefs = getSharedPreferences("daemon", MODE_PRIVATE)
+                    val token = prefs.getString("token", null) ?: return@Thread
+                    val url = URL("https://my.daemon.page/api/clipboard")
+                    val conn = url.openConnection() as HttpURLConnection
+                    conn.requestMethod = "POST"
+                    conn.setRequestProperty("Content-Type", "application/json")
+                    conn.setRequestProperty("Cookie", "daemon_token=$token")
+                    conn.doOutput = true
+                    conn.connectTimeout = 5000
+                    conn.readTimeout = 5000
+                    val payload = JSONObject().apply {
+                        put("content", text)
+                        put("source", android.os.Build.MODEL)
+                    }
+                    conn.outputStream.write(payload.toString().toByteArray())
+                    conn.outputStream.flush()
+                    Log.d("MainActivity", "Clipboard broadcast via API: HTTP ${conn.responseCode}")
+                } catch (e: Exception) {
+                    Log.d("MainActivity", "Clipboard broadcast failed: ${e.message}")
+                }
+            }.start()
         }
     }
 
@@ -202,7 +288,7 @@ class MainActivity : ComponentActivity() {
     private suspend fun sendToServer(message: String, token: String): String {
         return withContext(Dispatchers.IO) {
             try {
-                val url = URL("https://daemon.call.partners/api/chat")
+                val url = URL("https://my.daemon.page/api/chat")
                 val conn = url.openConnection() as HttpURLConnection
                 conn.requestMethod = "POST"
                 conn.setRequestProperty("Content-Type", "application/json")
@@ -300,9 +386,10 @@ fun LoginScreen(onLogin: (String) -> Unit) {
                 loading = true; error = ""
                 scope.launch {
                     try {
+                        @Suppress("DEPRECATION")
                         val token = withContext(Dispatchers.IO) {
-                            val url = URL("https://daemon.call.partners/api/auth")
-                            val conn = url.openConnection() as HttpURLConnection
+                            val url = URL("https://my.daemon.page/api/auth")
+                            val conn = (url.openConnection() as HttpURLConnection)
                             conn.requestMethod = "POST"
                             conn.setRequestProperty("Content-Type", "application/json")
                             conn.doOutput = true
@@ -337,4 +424,51 @@ fun LoginScreen(onLogin: (String) -> Unit) {
             Text(if (loading) "logging in..." else "enter", color = Color.White)
         }
     }
+}
+
+@Composable
+fun DaemonWebView(token: String) {
+    AndroidView(
+        modifier = Modifier
+            .fillMaxSize()
+            .statusBarsPadding(),
+        factory = { context ->
+            WebView(context).apply {
+                // Set cookie for auth
+                val cookieManager = CookieManager.getInstance()
+                cookieManager.setAcceptCookie(true)
+                cookieManager.setCookie("https://my.daemon.page", "daemon_token=$token; path=/; secure")
+                cookieManager.flush()
+
+                settings.apply {
+                    javaScriptEnabled = true
+                    domStorageEnabled = true
+                    databaseEnabled = true
+                    allowContentAccess = true
+                    mediaPlaybackRequiresUserGesture = false
+                    setSupportMultipleWindows(false)
+                    mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
+                    userAgentString = settings.userAgentString + " DaemonApp/1.0"
+                }
+
+                webViewClient = object : WebViewClient() {
+                    override fun shouldOverrideUrlLoading(
+                        view: WebView,
+                        request: android.webkit.WebResourceRequest
+                    ): Boolean {
+                        val url = request.url.toString()
+                        // Keep daemon.page URLs in WebView, open others externally
+                        return if (url.contains("daemon.page")) {
+                            false
+                        } else {
+                            context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+                            true
+                        }
+                    }
+                }
+
+                loadUrl("https://my.daemon.page/chat")
+            }
+        }
+    )
 }

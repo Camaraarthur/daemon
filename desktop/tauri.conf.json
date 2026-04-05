@@ -29,7 +29,7 @@
       "tooltip": "daemon"
     },
     "security": {
-      "csp": "default-src 'self' https://my.daemon.page wss://my.daemon.page https://fonts.googleapis.com https://fonts.gstatic.com; script-src 'self' 'unsafe-inline' https://my.daemon.page; style-src 'self' 'unsafe-inline' https://my.daemon.page https://fonts.googleapis.com; img-src 'self' data: https://my.daemon.page; connect-src 'self' https://my.daemon.page wss://my.daemon.page http://localhost:* ws://localhost:*; frame-src https://my.daemon.page http://localhost:4800"
+      "csp": "default-src * 'unsafe-inline' 'unsafe-eval' data: blob:; script-src * 'unsafe-inline' 'unsafe-eval'; style-src * 'unsafe-inline'; img-src * data: blob:; connect-src * wss: ws:; frame-src *"
     }
   },
   "bundle": {

@@ -55,6 +55,26 @@ class DaemonService : Service() {
         const val MAX_BACKOFF_MS = 60_000L
         const val BACKOFF_MULTIPLIER = 2.0
         const val JITTER_FACTOR = 0.3
+
+        // Static instance for clipboard broadcast from other components
+        @Volatile
+        var instance: DaemonService? = null
+            private set
+    }
+
+    /**
+     * Broadcast text to all other devices' clipboards via the WebSocket.
+     */
+    fun broadcastClipboard(text: String) {
+        val msg = JSONObject().apply {
+            put("type", "clipboard_update")
+            put("content", text)
+            put("source_device", Build.MODEL)
+            put("timestamp", System.currentTimeMillis())
+        }
+        lastClipboard = text // Prevent echo back
+        webSocket?.send(msg.toString())
+        Log.d(TAG, "Clipboard broadcast: ${text.take(40)}...")
     }
 
     private var webSocket: WebSocket? = null
@@ -89,6 +109,7 @@ class DaemonService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        instance = this
         createNotificationChannel()
         detectCapabilities()
         setupNetworkListener()
@@ -123,6 +144,7 @@ class DaemonService : Service() {
 
     override fun onDestroy() {
         Log.d(TAG, "Service destroyed, scheduling restart")
+        instance = null
         teardownNetworkListener()
         releaseWakeLock()
         restartSelf()
