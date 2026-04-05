@@ -65,7 +65,7 @@ function getUserSubdomain(host: string): string | null {
   }
   if (!sub) return null
   // Filter out reserved subdomains
-  if (['www', 'my', 'api', 'app', 'admin', 'daemon', 'test'].includes(sub)) return null
+  if (['www', 'api', 'app', 'admin', 'daemon', 'test'].includes(sub)) return null
   // Validate format
   if (!/^[a-z0-9_-]+$/.test(sub)) return null
   return sub
