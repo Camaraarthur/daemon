@@ -466,6 +466,18 @@ function AuthedChat({ user }: { user: any }) {
             )}
           </div>
           <div className="flex items-center gap-2">
+            {/* Connect Device button */}
+            <a
+              href="/download"
+              className="hidden sm:flex items-center gap-1 px-2 py-1 rounded-full bg-[#1a1a1a] border border-[#282828] hover:border-[#ff0505]/40 transition-colors"
+              title="Connect a new device"
+            >
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#888" strokeWidth="2">
+                <line x1="12" y1="5" x2="12" y2="19" />
+                <line x1="5" y1="12" x2="19" y2="12" />
+              </svg>
+              <span className="text-[11px] text-[#888] font-medium">Device</span>
+            </a>
             {/* Model picker pill */}
             <div className="relative">
               <button

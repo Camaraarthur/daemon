@@ -189,6 +189,10 @@ function runMigrations(db: Database.Database) {
       CREATE INDEX IF NOT EXISTS idx_device_tokens_hash ON device_tokens(token_hash);
       CREATE INDEX IF NOT EXISTS idx_device_tokens_user ON device_tokens(user_id);
     `],
+    ['012_session_expiry', `
+      ALTER TABLE sessions ADD COLUMN expires_at TEXT;
+      UPDATE sessions SET expires_at = datetime(created_at, '+30 days') WHERE expires_at IS NULL;
+    `],
   ]
 
   const insertMigration = db.prepare('INSERT INTO migrations (name, applied_at) VALUES (?, datetime(\'now\'))')

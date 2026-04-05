@@ -61,6 +61,41 @@ const PORT = 4801
 const PING_INTERVAL = 15_000
 const PONG_TIMEOUT = 10_000
 
+// ── Command Validation ──────────────────────────────────
+const ALLOWED_COMMAND_TYPES = new Set([
+  'run_command', 'get_device_info', 'list_files', 'read_file',
+  'receive_file', 'ping', 'clipboard_update',
+])
+const MAX_COMMAND_LENGTH = 10_000  // 10K chars
+const MAX_FILE_SIZE = 10 * 1024 * 1024  // 10MB
+
+function validateCommand(command) {
+  if (!command || typeof command !== 'object') {
+    return 'Command must be a JSON object'
+  }
+  if (!command.type || !ALLOWED_COMMAND_TYPES.has(command.type)) {
+    return `Invalid command type "${command.type}". Allowed: ${[...ALLOWED_COMMAND_TYPES].join(', ')}`
+  }
+  // Check overall size
+  const serialized = JSON.stringify(command)
+  if (serialized.length > MAX_COMMAND_LENGTH) {
+    return `Command too large (${serialized.length} chars, max ${MAX_COMMAND_LENGTH})`
+  }
+  // Log run_command for audit trail
+  if (command.type === 'run_command' && command.command) {
+    console.log(`[ws] AUDIT run_command: ${String(command.command).slice(0, 200)}`)
+  }
+  // Check file size for receive_file
+  if (command.type === 'receive_file' && command.data) {
+    const dataSize = typeof command.data === 'string' ? command.data.length : 0
+    // Base64 is ~33% overhead, so raw size ~ dataSize * 0.75
+    if (dataSize * 0.75 > MAX_FILE_SIZE) {
+      return `File too large (estimated ${Math.round(dataSize * 0.75 / 1024 / 1024)}MB, max 10MB)`
+    }
+  }
+  return null  // valid
+}
+
 const devices = new Map() // deviceId -> { ws, info, capabilities, stats }
 let clipboardHistory = [] // last 50 clipboard entries across all devices
 
@@ -100,6 +135,14 @@ const server = http.createServer((req, res) => {
     req.on('end', () => {
       try {
         const { device_id, command, user_id: requestUserId } = JSON.parse(body)
+
+        // Validate command before forwarding to device
+        const validationError = validateCommand(command)
+        if (validationError) {
+          res.writeHead(400, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify({ error: validationError }))
+          return
+        }
 
         // Find device by exact ID or fuzzy match
         let device = devices.get(device_id)

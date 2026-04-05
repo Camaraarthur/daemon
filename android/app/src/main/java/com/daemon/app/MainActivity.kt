@@ -45,7 +45,12 @@ class MainActivity : ComponentActivity() {
 
     private val permissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
-    ) { _ -> startDaemonService() }
+    ) { results ->
+        // Only start service if at least audio permission was granted
+        if (results[Manifest.permission.RECORD_AUDIO] == true) {
+            startDaemonService()
+        }
+    }
 
     private fun requestBatteryOptimizationExemption() {
         val pm = getSystemService(android.content.Context.POWER_SERVICE) as android.os.PowerManager
@@ -95,18 +100,17 @@ class MainActivity : ComponentActivity() {
 
             var showVoice by remember { mutableStateOf(false) }
 
-            if (token == null) {
-                LoginScreen(onLogin = { t ->
+            // Always show WebView — login happens inside via web UI (supports Google OAuth)
+            // If we have a token, pass it for cookie auth. If not, the web UI redirects to /login.
+            DaemonWebView(
+                token = token,
+                onConnectDevice = { requestPermissionsAndStart() },
+                onTokenReceived = { t ->
                     token = t
                     prefs.edit().putString("token", t).apply()
-                })
-            } else {
-                // WebView-based UI — loads the full web app with projects, memory, slash commands
-                DaemonWebView(token = token!!)
-            }
+                }
+            )
         }
-
-        requestPermissionsAndStart()
     }
 
     private fun requestPermissionsAndStart() {
@@ -427,7 +431,7 @@ fun LoginScreen(onLogin: (String) -> Unit) {
 }
 
 @Composable
-fun DaemonWebView(token: String) {
+fun DaemonWebView(token: String?, onConnectDevice: () -> Unit = {}, onTokenReceived: (String) -> Unit = {}) {
     AndroidView(
         modifier = Modifier
             .fillMaxSize()
@@ -437,11 +441,14 @@ fun DaemonWebView(token: String) {
                 // Dark background to prevent white flash
                 setBackgroundColor(android.graphics.Color.parseColor("#0a0a0a"))
 
-                // Set cookie for auth
+                // Set cookie for auth if we have a token
                 val cookieManager = CookieManager.getInstance()
                 cookieManager.setAcceptCookie(true)
-                cookieManager.setCookie("https://my.daemon.page", "daemon_token=$token; path=/; secure")
-                cookieManager.flush()
+                cookieManager.setAcceptThirdPartyCookies(this, true)
+                if (token != null) {
+                    cookieManager.setCookie("https://my.daemon.page", "daemon_token=$token; path=/; secure")
+                    cookieManager.flush()
+                }
 
                 settings.apply {
                     javaScriptEnabled = true
@@ -457,6 +464,21 @@ fun DaemonWebView(token: String) {
                     useWideViewPort = true
                     loadWithOverviewMode = true
                 }
+
+                // JavaScript interface so the web UI can trigger device bridge connection
+                addJavascriptInterface(object {
+                    @android.webkit.JavascriptInterface
+                    fun connectDevice() {
+                        (context as? android.app.Activity)?.runOnUiThread {
+                            onConnectDevice()
+                        }
+                    }
+
+                    @android.webkit.JavascriptInterface
+                    fun isDeviceConnected(): Boolean {
+                        return DaemonService.instance != null
+                    }
+                }, "DaemonBridge")
 
                 webViewClient = object : WebViewClient() {
                     override fun shouldOverrideUrlLoading(
@@ -474,15 +496,37 @@ fun DaemonWebView(token: String) {
 
                     override fun onPageFinished(view: WebView?, url: String?) {
                         super.onPageFinished(view, url)
-                        // Inject dark background CSS to prevent any white flashes
-                        view?.evaluateJavascript(
-                            "document.body.style.backgroundColor='#0a0a0a';document.documentElement.style.backgroundColor='#0a0a0a';",
-                            null
-                        )
+                        // Check if user logged in (cookie set by web UI)
+                        val cookies = CookieManager.getInstance().getCookie("https://my.daemon.page") ?: ""
+                        val tokenMatch = Regex("daemon_token=([a-f0-9]+)").find(cookies)
+                        if (tokenMatch != null && token == null) {
+                            (context as? android.app.Activity)?.runOnUiThread {
+                                onTokenReceived(tokenMatch.groupValues[1])
+                            }
+                        }
+                        // Inject dark background CSS and "Connect device" button for the native bridge
+                        view?.evaluateJavascript("""
+                            document.body.style.backgroundColor='#0a0a0a';
+                            document.documentElement.style.backgroundColor='#0a0a0a';
+                            if (window.DaemonBridge && !document.getElementById('daemon-connect-btn')) {
+                                var btn = document.createElement('button');
+                                btn.id = 'daemon-connect-btn';
+                                btn.textContent = window.DaemonBridge.isDeviceConnected() ? '✓ Device connected' : 'Connect device';
+                                btn.style.cssText = 'position:fixed;bottom:80px;right:16px;z-index:9999;background:#e63946;color:#fff;border:none;padding:8px 16px;border-radius:20px;font-size:13px;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,0.3);';
+                                btn.onclick = function() {
+                                    window.DaemonBridge.connectDevice();
+                                    btn.textContent = 'Connecting...';
+                                    setTimeout(function() {
+                                        btn.textContent = window.DaemonBridge.isDeviceConnected() ? '✓ Device connected' : 'Connect device';
+                                    }, 3000);
+                                };
+                                document.body.appendChild(btn);
+                            }
+                        """.trimIndent(), null)
                     }
                 }
 
-                loadUrl("https://my.daemon.page/chat")
+                loadUrl(if (token != null) "https://my.daemon.page/chat" else "https://my.daemon.page/login")
             }
         }
     )

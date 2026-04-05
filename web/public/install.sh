@@ -65,7 +65,13 @@ if [[ ":$PATH:" != *":$DAEMON_DIR:"* ]]; then
     fi
 fi
 
-echo "🚀 Quick start:"
+echo "✅ Installed! Now pair your device:"
+echo ""
+echo "   1. Go to https://daemon.page and sign in"
+echo "   2. Click \"Connect Device\" to get a pairing code"
+echo "   3. Run: daemon pair <CODE>"
+echo ""
+echo "Or run daemon directly:"
 echo "   daemon                    # Run in foreground"
 echo "   daemon --install          # Install as background service (auto-starts on login)"
 echo "   daemon --name='My Mac'    # Set device name"

@@ -12,6 +12,56 @@ import { calculateCost, detectProvider } from '@/lib/billing'
 
 const execFileAsync = promisify(execFile)
 
+// ── Input Sanitization ────────────────────────────────────
+const TOKEN_REGEX = /^[a-zA-Z0-9]+$/
+
+function sanitizeToken(token: string): string {
+  if (!TOKEN_REGEX.test(token)) {
+    throw new Error('Invalid token format')
+  }
+  return token
+}
+
+// ── Rate Limiting ─────────────────────────────────────────
+const RATE_LIMIT_FREE = 50    // messages per day
+const RATE_LIMIT_PAID = 500   // messages per day
+
+interface RateLimitEntry {
+  count: number
+  resetAt: number  // epoch ms
+}
+
+const rateLimits = new Map<string, RateLimitEntry>()
+
+// Reset all counters daily at midnight
+setInterval(() => {
+  const now = Date.now()
+  for (const [key, entry] of rateLimits) {
+    if (now >= entry.resetAt) {
+      rateLimits.delete(key)
+    }
+  }
+}, 60_000) // cleanup every minute
+
+function checkRateLimit(userId: string, tier: ModelTier): { allowed: boolean; remaining: number } {
+  const limit = tier === 'free' ? RATE_LIMIT_FREE : RATE_LIMIT_PAID
+  const now = Date.now()
+
+  let entry = rateLimits.get(userId)
+  if (!entry || now >= entry.resetAt) {
+    // Reset: next midnight UTC
+    const tomorrow = new Date()
+    tomorrow.setUTCHours(24, 0, 0, 0)
+    entry = { count: 0, resetAt: tomorrow.getTime() }
+    rateLimits.set(userId, entry)
+  }
+
+  entry.count++
+  const remaining = Math.max(0, limit - entry.count)
+
+  return { allowed: entry.count <= limit, remaining }
+}
+
 const DAEMON_ROOT = join(process.cwd(), '..')
 const CONFIG_DIR = join(DAEMON_ROOT, 'config')
 const SOUL_PATH = join(DAEMON_ROOT, 'SOUL.md')
@@ -66,13 +116,29 @@ ${memoryBlock}
 
 async function getKnowledgeContext(message: string): Promise<string> {
   try {
-    const { stdout } = await execFileAsync(VENV_PYTHON, [
+    // Pass message via stdin to avoid shell injection through env vars
+    const safeMessage = message.slice(0, 500)
+    const child = spawn(VENV_PYTHON, [
       '-c',
-      `import sys,os; sys.path.insert(0, os.environ["DAEMON_SERVER"])
+      `import sys,os,json; sys.path.insert(0, os.environ["DAEMON_SERVER"])
 from knowledge import build_knowledge_context
-print(build_knowledge_context(os.environ["QUERY_MSG"], limit=5))`,
-    ], { timeout: 15000, env: { ...process.env, PYTHONPATH: join(DAEMON_ROOT, 'server'), DAEMON_SERVER: join(DAEMON_ROOT, 'server'), QUERY_MSG: message.slice(0, 500) } })
-    return stdout.trim()
+query = sys.stdin.read()
+print(build_knowledge_context(query, limit=5))`,
+    ], {
+      stdio: ['pipe', 'pipe', 'pipe'],
+      timeout: 15000,
+      env: { ...process.env, PYTHONPATH: join(DAEMON_ROOT, 'server'), DAEMON_SERVER: join(DAEMON_ROOT, 'server') },
+    })
+    child.stdin.write(safeMessage)
+    child.stdin.end()
+
+    return new Promise((resolve) => {
+      let stdout = ''
+      child.stdout.on('data', (d) => { stdout += d.toString() })
+      child.on('close', () => resolve(stdout.trim()))
+      child.on('error', () => resolve(''))
+      setTimeout(() => { try { child.kill() } catch {} resolve('') }, 15000)
+    })
   } catch {
     return ''
   }
@@ -80,12 +146,21 @@ print(build_knowledge_context(os.environ["QUERY_MSG"], limit=5))`,
 
 async function storeKnowledge(userMsg: string, daemonMsg: string) {
   try {
-    execFileAsync(VENV_PYTHON, [
+    // Pass messages via stdin as JSON to avoid shell injection through env vars
+    const payload = JSON.stringify({ user: userMsg.slice(0, 300), daemon: daemonMsg.slice(0, 300) })
+    const child = spawn(VENV_PYTHON, [
       '-c',
-      `import sys,os; sys.path.insert(0, os.environ["DAEMON_SERVER"])
+      `import sys,os,json; sys.path.insert(0, os.environ["DAEMON_SERVER"])
 from memory import store_conversation_turn
-store_conversation_turn(os.environ["USER_MSG"], os.environ["DAEMON_MSG"])`,
-    ], { timeout: 15000, env: { ...process.env, PYTHONPATH: join(DAEMON_ROOT, 'server'), DAEMON_SERVER: join(DAEMON_ROOT, 'server'), USER_MSG: userMsg.slice(0, 300), DAEMON_MSG: daemonMsg.slice(0, 300) } })
+data = json.loads(sys.stdin.read())
+store_conversation_turn(data["user"], data["daemon"])`,
+    ], {
+      stdio: ['pipe', 'pipe', 'pipe'],
+      timeout: 15000,
+      env: { ...process.env, PYTHONPATH: join(DAEMON_ROOT, 'server'), DAEMON_SERVER: join(DAEMON_ROOT, 'server') },
+    })
+    child.stdin.write(payload)
+    child.stdin.end()
   } catch {
     // Non-critical
   }
@@ -93,17 +168,36 @@ store_conversation_turn(os.environ["USER_MSG"], os.environ["DAEMON_MSG"])`,
 
 async function getUserTier(token: string): Promise<{ tier: ModelTier; email: string; userId: string }> {
   try {
-    const { stdout } = await execFileAsync(VENV_PYTHON, ['-c', `
+    // Validate token is alphanumeric (hex from secrets.token_hex)
+    const safeToken = sanitizeToken(token)
+    // Pass token via stdin to avoid env var injection
+    const child = spawn(VENV_PYTHON, ['-c', `
 import sys,json,os; sys.path.insert(0,os.environ["DAEMON_SERVER"])
 from users import get_user_by_token
-u=get_user_by_token(os.environ["AUTH_TOKEN"])
+token = sys.stdin.read().strip()
+u=get_user_by_token(token)
 if u:
-    import json as j
-    settings = j.loads(u.get("settings","{}") or "{}")
-    print(j.dumps({"ok":True,"email":u["email"],"tier":settings.get("model_tier","free"),"userId":str(u["id"])}))
+    settings = json.loads(u.get("settings","{}") or "{}")
+    print(json.dumps({"ok":True,"email":u["email"],"tier":settings.get("model_tier","free"),"userId":str(u["id"])}))
 else:
-    print(j.dumps({"ok":False}))
-`], { timeout: 3000, env: { ...process.env, PYTHONPATH: join(DAEMON_ROOT, 'server'), DAEMON_SERVER: join(DAEMON_ROOT, 'server'), AUTH_TOKEN: token } })
+    print(json.dumps({"ok":False}))
+`], {
+      stdio: ['pipe', 'pipe', 'pipe'],
+      timeout: 3000,
+      env: { ...process.env, PYTHONPATH: join(DAEMON_ROOT, 'server'), DAEMON_SERVER: join(DAEMON_ROOT, 'server') },
+    })
+    child.stdin.write(safeToken)
+    child.stdin.end()
+
+    const stdout = await new Promise<string>((resolve, reject) => {
+      let out = ''
+      child.stdout.on('data', (d) => { out += d.toString() })
+      child.on('close', (code) => {
+        if (code === 0 || out.trim()) resolve(out)
+        else reject(new Error(`Python exited with code ${code}`))
+      })
+      child.on('error', reject)
+    })
     const result = JSON.parse(stdout.trim())
     if (!result.ok) throw new Error('Invalid token')
     // Arthur (tutucamara@gmail.com) always gets premium
@@ -327,6 +421,15 @@ export async function POST(req: NextRequest) {
 
     if (!message) {
       return NextResponse.json({ error: 'No message provided' }, { status: 400 })
+    }
+
+    // Rate limiting
+    const { allowed, remaining } = checkRateLimit(userId, tier)
+    if (!allowed) {
+      return NextResponse.json(
+        { error: 'Rate limit exceeded. Try again tomorrow.', limit: tier === 'free' ? RATE_LIMIT_FREE : RATE_LIMIT_PAID },
+        { status: 429, headers: { 'X-RateLimit-Remaining': '0', 'Retry-After': '86400' } }
+      )
     }
 
     const effectiveTier: ModelTier = modelOverride && ['free', 'mid', 'premium'].includes(modelOverride)

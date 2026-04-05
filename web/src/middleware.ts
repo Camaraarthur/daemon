@@ -7,6 +7,7 @@ const PUBLIC_ROUTES = [
   '/canvas',     // Canvas iframe (embedded in public page)
   '/login',      // Google OAuth login page
   '/apk',        // APK download
+  '/download',    // Download + pairing page
   '/logos',       // Logo gallery
   '/creature.html', // Creature generator
   '/live.html',  // Live sensor page
@@ -17,6 +18,7 @@ const PUBLIC_ROUTES = [
   '/app-icon.png',
   '/manifest.json',
   '/daemon.apk',
+  '/daemon-desktop.exe',
   '/watch.apk',
 ]
 
