@@ -20,6 +20,20 @@ body {
   overflow-x: hidden;
 }
 
+/* Use dynamic viewport height where supported (avoids keyboard hiding input) */
+@supports (height: 100dvh) {
+  .chat-container { height: 100dvh; }
+}
+
+/* Touch-friendly tap targets */
+.tap-target {
+  min-width: 44px;
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);

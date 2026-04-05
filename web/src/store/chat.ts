@@ -15,6 +15,7 @@ export interface Message {
   isStreaming?: boolean
   toolCalls?: ToolCallData[]
   model?: string
+  isError?: boolean
 }
 
 export interface ChatThread {

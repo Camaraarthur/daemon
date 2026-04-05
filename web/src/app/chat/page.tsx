@@ -74,7 +74,7 @@ function MicButton({ onTranscript }: { onTranscript: (text: string) => void }) {
   return (
     <button
       onClick={toggle}
-      className={`p-2.5 rounded-full transition-colors shrink-0 ${
+      className={`p-2.5 min-w-[44px] min-h-[44px] flex items-center justify-center rounded-full transition-colors shrink-0 ${
         listening
           ? 'bg-[#ff0505] text-white animate-pulse'
           : 'bg-[#1a1a1a] text-[#888] hover:text-[#ff0505] border border-[#282828]'
@@ -193,8 +193,11 @@ function AuthedChat({ user }: { user: any }) {
   // Load model preference
   useEffect(() => {
     fetch('/api/settings')
-      .then(r => r.json())
-      .then(d => { if (d.model) setCurrentModel(d.model) })
+      .then(r => {
+        if (r.status === 401) { window.location.href = '/login'; return null }
+        return r.json()
+      })
+      .then(d => { if (d?.model) setCurrentModel(d.model) })
       .catch(() => {})
   }, [])
 
@@ -342,93 +345,134 @@ function AuthedChat({ user }: { user: any }) {
     setProcessing(true)
     setStatusText('Thinking...')
 
-    try {
-      const res = await fetch('/api/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: actualMessage, threadId: tid, stream: true }),
-      })
+    const MAX_RETRIES = 2
+    let retryCount = 0
 
-      if (!res.ok) {
-        const errData = await res.json().catch(() => ({ error: 'Request failed' }))
-        updateLastDaemon(tid!, { content: errData.error || 'Request failed', isStreaming: false })
-        return
-      }
+    const attemptSend = async (): Promise<void> => {
+      try {
+        const res = await fetch('/api/chat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ message: actualMessage, threadId: tid, stream: true }),
+        })
 
-      const reader = res.body?.getReader()
-      if (!reader) {
-        updateLastDaemon(tid!, { content: 'No response body', isStreaming: false })
-        return
-      }
+        // Auth expiry — redirect to login
+        if (res.status === 401) {
+          updateLastDaemon(tid!, {
+            content: 'Session expired. Redirecting to login...',
+            isStreaming: false,
+            isError: true,
+          })
+          setTimeout(() => { window.location.href = '/login' }, 1500)
+          return
+        }
 
-      const decoder = new TextDecoder()
-      let buffer = ''
+        if (!res.ok) {
+          const errData = await res.json().catch(() => ({ error: 'Request failed' }))
+          const friendlyMsg = res.status === 429
+            ? 'Rate limit reached. Please try again later.'
+            : res.status >= 500
+              ? 'The AI service is temporarily unavailable. Please try again in a moment.'
+              : errData.error || 'Something went wrong. Please try again.'
+          updateLastDaemon(tid!, { content: friendlyMsg, isStreaming: false, isError: true })
+          return
+        }
 
-      while (true) {
-        const { done, value } = await reader.read()
-        if (done) break
+        const reader = res.body?.getReader()
+        if (!reader) {
+          updateLastDaemon(tid!, { content: 'No response received from server.', isStreaming: false, isError: true })
+          return
+        }
 
-        buffer += decoder.decode(value, { stream: true })
-        const lines = buffer.split('\n\n')
-        buffer = lines.pop() || ''
+        const decoder = new TextDecoder()
+        let buffer = ''
 
-        for (const chunk of lines) {
-          if (!chunk.startsWith('data: ')) continue
-          const payload = chunk.slice(6).trim()
-          if (!payload) continue
+        while (true) {
+          const { done, value } = await reader.read()
+          if (done) break
 
-          try {
-            const event = JSON.parse(payload)
-            switch (event.type) {
-              case 'thinking':
-                setStatusText(event.data.text || 'Thinking...')
-                break
-              case 'text':
-                appendToLastDaemon(tid!, event.data.text || '')
-                break
-              case 'tool_call':
-                setStatusText(event.data.name || 'Running tool...')
-                addToolCallToLastDaemon(tid!, {
-                  id: event.data.id,
-                  name: event.data.name,
-                  args: event.data.args || {},
-                })
-                break
-              case 'tool_result':
-                updateToolCallResult(tid!, event.data.id, event.data.output || '')
-                setStatusText('Thinking...')
-                break
-              case 'done':
-                if (event.data.response) {
-                  updateLastDaemon(tid!, {
-                    content: event.data.response,
-                    model: event.data.model,
-                    isStreaming: false,
+          buffer += decoder.decode(value, { stream: true })
+          const lines = buffer.split('\n\n')
+          buffer = lines.pop() || ''
+
+          for (const chunk of lines) {
+            if (!chunk.startsWith('data: ')) continue
+            const payload = chunk.slice(6).trim()
+            if (!payload) continue
+
+            try {
+              const event = JSON.parse(payload)
+              switch (event.type) {
+                case 'thinking':
+                  setStatusText(event.data.text || 'Thinking...')
+                  break
+                case 'text':
+                  appendToLastDaemon(tid!, event.data.text || '')
+                  break
+                case 'tool_call':
+                  setStatusText(event.data.name || 'Running tool...')
+                  addToolCallToLastDaemon(tid!, {
+                    id: event.data.id,
+                    name: event.data.name,
+                    args: event.data.args || {},
                   })
-                } else {
-                  updateLastDaemon(tid!, { isStreaming: false })
+                  break
+                case 'tool_result':
+                  updateToolCallResult(tid!, event.data.id, event.data.output || '')
+                  setStatusText('Thinking...')
+                  break
+                case 'done':
+                  if (event.data.response) {
+                    updateLastDaemon(tid!, {
+                      content: event.data.response,
+                      model: event.data.model,
+                      isStreaming: false,
+                    })
+                  } else {
+                    updateLastDaemon(tid!, { isStreaming: false })
+                  }
+                  break
+                case 'error': {
+                  // Check if it's a device disconnection error
+                  const errMsg = event.data.message || 'An error occurred'
+                  const isDeviceError = /disconnect|device.*lost|connection.*reset|timed?\s*out/i.test(errMsg)
+                  updateLastDaemon(tid!, {
+                    content: isDeviceError
+                      ? 'Device disconnected. Attempting to reconnect...'
+                      : `Something went wrong: ${errMsg}`,
+                    isStreaming: false,
+                    isError: true,
+                  })
+                  break
                 }
-                break
-              case 'error':
-                updateLastDaemon(tid!, {
-                  content: event.data.message || 'An error occurred',
-                  isStreaming: false,
-                })
-                break
+              }
+            } catch {
+              // Skip malformed SSE events
             }
-          } catch {
-            // Skip malformed SSE events
           }
         }
+
+        updateLastDaemon(tid!, { isStreaming: false })
+
+      } catch (err) {
+        // Network error — auto-retry with backoff
+        if (retryCount < MAX_RETRIES) {
+          retryCount++
+          setStatusText(`Connection lost — retrying (${retryCount}/${MAX_RETRIES})...`)
+          await new Promise(resolve => setTimeout(resolve, 5000))
+          return attemptSend()
+        }
+
+        updateLastDaemon(tid!, {
+          content: 'Connection lost. Please check your network and try again.',
+          isStreaming: false,
+          isError: true,
+        })
       }
+    }
 
-      updateLastDaemon(tid!, { isStreaming: false })
-
-    } catch (err) {
-      updateLastDaemon(tid!, {
-        content: `Connection error: ${err}`,
-        isStreaming: false,
-      })
+    try {
+      await attemptSend()
     } finally {
       setProcessing(false)
       setStatusText('')
@@ -437,14 +481,24 @@ function AuthedChat({ user }: { user: any }) {
   }, [inputDraft, isProcessing, chatActiveThreadId, createChatThread, addMessage, appendToLastDaemon, addToolCallToLastDaemon, updateToolCallResult, updateLastDaemon, setInputDraft, setProcessing])
 
   return (
-    <div className="flex bg-[#0a0a0a] text-[#bfbfbf]" style={{ height: '100dvh', minHeight: '-webkit-fill-available' }}>
-      {/* Left sidebar — projects + devices */}
-      <div className={`${showSidebar ? 'fixed inset-0 z-50 flex' : 'hidden'} sm:relative sm:flex sm:inset-auto sm:z-auto`}>
-        <div className="w-64 border-r border-[#222] shrink-0">
+    <div className="flex bg-[#0a0a0a] text-[#bfbfbf] chat-container" style={{ height: '100dvh', minHeight: '-webkit-fill-available' }}>
+      {/* Left sidebar — projects + devices (mobile: overlay with slide-in animation) */}
+      <div
+        className={`${showSidebar ? 'fixed inset-0 z-50 flex' : 'hidden'} sm:relative sm:flex sm:inset-auto sm:z-auto`}
+      >
+        <div
+          className={`w-64 border-r border-[#222] shrink-0 bg-[#111] transition-transform duration-200 ease-out ${
+            showSidebar ? 'translate-x-0' : '-translate-x-full sm:translate-x-0'
+          }`}
+        >
           <ProjectSidebar onClose={() => setShowSidebar(false)} />
         </div>
-        {/* Mobile backdrop */}
-        <div className="flex-1 bg-black/50 sm:hidden" onClick={() => setShowSidebar(false)} />
+        {/* Mobile backdrop — tap to dismiss */}
+        <div
+          className="flex-1 bg-black/50 sm:hidden"
+          onClick={() => setShowSidebar(false)}
+          onTouchStart={() => setShowSidebar(false)}
+        />
       </div>
 
       {/* Main chat area */}
@@ -452,7 +506,7 @@ function AuthedChat({ user }: { user: any }) {
         {/* Header */}
         <div className="h-12 border-b border-[#222] flex items-center justify-between px-3 bg-[#111] shrink-0">
           <div className="flex items-center gap-3">
-            <button onClick={() => setShowSidebar(!showSidebar)} className="p-1 sm:hidden">
+            <button onClick={() => setShowSidebar(!showSidebar)} className="tap-target sm:hidden">
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#666" strokeWidth="2"><path d="M3 12h18M3 6h18M3 18h18"/></svg>
             </button>
             <Image src="/brand/favicon.png" alt="daemon" width={20} height={20} />
@@ -482,7 +536,7 @@ function AuthedChat({ user }: { user: any }) {
             <div className="relative">
               <button
                 onClick={() => setShowModelPicker(!showModelPicker)}
-                className="flex items-center gap-1 px-2 py-1 rounded-full bg-[#1a1a1a] border border-[#282828] hover:border-[#444] transition-colors"
+                className="flex items-center gap-1 px-3 py-2 min-h-[44px] rounded-full bg-[#1a1a1a] border border-[#282828] hover:border-[#444] transition-colors"
               >
                 <span className="text-[11px] text-[#888] font-medium">{MODEL_SHORT_NAMES[currentModel] || currentModel}</span>
                 <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#666" strokeWidth="2.5"><path d="m6 9 6 6 6-6"/></svg>
@@ -495,7 +549,7 @@ function AuthedChat({ user }: { user: any }) {
                       <button
                         key={m.id}
                         onClick={() => switchModel(m.id)}
-                        className={`w-full text-left px-3 py-2 flex items-center justify-between hover:bg-[#222] transition-colors ${
+                        className={`w-full text-left px-3 py-3 min-h-[44px] flex items-center justify-between hover:bg-[#222] transition-colors ${
                           m.id === currentModel ? 'bg-[#ff0505]/5' : ''
                         }`}
                       >
@@ -514,7 +568,7 @@ function AuthedChat({ user }: { user: any }) {
               )}
             </div>
             {/* Settings gear */}
-            <a href="/settings" className="p-1 text-[#555] hover:text-[#888] transition-colors">
+            <a href="/settings" className="tap-target text-[#555] hover:text-[#888] transition-colors">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                 <circle cx="12" cy="12" r="3"/>
                 <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>
@@ -543,7 +597,13 @@ function AuthedChat({ user }: { user: any }) {
                   </div>
                 )}
                 <Image src="/favicon.png" alt="daemon" width={48} height={48} className="mx-auto mb-3 opacity-30" />
-                <p className="text-xs text-[#555]">{activeProjectId ? `start working on ${activeProjectName || 'this project'}` : 'select a project or start chatting'}</p>
+                <p className="text-xs text-[#555]">
+                  {activeProjectId
+                    ? `start working on ${activeProjectName || 'this project'}`
+                    : projects.length === 0
+                      ? 'Create your first project or connect a device to get started.'
+                      : 'Select a project or start chatting'}
+                </p>
               </div>
             </div>
           ) : (
@@ -586,7 +646,7 @@ function AuthedChat({ user }: { user: any }) {
                           inputRef.current?.focus()
                         }
                       }}
-                      className={`w-full flex items-center gap-3 px-3 py-2 text-left hover:bg-[#1a1a1a] transition-colors ${i === 0 ? '' : 'border-t border-[#222]'}`}
+                      className={`w-full flex items-center gap-3 px-3 py-3 min-h-[44px] text-left hover:bg-[#1a1a1a] transition-colors ${i === 0 ? '' : 'border-t border-[#222]'}`}
                     >
                       <span className="text-sm">{cmd.icon}</span>
                       <div>
@@ -615,7 +675,7 @@ function AuthedChat({ user }: { user: any }) {
               <button
                 onClick={send}
                 disabled={isProcessing || !inputDraft.trim()}
-                className="p-2.5 rounded-full bg-[#ff0505] text-white disabled:opacity-40 hover:bg-[#dd0404] transition-colors shrink-0"
+                className="p-2.5 min-w-[44px] min-h-[44px] flex items-center justify-center rounded-full bg-[#ff0505] text-white disabled:opacity-40 hover:bg-[#dd0404] transition-colors shrink-0"
               >
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="m5 12 7-7 7 7"/><path d="M12 19V5"/></svg>
               </button>

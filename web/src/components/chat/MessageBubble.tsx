@@ -199,9 +199,26 @@ export function MessageBubble({ message, streamingToolCalls }: MessageBubbleProp
   }
 
   // Assistant / daemon message
+  const isErrorMessage = !!(message as any).isError
   return (
     <div className="flex justify-start mb-2.5">
-      <div className="max-w-[85%] sm:max-w-[70%] rounded-2xl px-4 py-2.5 text-[13px] leading-relaxed bg-[#181818] text-[#ddd] border border-[#252525]">
+      <div className={`max-w-[85%] sm:max-w-[70%] rounded-2xl px-4 py-2.5 text-[13px] leading-relaxed border ${
+        isErrorMessage
+          ? 'bg-[#2a1010] text-[#ff8888] border-[#4a2020]'
+          : 'bg-[#181818] text-[#ddd] border-[#252525]'
+      }`}>
+        {/* Error icon for error messages */}
+        {isErrorMessage && (
+          <div className="flex items-center gap-1.5 mb-1.5 text-[#ff6666]">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <circle cx="12" cy="12" r="10"/>
+              <line x1="12" y1="8" x2="12" y2="12"/>
+              <line x1="12" y1="16" x2="12.01" y2="16"/>
+            </svg>
+            <span className="text-[11px] font-medium uppercase tracking-wider">Error</span>
+          </div>
+        )}
+
         {/* Tool calls rendered inline before the text response */}
         {toolCalls.length > 0 && (
           <div className="mb-2">

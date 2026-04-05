@@ -26,6 +26,7 @@ const PUBLIC_API_ROUTES = [
   '/api/auth',       // Login/signup/check — obviously public
   '/api/health',     // Health check — public
   '/api/stream',     // SSE stream (canvas reads this, public)
+  '/api/hosted/',    // Hosted static sites — public (served at subdomains)
   '/ws/',            // WebSocket device connections (proxied to WS server)
 ]
 
@@ -36,6 +37,8 @@ function isPublicRoute(path: string): boolean {
   if (PUBLIC_ROUTES.some(r => r.endsWith('/') && path.startsWith(r))) return true
   // Public API routes
   if (PUBLIC_API_ROUTES.includes(path)) return true
+  // Prefix match for public API routes
+  if (PUBLIC_API_ROUTES.some(r => r.endsWith('/') && path.startsWith(r))) return true
   // Next.js internals
   if (path.startsWith('/_next/')) return true
   if (path.startsWith('/favicon')) return true
@@ -45,6 +48,27 @@ function isPublicRoute(path: string): boolean {
 function isPublicAsset(path: string): boolean {
   const ext = path.split('.').pop()?.toLowerCase()
   return ['png', 'jpg', 'svg', 'ico', 'css', 'js', 'woff', 'woff2', 'json'].includes(ext || '')
+}
+
+/**
+ * Extract subdomain from host header.
+ * Returns the subdomain if it's a user subdomain (e.g., "alice" from "alice.daemon.page"),
+ * or null for root domain, www, my, etc.
+ */
+function getUserSubdomain(host: string): string | null {
+  // Match *.daemon.page (production) or *.localhost:PORT (dev)
+  let sub: string | null = null
+  if (host.endsWith('.daemon.page')) {
+    sub = host.replace('.daemon.page', '')
+  } else if (host.match(/^[^.]+\.localhost(:\d+)?$/)) {
+    sub = host.split('.')[0]
+  }
+  if (!sub) return null
+  // Filter out reserved subdomains
+  if (['www', 'my', 'api', 'app', 'admin', 'daemon', 'test'].includes(sub)) return null
+  // Validate format
+  if (!/^[a-z0-9_-]+$/.test(sub)) return null
+  return sub
 }
 
 export function middleware(request: NextRequest) {
@@ -57,6 +81,28 @@ export function middleware(request: NextRequest) {
       return NextResponse.redirect('https://daemon.page/')
     }
     return NextResponse.next()
+  }
+
+  // ── Subdomain hosted site routing ──────────────────────────
+  // If a user subdomain has a deployed site, rewrite public requests
+  // to the hosted file serving API route.
+  const subdomain = getUserSubdomain(host)
+  if (subdomain) {
+    // These paths are always handled by the Next.js app, not the hosted site
+    const appPaths = ['/chat', '/login', '/settings', '/api/', '/_next/', '/canvas']
+    const isAppPath = appPaths.some(p => path === p || path.startsWith(p + '/') || path.startsWith(p))
+
+    if (!isAppPath) {
+      // For root path (/), let Next.js handle it (shows DaemonPublicPage which
+      // will check for hosted content via client-side fetch).
+      // For all other paths, rewrite to the hosted file serving route.
+      if (path !== '/') {
+        const filePath = path.slice(1) // remove leading /
+        const url = request.nextUrl.clone()
+        url.pathname = `/api/hosted/${subdomain}/${filePath}`
+        return NextResponse.rewrite(url)
+      }
+    }
   }
 
   // Static assets are always public

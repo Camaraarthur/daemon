@@ -70,6 +70,7 @@ export default function Page() {
 // ============================================
 function DaemonPublicPage({ name, isOwner }: { name: string; isOwner: boolean }) {
   const [claimed, setClaimed] = useState<boolean | null>(null)
+  const [hasSite, setHasSite] = useState<boolean | null>(null)
   const [canvasActive, setCanvasActive] = useState(false)
   const [showLogin, setShowLogin] = useState(false)
   const [authMode, setAuthMode] = useState<'login' | 'signup'>('login')
@@ -118,6 +119,11 @@ function DaemonPublicPage({ name, isOwner }: { name: string; isOwner: boolean })
       .then(r => r.json())
       .then(d => setClaimed(d.exists))
       .catch(() => setClaimed(null))
+
+    // Check if this user has a deployed site
+    fetch(`/api/hosted/${name}/index.html`, { method: 'HEAD' })
+      .then(r => setHasSite(r.ok))
+      .catch(() => setHasSite(false))
   }, [name])
 
   // Listen to SSE — show canvas when daemon pushes content, hide on 'clear'
@@ -135,6 +141,38 @@ function DaemonPublicPage({ name, isOwner }: { name: string; isOwner: boolean })
     }
     return () => es.close()
   }, [])
+
+  // If a hosted site exists, show it in a full-page iframe with a thin daemon bar
+  if (hasSite) {
+    return (
+      <div className="h-[100dvh] bg-[#0a0a0a] flex flex-col">
+        {/* Thin daemon bar */}
+        <div className="flex items-center justify-between px-3 py-1.5 bg-[#0a0a0a] border-b border-[#1a1a1a] shrink-0">
+          <div className="flex items-center gap-2">
+            <div className="w-1.5 h-1.5 rounded-full bg-green-500" />
+            <span className="text-[10px] text-[#555]">{name}.daemon.page</span>
+          </div>
+          <div className="flex items-center gap-2">
+            {isOwner && (
+              <a href="/chat" className="text-[9px] px-2 py-1 bg-[#141414] text-[#555] rounded-full border border-[#222] hover:border-[#444] transition-colors">
+                dashboard
+              </a>
+            )}
+            <a href="https://daemon.page" className="text-[9px] text-[#333] hover:text-[#555] transition-colors">
+              daemon
+            </a>
+          </div>
+        </div>
+        {/* Hosted site iframe */}
+        <iframe
+          src={`/api/hosted/${name}/index.html`}
+          className="flex-1 w-full border-0"
+          title={`${name}'s site`}
+          sandbox="allow-scripts allow-same-origin allow-popups allow-forms"
+        />
+      </div>
+    )
+  }
 
   return (
     <div className="min-h-[100dvh] bg-[#0a0a0a] flex flex-col">

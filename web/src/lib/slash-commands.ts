@@ -87,15 +87,34 @@ Be brief — just the facts.`,
   },
   {
     name: 'deploy',
-    description: 'Build and deploy the current project',
+    description: 'Build and deploy to username.daemon.page',
     type: 'prompt',
     icon: '🌐',
-    promptTemplate: `Deploy the current project:
-1. Check what kind of project this is (package.json → npm, requirements.txt → pip, Cargo.toml → cargo, etc.)
-2. Build it
-3. If it has a systemd service, restart it
-4. If it has a domain, verify it's accessible
-5. Report the live URL`,
+    promptTemplate: `Deploy the current project as a static site to the user's daemon.page subdomain.
+
+Steps:
+1. Detect the project type:
+   - If package.json exists with a "build" script: run \`npm run build\` (or equivalent)
+   - For Next.js: output is in \`.next/\` or \`out/\` (use \`next export\` or static export)
+   - For Vite: output is in \`dist/\`
+   - For plain HTML: no build needed, just collect the files
+2. Read the built files from the output directory
+3. POST to /api/deploy with the file contents:
+   - For a single HTML page: \`{ "html": "<html>...</html>" }\`
+   - For multiple files: \`{ "files": { "index.html": "...", "style.css": "...", "script.js": "..." } }\`
+4. The API returns \`{ url, files_count, size_bytes }\`
+5. Report the live URL to the user
+
+Constraints:
+- Static sites only (HTML/CSS/JS). Max 50 MB.
+- The site will be live at {username}.daemon.page
+- If there's no project to deploy, ask the user what they want to deploy
+
+Example API call:
+\`\`\`
+curl -X POST /api/deploy -H "Content-Type: application/json" -d '{"files": {"index.html": "<html><body>Hello!</body></html>"}}'
+\`\`\``,
+    allowedTools: ['bash'],
   },
   {
     name: 'search',
