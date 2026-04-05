@@ -526,9 +526,16 @@ export async function POST(req: NextRequest) {
     }
 
     const { tier, email, userId } = await getUserTier(token)
-    const { message, threadId, modelOverride, stream: wantStream } = await req.json()
 
-    if (!message) {
+    let body: any
+    try {
+      body = await req.json()
+    } catch {
+      return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 })
+    }
+    const { message, threadId, modelOverride, stream: wantStream } = body
+
+    if (!message || typeof message !== 'string') {
       return NextResponse.json({ error: 'No message provided' }, { status: 400 })
     }
 
