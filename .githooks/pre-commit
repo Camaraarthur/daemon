@@ -1,0 +1,37 @@
+#!/bin/bash
+# Pre-commit hook: check for secrets, typecheck changed TS files
+
+echo "Running pre-commit checks..."
+
+REPO_ROOT=$(git rev-parse --show-toplevel)
+
+# 1. Check for leaked secrets in staged files
+STAGED=$(git diff --cached --name-only --diff-filter=ACM)
+if [ -z "$STAGED" ]; then
+  echo "No staged files, skipping."
+  exit 0
+fi
+
+SECRET_HITS=$(echo "$STAGED" | xargs grep -l -E 'sk-[a-zA-Z0-9]{20,}|ghp_[a-zA-Z0-9]{36}|AKIA[A-Z0-9]{16}|gsk_[a-zA-Z0-9]{20,}' 2>/dev/null \
+  | grep -v 'vault\.env\|\.example\|CLAUDE\.md\|\.md$' || true)
+
+if [ -n "$SECRET_HITS" ]; then
+  echo "FAIL: Possible secret detected in staged files:"
+  echo "$SECRET_HITS"
+  exit 1
+fi
+
+# 2. TypeScript check if any .ts/.tsx files changed in web/
+CHANGED_TS=$(echo "$STAGED" | grep -E '^web/.*\.tsx?$' || true)
+if [ -n "$CHANGED_TS" ]; then
+  echo "Checking TypeScript..."
+  cd "$REPO_ROOT/web" && npx tsc --noEmit 2>&1 | tail -10
+  TSC_EXIT=${PIPESTATUS[0]}
+  if [ "$TSC_EXIT" -ne 0 ]; then
+    echo "FAIL: TypeScript errors found"
+    exit 1
+  fi
+  echo "TypeScript OK"
+fi
+
+echo "Pre-commit checks passed"
