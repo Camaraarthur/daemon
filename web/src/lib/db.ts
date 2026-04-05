@@ -158,6 +158,22 @@ function runMigrations(db: Database.Database) {
       ALTER TABLE sessions ADD COLUMN expires_at TEXT;
       UPDATE sessions SET expires_at = datetime(created_at, '+30 days') WHERE expires_at IS NULL;
     `],
+    ['013_trust_ledger', `
+      CREATE TABLE trust_ledger (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL,
+        device_id TEXT,
+        tool_name TEXT NOT NULL,
+        args_hash TEXT,
+        outcome TEXT NOT NULL,
+        user_approved INTEGER DEFAULT 1,
+        duration_ms INTEGER,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        FOREIGN KEY (user_id) REFERENCES users(id)
+      );
+      CREATE INDEX idx_trust_tool ON trust_ledger(user_id, tool_name);
+      CREATE INDEX idx_trust_time ON trust_ledger(user_id, created_at);
+    `],
   ]
 
   const insertMigration = db.prepare('INSERT INTO migrations (name, applied_at) VALUES (?, datetime(\'now\'))')
@@ -614,6 +630,104 @@ export function updateLastSeen(rawToken: string): void {
   getDb().prepare(
     "UPDATE device_tokens SET last_seen = datetime('now') WHERE token_hash = ?"
   ).run(hash)
+}
+
+// ── Trust Ledger ──────────────────────────────────────
+
+export interface TrustAction {
+  id: number
+  user_id: number
+  device_id: string | null
+  tool_name: string
+  args_hash: string | null
+  outcome: string
+  user_approved: number
+  duration_ms: number | null
+  created_at: string
+}
+
+export interface TrustScore {
+  tool_name: string
+  total_runs: number
+  success_rate: number
+  auto_approve_eligible: boolean
+}
+
+/**
+ * Log a tool invocation to the trust ledger.
+ */
+export function logTrustAction(
+  userId: number,
+  toolName: string,
+  argsHash: string | null,
+  outcome: 'success' | 'failure' | 'denied' | 'error',
+  userApproved: boolean,
+  durationMs: number | null,
+  deviceId?: string,
+) {
+  getDb().prepare(`
+    INSERT INTO trust_ledger (user_id, device_id, tool_name, args_hash, outcome, user_approved, duration_ms)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    userId,
+    deviceId || null,
+    toolName,
+    argsHash,
+    outcome,
+    userApproved ? 1 : 0,
+    durationMs,
+  )
+}
+
+/**
+ * Compute the trust score for a specific tool for a user.
+ * Auto-approve eligible if: >10 runs AND >95% success rate AND no 'denied' in last 30 days.
+ */
+export function getTrustScore(userId: number, toolName: string): TrustScore {
+  const db = getDb()
+
+  const stats = db.prepare(`
+    SELECT
+      COUNT(*) as total_runs,
+      COALESCE(SUM(CASE WHEN outcome = 'success' THEN 1 ELSE 0 END), 0) as successes
+    FROM trust_ledger
+    WHERE user_id = ? AND tool_name = ?
+  `).get(userId, toolName) as { total_runs: number; successes: number }
+
+  const totalRuns = stats.total_runs
+  const successRate = totalRuns > 0 ? stats.successes / totalRuns : 0
+
+  // Check for any 'denied' outcome in the last 30 days
+  const recentDenied = db.prepare(`
+    SELECT COUNT(*) as cnt FROM trust_ledger
+    WHERE user_id = ? AND tool_name = ? AND outcome = 'denied'
+      AND created_at >= datetime('now', '-30 days')
+  `).get(userId, toolName) as { cnt: number }
+
+  const autoApproveEligible =
+    totalRuns > 10 &&
+    successRate > 0.95 &&
+    recentDenied.cnt === 0
+
+  return {
+    tool_name: toolName,
+    total_runs: totalRuns,
+    success_rate: Math.round(successRate * 10000) / 10000, // 4 decimal places
+    auto_approve_eligible: autoApproveEligible,
+  }
+}
+
+/**
+ * Get trust scores for all tools a user has invoked.
+ */
+export function getTrustSummary(userId: number): TrustScore[] {
+  const db = getDb()
+
+  const tools = db.prepare(`
+    SELECT DISTINCT tool_name FROM trust_ledger WHERE user_id = ?
+  `).all(userId) as { tool_name: string }[]
+
+  return tools.map(t => getTrustScore(userId, t.tool_name))
 }
 
 export default getDb
