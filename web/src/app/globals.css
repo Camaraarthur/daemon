@@ -1,8 +1,15 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: #0a0a0a;
+  --foreground: #bfbfbf;
+}
+
+/* Prevent white flash and fix viewport in Android WebView */
+html, body {
+  background: #0a0a0a !important;
+  min-height: 100vh;
+  overflow: hidden;
 }
 
 @theme inline {

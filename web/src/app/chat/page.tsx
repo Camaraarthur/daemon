@@ -437,7 +437,7 @@ function AuthedChat({ user }: { user: any }) {
   }, [inputDraft, isProcessing, chatActiveThreadId, createChatThread, addMessage, appendToLastDaemon, addToolCallToLastDaemon, updateToolCallResult, updateLastDaemon, setInputDraft, setProcessing])
 
   return (
-    <div className="flex h-[100dvh] bg-[#0a0a0a] text-[#bfbfbf]">
+    <div className="flex h-screen bg-[#0a0a0a] text-[#bfbfbf]" style={{ height: '100vh', minHeight: '100vh' }}>
       {/* Left sidebar — projects + devices */}
       <div className={`${showSidebar ? 'fixed inset-0 z-50 flex' : 'hidden'} sm:relative sm:flex sm:inset-auto sm:z-auto`}>
         <div className="w-64 border-r border-[#222] shrink-0">
@@ -448,7 +448,7 @@ function AuthedChat({ user }: { user: any }) {
       </div>
 
       {/* Main chat area */}
-      <div className="flex-1 flex flex-col min-w-0">
+      <div className="flex-1 flex flex-col min-w-0 min-h-0 overflow-hidden">
         {/* Header */}
         <div className="h-12 border-b border-[#222] flex items-center justify-between px-3 bg-[#111] shrink-0">
           <div className="flex items-center gap-3">
@@ -515,7 +515,7 @@ function AuthedChat({ user }: { user: any }) {
         <div
           ref={scrollContainerRef}
           onScroll={handleScroll}
-          className="flex-1 overflow-y-auto px-4 py-4"
+          className="flex-1 overflow-y-auto px-4 py-4 min-h-0"
         >
           {loadingHistory ? (
             <div className="flex items-center justify-center h-full">

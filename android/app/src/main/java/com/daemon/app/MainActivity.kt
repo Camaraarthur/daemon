@@ -431,9 +431,12 @@ fun DaemonWebView(token: String) {
     AndroidView(
         modifier = Modifier
             .fillMaxSize()
-            .statusBarsPadding(),
+            .background(Color(0xFF0A0A0A)),
         factory = { context ->
             WebView(context).apply {
+                // Dark background to prevent white flash
+                setBackgroundColor(android.graphics.Color.parseColor("#0a0a0a"))
+
                 // Set cookie for auth
                 val cookieManager = CookieManager.getInstance()
                 cookieManager.setAcceptCookie(true)
@@ -448,7 +451,11 @@ fun DaemonWebView(token: String) {
                     mediaPlaybackRequiresUserGesture = false
                     setSupportMultipleWindows(false)
                     mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
+                    // Mark as mobile app so the web UI can detect it
                     userAgentString = settings.userAgentString + " DaemonApp/1.0"
+                    // Viewport
+                    useWideViewPort = true
+                    loadWithOverviewMode = true
                 }
 
                 webViewClient = object : WebViewClient() {
@@ -457,13 +464,21 @@ fun DaemonWebView(token: String) {
                         request: android.webkit.WebResourceRequest
                     ): Boolean {
                         val url = request.url.toString()
-                        // Keep daemon.page URLs in WebView, open others externally
                         return if (url.contains("daemon.page")) {
                             false
                         } else {
                             context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
                             true
                         }
+                    }
+
+                    override fun onPageFinished(view: WebView?, url: String?) {
+                        super.onPageFinished(view, url)
+                        // Inject dark background CSS to prevent any white flashes
+                        view?.evaluateJavascript(
+                            "document.body.style.backgroundColor='#0a0a0a';document.documentElement.style.backgroundColor='#0a0a0a';",
+                            null
+                        )
                     }
                 }
 
