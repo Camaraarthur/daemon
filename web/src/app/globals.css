@@ -10,7 +10,9 @@ html {
   background: #0a0a0a !important;
   height: 100%;
   height: -webkit-fill-available;
-  overflow: hidden; /* No html-level scrollbars — chat area scrolls internally */
+  overflow: hidden;
+  width: 100%;
+  max-width: 100vw;
 }
 
 body {
@@ -19,6 +21,20 @@ body {
   height: -webkit-fill-available;
   overflow: hidden;
   margin: 0;
+  width: 100%;
+  max-width: 100vw;
+}
+
+/* Force every direct child of body to respect viewport width */
+body > * {
+  max-width: 100vw;
+  overflow-x: hidden;
+}
+
+/* Long URLs/code in messages should wrap, not push width */
+.chat-content, .chat-content * {
+  word-break: break-word;
+  overflow-wrap: anywhere;
 }
 
 /* Dark scrollbars everywhere */

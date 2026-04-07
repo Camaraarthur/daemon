@@ -241,31 +241,39 @@ function AuthedChat({ user }: { user: any }) {
   const chatThread = getActiveThread()
   const displayMessages: Message[] = chatThread?.messages || []
 
-  // Restore project from URL on mount (so refresh keeps you in the right conversation)
+  // Restore project from URL/sessionStorage on mount
+  // Sources: sessionStorage (set by /chat/[name]) > localStorage (last-active) > nothing
   useEffect(() => {
     if (typeof window === 'undefined') return
-    const params = new URLSearchParams(window.location.search)
-    const urlProjectId = params.get('p')
-    if (urlProjectId && !activeProjectId) {
-      const pid = parseInt(urlProjectId, 10)
-      if (!isNaN(pid)) {
-        setActiveProject(pid)
-      }
+    // 1. Pending project from /chat/[name] redirect
+    const pending = sessionStorage.getItem('daemon_pending_project')
+    if (pending) {
+      sessionStorage.removeItem('daemon_pending_project')
+      const pid = parseInt(pending, 10)
+      if (!isNaN(pid)) { setActiveProject(pid); return }
+    }
+    // 2. Last active project (persists across refreshes even on bare /chat)
+    const lastActive = localStorage.getItem('daemon_last_project')
+    if (lastActive) {
+      const pid = parseInt(lastActive, 10)
+      if (!isNaN(pid)) setActiveProject(pid)
     }
   }, []) // run once on mount
 
-  // Sync URL when active project changes (so the page is bookmarkable / refresh-safe)
+  // Sync URL to /chat/{name} when active project changes
   useEffect(() => {
-    if (typeof window === 'undefined') return
-    const url = new URL(window.location.href)
-    if (activeProjectId) {
-      url.searchParams.set('p', String(activeProjectId))
-    } else {
-      url.searchParams.delete('p')
+    if (typeof window === 'undefined' || !activeProjectId) return
+    localStorage.setItem('daemon_last_project', String(activeProjectId))
+    // Find project name → update URL
+    const proj = projects.find(p => p.id === activeProjectId)
+    if (proj) {
+      const slug = encodeURIComponent(proj.name)
+      const newPath = `/chat/${slug}`
+      if (window.location.pathname !== newPath) {
+        window.history.replaceState({}, '', newPath)
+      }
     }
-    // Use replaceState so we don't pollute browser history
-    window.history.replaceState({}, '', url.toString())
-  }, [activeProjectId])
+  }, [activeProjectId, projects])
 
   // Load most recent thread when switching projects
   useEffect(() => {
