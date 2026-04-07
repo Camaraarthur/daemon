@@ -353,7 +353,7 @@ function AuthedChat({ user }: { user: any }) {
         const res = await fetch('/api/chat', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ message: actualMessage, threadId: tid, stream: true }),
+          body: JSON.stringify({ message: actualMessage, threadId: tid, projectId: activeProjectId, stream: true }),
         })
 
         // Auth expiry — redirect to login

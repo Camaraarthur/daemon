@@ -1,143 +1,157 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" width="210mm" height="297mm" viewBox="0 0 210 297">
   <style>
-    text { font-family: Arial, Helvetica, sans-serif; }
+    .lbl { font-family: Arial, Helvetica, sans-serif; font-size: 4px; }
+    .num { font-family: Arial, Helvetica, sans-serif; font-size: 5px; font-weight: bold; }
+    .small { font-family: Arial, Helvetica, sans-serif; font-size: 3px; }
+    .fig { font-family: Arial, Helvetica, sans-serif; font-size: 8px; font-weight: bold; }
   </style>
 
-  <!-- Fig. 2 label -->
-  <text x="105" y="32" text-anchor="middle" font-size="6" font-weight="bold">Fig. 2</text>
-
-  <!-- PCB outline -->
-  <rect x="35" y="45" width="140" height="100" rx="3" ry="3" fill="none" stroke="black" stroke-width="0.7"/>
-  <text x="40" y="53" font-size="2">PCB</text>
+  <!-- Fig label -->
+  <text x="105" y="35" text-anchor="middle" class="fig">Fig. 2</text>
 
   <!-- ============================================ -->
-  <!-- COPPER TRACE (power supply conductor 130) -->
-  <!-- Bold line showing the trace path -->
+  <!-- TOP VIEW (2A): Simplified PCB plan view -->
   <!-- ============================================ -->
 
-  <!-- Power input pad (from connector) -->
-  <rect x="42" y="78" width="8" height="8" fill="none" stroke="black" stroke-width="0.5"/>
-  <circle cx="46" cy="82" r="2" fill="none" stroke="black" stroke-width="0.4"/>
-  <text x="46" y="74" text-anchor="middle" font-size="2">110</text>
-  <text x="46" y="92" text-anchor="middle" font-size="1.5">Power</text>
-  <text x="46" y="95" text-anchor="middle" font-size="1.5">Input Pad</text>
+  <!-- PCB outline with rounded corners -->
+  <rect x="30" y="55" width="150" height="80" rx="4" ry="4"
+        fill="white" stroke="black" stroke-width="0.6"/>
 
-  <!-- Copper trace from power to EMI filter -->
-  <line x1="50" y1="82" x2="62" y2="82" stroke="black" stroke-width="1.5"/>
+  <!-- Power input pad (110) — round pad on left -->
+  <circle cx="42" cy="95" r="3.5" fill="white" stroke="black" stroke-width="0.6"/>
+  <circle cx="42" cy="95" r="1" fill="black" stroke="none"/>
+  <text x="42" y="86" text-anchor="middle" class="num">110</text>
 
-  <!-- EMI filter component footprint (120) -->
-  <rect x="62" y="78" width="14" height="8" fill="none" stroke="black" stroke-width="0.5"/>
-  <text x="69" y="84" text-anchor="middle" font-size="2">120</text>
+  <!-- Copper trace (130) — thick line from power to first component -->
+  <line x1="45.5" y1="95" x2="65" y2="95" stroke="black" stroke-width="2.5"/>
 
-  <!-- Copper trace from EMI to resistor -->
-  <line x1="76" y1="82" x2="90" y2="82" stroke="black" stroke-width="1.5"/>
-  <text x="83" y="79" text-anchor="middle" font-size="1.8">130</text>
+  <!-- Component 1: Resistor R footprint (two SMD pads) -->
+  <rect x="65" y="92" width="3" height="6" fill="black" stroke="black" stroke-width="0.3"/>
+  <rect x="73" y="92" width="3" height="6" fill="black" stroke="black" stroke-width="0.3"/>
+  <rect x="68" y="93.5" width="5" height="3" fill="white" stroke="black" stroke-width="0.4"/>
+  <text x="70.5" y="86" text-anchor="middle" class="lbl">R</text>
 
-  <!-- Resistor footprint (R) -->
-  <rect x="90" y="79" width="10" height="6" fill="none" stroke="black" stroke-width="0.5"/>
-  <!-- SMD pads -->
-  <rect x="89" y="80" width="3" height="4" fill="black" stroke="none" opacity="0.3"/>
-  <rect x="98" y="80" width="3" height="4" fill="black" stroke="none" opacity="0.3"/>
-  <text x="95" y="84" text-anchor="middle" font-size="1.8">R</text>
+  <!-- Trace continues -->
+  <line x1="76" y1="95" x2="92" y2="95" stroke="black" stroke-width="2.5"/>
 
-  <!-- Copper trace from resistor to LED -->
-  <line x1="100" y1="82" x2="115" y2="82" stroke="black" stroke-width="1.5"/>
+  <!-- Component 2: LED indicator (140) — surface mount -->
+  <rect x="92" y="91" width="3.5" height="8" fill="black" stroke="black" stroke-width="0.3"/>
+  <rect x="100.5" y="91" width="3.5" height="8" fill="black" stroke="black" stroke-width="0.3"/>
+  <rect x="95.5" y="92.5" width="5" height="5" fill="white" stroke="black" stroke-width="0.5"/>
+  <!-- Polarity mark -->
+  <line x1="96.5" y1="92.5" x2="96.5" y2="97.5" stroke="black" stroke-width="0.3"/>
+  <text x="98" y="86" text-anchor="middle" class="num">140</text>
 
-  <!-- LED footprint (140) — the key component -->
-  <rect x="115" y="78" width="10" height="8" fill="none" stroke="black" stroke-width="0.7"/>
-  <!-- SMD pads -->
-  <rect x="114" y="79.5" width="3" height="5" fill="black" stroke="none" opacity="0.3"/>
-  <rect x="123" y="79.5" width="3" height="5" fill="black" stroke="none" opacity="0.3"/>
-  <text x="120" y="84" text-anchor="middle" font-size="1.8">140</text>
-  <text x="120" y="73" text-anchor="middle" font-size="2">(Indicator)</text>
-  <!-- LED polarity mark -->
-  <line x1="116" y1="79" x2="116" y2="85" stroke="black" stroke-width="0.3"/>
+  <!-- Trace continues to sensor -->
+  <line x1="104" y1="95" x2="125" y2="95" stroke="black" stroke-width="2.5"/>
 
-  <!-- Copper trace from LED to microphone -->
-  <line x1="125" y1="82" x2="142" y2="82" stroke="black" stroke-width="1.5"/>
+  <!-- Component 3: Sensor (150) — larger square footprint -->
+  <rect x="125" y="83" width="20" height="24" fill="white" stroke="black" stroke-width="0.6"/>
+  <!-- Acoustic port -->
+  <circle cx="135" cy="95" r="3" fill="white" stroke="black" stroke-width="0.4"/>
+  <circle cx="135" cy="95" r="1.5" fill="white" stroke="black" stroke-width="0.3"/>
+  <!-- Pads on sensor -->
+  <rect x="123" y="86" width="3" height="2" fill="black" stroke="none"/>
+  <rect x="123" y="94" width="3" height="2" fill="black" stroke="none"/>
+  <rect x="123" y="102" width="3" height="2" fill="black" stroke="none"/>
+  <rect x="144" y="86" width="3" height="2" fill="black" stroke="none"/>
+  <rect x="144" y="94" width="3" height="2" fill="black" stroke="none"/>
+  <rect x="144" y="102" width="3" height="2" fill="black" stroke="none"/>
+  <text x="135" y="78" text-anchor="middle" class="num">150</text>
 
-  <!-- Microphone footprint (150) -->
-  <rect x="142" y="74" width="16" height="16" fill="none" stroke="black" stroke-width="0.7"/>
-  <!-- Acoustic port (circle) -->
-  <circle cx="150" cy="82" r="3" fill="none" stroke="black" stroke-width="0.4"/>
-  <text x="150" y="83" text-anchor="middle" font-size="1.8">150</text>
-  <text x="150" y="96" text-anchor="middle" font-size="2">(Sensor)</text>
-  <!-- VDD pad label -->
-  <text x="143" y="73" font-size="1.3">VDD</text>
+  <!-- GND traces (thinner) from sensor -->
+  <line x1="135" y1="107" x2="135" y2="120" stroke="black" stroke-width="1"/>
+  <line x1="125" y1="120" x2="145" y2="120" stroke="black" stroke-width="0.6"/>
+  <line x1="128" y1="123" x2="142" y2="123" stroke="black" stroke-width="0.4"/>
+  <line x1="131" y1="126" x2="139" y2="126" stroke="black" stroke-width="0.3"/>
 
-  <!-- GND trace from mic -->
-  <line x1="150" y1="90" x2="150" y2="105" stroke="black" stroke-width="1"/>
-  <!-- GND plane indicator -->
-  <line x1="140" y1="105" x2="160" y2="105" stroke="black" stroke-width="0.5"/>
-  <text x="150" y="110" text-anchor="middle" font-size="1.5">GND Plane</text>
+  <!-- Data lines from sensor (dashed) -->
+  <line x1="147" y1="92" x2="170" y2="92" stroke="black" stroke-width="0.4" stroke-dasharray="2,1"/>
+  <line x1="147" y1="98" x2="170" y2="98" stroke="black" stroke-width="0.4" stroke-dasharray="2,1"/>
 
-  <!-- GND from LED cathode -->
-  <line x1="120" y1="86" x2="120" y2="105" stroke="black" stroke-width="1"/>
-  <line x1="115" y1="105" x2="125" y2="105" stroke="black" stroke-width="0.5"/>
+  <!-- Label 130 on the trace -->
+  <text x="55" y="103" text-anchor="middle" class="num">130</text>
 
-  <!-- Data traces from mic (thin, dashed — not power) -->
-  <line x1="158" y1="82" x2="170" y2="82" stroke="black" stroke-width="0.3" stroke-dasharray="1.5,1"/>
-  <text x="171" y="83" font-size="1.3">I2S Data</text>
-  <line x1="158" y1="78" x2="170" y2="78" stroke="black" stroke-width="0.3" stroke-dasharray="1.5,1"/>
-  <text x="171" y="79" font-size="1.3">I2S Clock</text>
+  <!-- View label -->
+  <text x="105" y="48" text-anchor="middle" class="num">2A</text>
 
   <!-- ============================================ -->
-  <!-- ANNOTATIONS -->
+  <!-- CROSS-SECTION VIEW (2B) -->
   <!-- ============================================ -->
 
-  <!-- Highlight the continuous power trace -->
-  <text x="83" y="68" text-anchor="middle" font-size="2">Continuous power supply conductor (130)</text>
-  <!-- Arrow pointing to trace -->
-  <line x1="83" y1="69" x2="83" y2="80" stroke="black" stroke-width="0.3"/>
-  <polygon points="83,80 81.5,77 84.5,77" fill="black" stroke="none"/>
+  <text x="105" y="160" text-anchor="middle" class="num">2B</text>
 
-  <!-- Cross-section detail (bottom of page) -->
-  <text x="105" y="155" text-anchor="middle" font-size="3.5" font-weight="bold">2A</text>
-  <text x="105" y="160" text-anchor="middle" font-size="2">(Cross-section detail — trace continuity)</text>
+  <!-- PCB substrate cross-section -->
+  <rect x="30" y="180" width="150" height="14" fill="white" stroke="black" stroke-width="0.6"/>
 
-  <!-- PCB cross-section -->
-  <!-- Substrate -->
-  <rect x="40" y="175" width="130" height="10" fill="none" stroke="black" stroke-width="0.5"/>
-  <text x="105" y="182" text-anchor="middle" font-size="2">PCB Substrate (FR4)</text>
+  <!-- Hatching pattern for substrate -->
+  <defs>
+    <pattern id="hatch" patternUnits="userSpaceOnUse" width="3" height="3" patternTransform="rotate(45)">
+      <line x1="0" y1="0" x2="0" y2="3" stroke="black" stroke-width="0.3"/>
+    </pattern>
+  </defs>
+  <rect x="30" y="180" width="150" height="14" fill="url(#hatch)" stroke="black" stroke-width="0.6"/>
 
-  <!-- Copper trace on top -->
-  <rect x="45" y="172" width="120" height="3" fill="black" stroke="black" stroke-width="0.3" opacity="0.2"/>
-  <line x1="45" y1="172" x2="165" y2="172" stroke="black" stroke-width="0.7"/>
-  <line x1="45" y1="175" x2="165" y2="175" stroke="black" stroke-width="0.3"/>
-  <text x="105" y="170" text-anchor="middle" font-size="1.8">Copper Trace (130)</text>
+  <!-- Copper trace on top surface (thick black bar) -->
+  <rect x="35" y="176" width="140" height="4" fill="black" stroke="black" stroke-width="0.3"/>
 
-  <!-- LED pads on trace -->
-  <rect x="80" y="167" width="8" height="5" fill="none" stroke="black" stroke-width="0.5"/>
-  <rect x="92" y="167" width="8" height="5" fill="none" stroke="black" stroke-width="0.5"/>
-  <text x="90" y="165" text-anchor="middle" font-size="1.8">140 (Indicator)</text>
-  <!-- Gap in trace under LED (series config) -->
-  <line x1="88" y1="173" x2="92" y2="173" stroke="white" stroke-width="1.5"/>
-  <text x="90" y="192" text-anchor="middle" font-size="1.5">Trace interrupted:</text>
-  <text x="90" y="195" text-anchor="middle" font-size="1.5">current must flow</text>
-  <text x="90" y="198" text-anchor="middle" font-size="1.5">through indicator pads</text>
+  <!-- Trace label -->
+  <text x="105" y="173" text-anchor="middle" class="num">130</text>
 
-  <!-- Sensor pads -->
-  <rect x="130" y="167" width="10" height="5" fill="none" stroke="black" stroke-width="0.5"/>
-  <text x="135" y="165" text-anchor="middle" font-size="1.8">150 (Sensor VDD)</text>
+  <!-- Power input pad on left -->
+  <rect x="35" y="172" width="6" height="8" fill="black" stroke="black" stroke-width="0.3"/>
+  <text x="38" y="170" text-anchor="middle" class="num">110</text>
 
-  <!-- Dimension annotation: no components between -->
-  <line x1="100" y1="202" x2="130" y2="202" stroke="black" stroke-width="0.3"/>
-  <line x1="100" y1="200" x2="100" y2="204" stroke="black" stroke-width="0.3"/>
-  <line x1="130" y1="200" x2="130" y2="204" stroke="black" stroke-width="0.3"/>
-  <text x="115" y="208" text-anchor="middle" font-size="1.5">Direct copper connection —</text>
-  <text x="115" y="211" text-anchor="middle" font-size="1.5">no switching elements</text>
+  <!-- Resistor on top -->
+  <rect x="63" y="170" width="14" height="6" fill="white" stroke="black" stroke-width="0.5"/>
+  <rect x="60" y="174" width="3" height="6" fill="black"/>
+  <rect x="77" y="174" width="3" height="6" fill="black"/>
+  <text x="70" y="168" text-anchor="middle" class="lbl">R</text>
 
-  <!-- Legend -->
-  <text x="40" y="228" font-size="1.8">110 — Power input connection</text>
-  <text x="40" y="232" font-size="1.8">120 — EMI filter component</text>
-  <text x="40" y="236" font-size="1.8">130 — Power supply conductor (copper trace)</text>
-  <text x="40" y="240" font-size="1.8">R — Current limiting resistor</text>
-  <text x="40" y="244" font-size="1.8">140 — Indicator element (e.g. LED, surface-mount)</text>
-  <text x="40" y="248" font-size="1.8">150 — Sensor element (e.g. MEMS microphone)</text>
-  <line x1="40" y1="253" x2="90" y2="253" stroke="black" stroke-width="1.5"/>
-  <text x="95" y="254" font-size="1.8">= Power supply conductor</text>
-  <line x1="40" y1="258" x2="90" y2="258" stroke="black" stroke-width="0.3" stroke-dasharray="1.5,1"/>
-  <text x="95" y="259" font-size="1.8">= Data/signal trace (not power)</text>
+  <!-- LED indicator on top -->
+  <rect x="92" y="170" width="14" height="6" fill="white" stroke="black" stroke-width="0.5"/>
+  <rect x="89" y="174" width="3" height="6" fill="black"/>
+  <rect x="106" y="174" width="3" height="6" fill="black"/>
+  <text x="99" y="168" text-anchor="middle" class="num">140</text>
+
+  <!-- Sensor on top -->
+  <rect x="125" y="166" width="30" height="14" fill="white" stroke="black" stroke-width="0.5"/>
+  <rect x="122" y="174" width="3" height="6" fill="black"/>
+  <rect x="155" y="174" width="3" height="6" fill="black"/>
+  <text x="140" y="164" text-anchor="middle" class="num">150</text>
+
+  <!-- ============================================ -->
+  <!-- DETAIL VIEW (2C): Zoom on indicator pads -->
+  <!-- ============================================ -->
+
+  <text x="105" y="215" text-anchor="middle" class="num">2C</text>
+
+  <!-- Big zoom of LED area -->
+  <rect x="60" y="225" width="90" height="50" fill="white" stroke="black" stroke-width="0.5" stroke-dasharray="2,1"/>
+
+  <!-- Trace coming in from left (interrupted) -->
+  <rect x="60" y="245" width="22" height="6" fill="black" stroke="black" stroke-width="0.3"/>
+  <text x="71" y="241" text-anchor="middle" class="num">130</text>
+
+  <!-- LED pads (gap in the trace) -->
+  <rect x="85" y="240" width="6" height="16" fill="white" stroke="black" stroke-width="0.7"/>
+  <rect x="98" y="240" width="6" height="16" fill="white" stroke="black" stroke-width="0.7"/>
+
+  <!-- LED body between pads -->
+  <rect x="91" y="244" width="7" height="8" fill="white" stroke="black" stroke-width="0.7"/>
+  <text x="94.5" y="269" text-anchor="middle" class="num">140</text>
+
+  <!-- Trace continuing right -->
+  <rect x="107" y="245" width="22" height="6" fill="black" stroke="black" stroke-width="0.3"/>
+
+  <!-- Sensor pad on right -->
+  <rect x="129" y="240" width="6" height="16" fill="white" stroke="black" stroke-width="0.7"/>
+  <text x="132" y="269" text-anchor="middle" class="num">150</text>
+
+  <!-- Arrow showing current path through LED -->
+  <line x1="83" y1="235" x2="106" y2="235" stroke="black" stroke-width="0.5"/>
+  <polygon points="106,235 103,233 103,237" fill="black"/>
+  <line x1="60" y1="235" x2="83" y2="235" stroke="black" stroke-width="0.5"/>
 
 </svg>

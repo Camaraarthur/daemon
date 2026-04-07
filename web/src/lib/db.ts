@@ -444,6 +444,23 @@ export function listMessages(threadId: string, limit = 100, offset = 0): ChatMes
   ).all(threadId, limit, offset) as ChatMessage[]
 }
 
+/**
+ * Get the LAST N messages for a thread (most recent), in chronological order.
+ * This is what the chat UI wants when opening a conversation: show the recent history.
+ */
+export function listRecentMessages(threadId: string, limit = 100): ChatMessage[] {
+  const db = getDb()
+  const total = (db.prepare('SELECT COUNT(*) as c FROM chat_messages WHERE thread_id = ?').get(threadId) as any).c
+  const offset = Math.max(0, total - limit)
+  return db.prepare(
+    'SELECT * FROM chat_messages WHERE thread_id = ? ORDER BY created_at ASC LIMIT ? OFFSET ?'
+  ).all(threadId, limit, offset) as ChatMessage[]
+}
+
+export function countMessages(threadId: string): number {
+  return (getDb().prepare('SELECT COUNT(*) as c FROM chat_messages WHERE thread_id = ?').get(threadId) as any).c
+}
+
 export function addMessage(threadId: string, msg: {
   role: string
   content?: string

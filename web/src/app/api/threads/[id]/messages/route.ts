@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requireAuth, getUserId } from '@/lib/auth'
-import { listMessages, getThread } from '@/lib/db'
+import { listMessages, listRecentMessages, countMessages, getThread } from '@/lib/db'
 
 export async function GET(
   req: NextRequest,
@@ -21,8 +21,13 @@ export async function GET(
   }
 
   const limit = parseInt(req.nextUrl.searchParams.get('limit') || '200', 10)
+  const mode = req.nextUrl.searchParams.get('mode') || 'recent' // 'recent' = last N, 'oldest' = first N
   const offset = parseInt(req.nextUrl.searchParams.get('offset') || '0', 10)
-  const messages = listMessages(id, limit, offset)
 
-  return NextResponse.json({ messages })
+  const total = countMessages(id)
+  const messages = mode === 'oldest'
+    ? listMessages(id, limit, offset)
+    : listRecentMessages(id, limit)
+
+  return NextResponse.json({ messages, total })
 }

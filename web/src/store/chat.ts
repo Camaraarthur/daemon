@@ -118,8 +118,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
       // Most recent thread (already sorted by last_message_at DESC from the API)
       const latestThread = dbThreads[0]
 
-      // Fetch its messages
-      const msgsRes = await fetch(`/api/threads/${latestThread.id}/messages?limit=50`)
+      // Fetch the LAST 200 messages (most recent — what /resume shows)
+      const msgsRes = await fetch(`/api/threads/${latestThread.id}/messages?limit=200&mode=recent`)
       const msgsData = await msgsRes.json()
       const dbMessages = msgsData.messages || []
 

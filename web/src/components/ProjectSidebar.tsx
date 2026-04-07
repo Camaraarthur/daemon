@@ -420,35 +420,18 @@ export default function ProjectSidebar({
     fetchProjects()
   }, [fetchProjects])
 
-  // Group projects: top-level (no parent_id) and children
+  // FLAT project list — no sub-projects in v0. One conversation per project.
   const { topLevel, childrenMap } = useMemo(() => {
     const childrenMap: Record<number, Project[]> = {}
-    const topLevel: Project[] = []
+    // Treat all projects as top-level regardless of legacy parent_id
+    const topLevel = [...projects]
 
-    for (const p of projects) {
-      if (p.parent_id) {
-        if (!childrenMap[p.parent_id]) childrenMap[p.parent_id] = []
-        childrenMap[p.parent_id].push(p)
-      } else {
-        topLevel.push(p)
-      }
-    }
-
-    // Sort top-level by last_active DESC
+    // Sort by last_active DESC (most recent first)
     topLevel.sort((a, b) => {
       if (!a.last_active) return 1
       if (!b.last_active) return -1
       return b.last_active.localeCompare(a.last_active)
     })
-
-    // Sort children by last_active
-    for (const arr of Object.values(childrenMap)) {
-      arr.sort((a, b) => {
-        if (!a.last_active) return 1
-        if (!b.last_active) return -1
-        return b.last_active.localeCompare(a.last_active)
-      })
-    }
 
     return { topLevel, childrenMap }
   }, [projects])
