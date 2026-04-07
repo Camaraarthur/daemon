@@ -20,6 +20,8 @@ import {
   getProjectMemory,
   listThreads,
   listMessages,
+  listRecentMessages,
+  countMessages,
   appendProjectMemory,
 } from './db'
 
@@ -85,14 +87,17 @@ function buildLastSessionSummary(userId: number, projectId: number): string {
   if (threads.length === 0) return '(no prior sessions)'
 
   const mostRecent = threads[0]
-  const messages = listMessages(mostRecent.id, 200)
-  if (messages.length === 0) return '(thread exists but no messages)'
+  // Use listRecentMessages to get the LAST N messages (most recent activity).
+  // Old code used listMessages(thread, 200) which returned the first 200 by ASC,
+  // then slice(-10) of those — which would always show stale context for long threads.
+  const tail = listRecentMessages(mostRecent.id, SESSION_SUMMARY_MESSAGES)
+  const total = countMessages(mostRecent.id)
+  if (tail.length === 0) return '(thread exists but no messages)'
 
-  const tail = messages.slice(-SESSION_SUMMARY_MESSAGES)
   const lines: string[] = [
     `Thread: "${mostRecent.title}" (${mostRecent.last_message_at || mostRecent.created_at})`,
-    `Total messages: ${messages.length}`,
-    `Last ${tail.length} messages:`,
+    `Total messages: ${total}`,
+    `Last ${tail.length} messages (most recent activity):`,
   ]
   for (const m of tail) {
     if (!m.content) continue

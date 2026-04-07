@@ -185,7 +185,8 @@ function AuthedChat({ user }: { user: any }) {
   const scrollContainerRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const [statusText, setStatusText] = useState('')
-  const [showSidebar, setShowSidebar] = useState(false)
+  // Default open on desktop, closed on mobile (set in effect after mount to avoid hydration mismatch)
+  const [showSidebar, setShowSidebar] = useState(true)
   const [initialScrollDone, setInitialScrollDone] = useState(false)
   const [showModelPicker, setShowModelPicker] = useState(false)
   const [currentModel, setCurrentModel] = useState('qwen3-coder')
@@ -482,34 +483,33 @@ function AuthedChat({ user }: { user: any }) {
 
   return (
     <div className="flex bg-[#0a0a0a] text-[#bfbfbf] chat-container" style={{ height: '100dvh', minHeight: '-webkit-fill-available' }}>
-      {/* Left sidebar — projects + devices (mobile: overlay with slide-in animation) */}
-      <div
-        className={`${showSidebar ? 'fixed inset-0 z-50 flex' : 'hidden'} sm:relative sm:flex sm:inset-auto sm:z-auto`}
-      >
-        <div
-          className={`w-64 border-r border-[#222] shrink-0 bg-[#111] transition-transform duration-200 ease-out ${
-            showSidebar ? 'translate-x-0' : '-translate-x-full sm:translate-x-0'
-          }`}
-        >
-          <ProjectSidebar onClose={() => setShowSidebar(false)} />
-        </div>
-        {/* Mobile backdrop — tap to dismiss */}
-        <div
-          className="flex-1 bg-black/50 sm:hidden"
-          onClick={() => setShowSidebar(false)}
-          onTouchStart={() => setShowSidebar(false)}
-        />
-      </div>
+      {/* Left sidebar — toggleable on ALL screen sizes */}
+      {showSidebar && (
+        <>
+          {/* Mobile backdrop */}
+          <div
+            className="fixed inset-0 z-40 bg-black/50 sm:hidden"
+            onClick={() => setShowSidebar(false)}
+          />
+          <div className="w-64 border-r border-[#222] shrink-0 bg-[#111] fixed sm:relative inset-y-0 left-0 z-50 sm:z-auto">
+            <ProjectSidebar onClose={() => setShowSidebar(false)} />
+          </div>
+        </>
+      )}
 
       {/* Main chat area */}
       <div className="flex-1 flex flex-col min-w-0 min-h-0 overflow-hidden">
         {/* Header */}
         <div className="h-12 border-b border-[#222] flex items-center justify-between px-3 bg-[#111] shrink-0">
           <div className="flex items-center gap-3">
-            <button onClick={() => setShowSidebar(!showSidebar)} className="tap-target sm:hidden">
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#666" strokeWidth="2"><path d="M3 12h18M3 6h18M3 18h18"/></svg>
+            <button
+              onClick={() => setShowSidebar(!showSidebar)}
+              className="tap-target text-[#666] hover:text-white transition-colors"
+              title={showSidebar ? "Hide sidebar" : "Show sidebar"}
+            >
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 12h18M3 6h18M3 18h18"/></svg>
             </button>
-            <Image src="/brand/favicon.png" alt="daemon" width={20} height={20} />
+            <Image src="/favicon.png" alt="daemon" width={20} height={20} />
             {activeProjectName ? (
               <span className="text-sm font-medium text-white">{activeProjectName}</span>
             ) : (

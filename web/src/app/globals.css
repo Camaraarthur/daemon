@@ -10,14 +10,38 @@ html {
   background: #0a0a0a !important;
   height: 100%;
   height: -webkit-fill-available;
-  overflow-x: hidden;
+  overflow: hidden; /* No html-level scrollbars — chat area scrolls internally */
 }
 
 body {
   background: #0a0a0a !important;
-  min-height: 100%;
-  min-height: -webkit-fill-available;
-  overflow-x: hidden;
+  height: 100%;
+  height: -webkit-fill-available;
+  overflow: hidden;
+  margin: 0;
+}
+
+/* Dark scrollbars everywhere */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #333 #0a0a0a;
+}
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+*::-webkit-scrollbar-track {
+  background: #0a0a0a;
+}
+*::-webkit-scrollbar-thumb {
+  background: #333;
+  border-radius: 4px;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: #555;
+}
+*::-webkit-scrollbar-corner {
+  background: #0a0a0a;
 }
 
 /* Use dynamic viewport height where supported (avoids keyboard hiding input) */

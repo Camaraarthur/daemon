@@ -89,10 +89,17 @@ export function middleware(request: NextRequest) {
   const subdomain = getUserSubdomain(host)
   if (subdomain) {
     // These paths are always handled by the Next.js app, not the hosted site
-    const appPaths = ['/chat', '/login', '/settings', '/api/', '/_next/', '/canvas']
+    const appPaths = ['/chat', '/login', '/settings', '/api/', '/_next/', '/canvas', '/download']
     const isAppPath = appPaths.some(p => path === p || path.startsWith(p + '/') || path.startsWith(p))
 
-    if (!isAppPath) {
+    // Daemon-owned root assets — never route these to hosted sites
+    const daemonAssets = [
+      '/favicon', '/app-icon', '/manifest.json', '/robots.txt', '/sitemap.xml',
+      '/daemon.apk', '/daemon-desktop.exe', '/install.sh', '/brand/', '/cli/', '/docs/', '/font/'
+    ]
+    const isDaemonAsset = daemonAssets.some(p => path === p || path.startsWith(p))
+
+    if (!isAppPath && !isDaemonAsset) {
       // For root path (/), let Next.js handle it (shows DaemonPublicPage which
       // will check for hosted content via client-side fetch).
       // For all other paths, rewrite to the hosted file serving route.

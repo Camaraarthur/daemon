@@ -1,104 +1,88 @@
 #!/usr/bin/env python3
 """
 Generate professional patent drawings for the privacy LED interlock invention.
-Output: clean SVGs in Italian, A4, ready for UIBM filing.
+Output: clean A4 SVGs ready for UIBM filing.
 """
 
 import schemdraw
 import schemdraw.elements as elm
+import re
+from pathlib import Path
 
-# ============================================================
-# FIGURE 1A: Series configuration
-# ============================================================
-with schemdraw.Drawing(file='/home/arthur/daemon/hardware/patent_fig1a_series.svg',
-                      show=False) as d:
-    d.config(unit=2.5, fontsize=14)
+OUTDIR = Path('/home/arthur/daemon/hardware')
 
-    # Power source
-    B = d.add(elm.Battery().up().label('110'))
-    d.add(elm.Line().right().length(1))
-    d.add(elm.Line().down().length(0.5))
-    # Resistor
-    d.add(elm.Resistor().down().label('R'))
-    # LED
-    d.add(elm.LED().down().label('140').fill('white'))
-    # Wire to sensor
-    d.add(elm.Line().down().length(0.5))
-    # Sensor (rectangle)
-    M = d.add(elm.RBox(w=2.5, h=1.5).down().label('150'))
-    # GND
-    d.add(elm.Line().down().length(0.5))
-    d.add(elm.Ground())
 
-    # Power conductor label 130 (along right side)
-    d.add(elm.Label().label('130', loc='right').at((B.end[0]+1.5, B.end[1]-1)))
+def wrap_in_a4(content_svg_path: Path, fig_label: str, output_path: Path):
+    """Wrap a schemdraw SVG in an A4 page with margins and Fig label."""
+    inner = content_svg_path.read_text()
 
-print("Fig 1A done")
+    vb_match = re.search(r'viewBox="([^"]+)"', inner)
+    if not vb_match:
+        raise ValueError("No viewBox in schemdraw output")
+    vb = [float(x) for x in vb_match.group(1).split()]
+    content_w, content_h = vb[2], vb[3]
 
-# ============================================================
-# FIGURE 1B: Parallel configuration
-# ============================================================
-with schemdraw.Drawing(file='/home/arthur/daemon/hardware/patent_fig1b_parallel.svg',
-                      show=False) as d:
-    d.config(unit=2.5, fontsize=14)
+    body_match = re.search(r'<svg[^>]*>(.*)</svg>', inner, re.DOTALL)
+    body = body_match.group(1)
 
-    B = d.add(elm.Battery().up().label('110'))
-    d.add(elm.Line().right().length(1))
-    d.add(elm.Line().down().length(1))
-    NODE = d.add(elm.Dot())
+    # A4 = 210 x 297 mm. Reserve top 50mm for fig label, sides 25mm.
+    avail_w = 160
+    avail_h = 200
+    scale = min(avail_w / content_w, avail_h / content_h)
+    scaled_w = content_w * scale
+    scaled_h = content_h * scale
 
-    # Left branch: indicator
+    tx = (210 - scaled_w) / 2 - vb[0] * scale
+    ty = 60 + (avail_h - scaled_h) / 2 - vb[1] * scale
+
+    a4_svg = f'''<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="210mm" height="297mm" viewBox="0 0 210 297">
+  <style>
+    text {{ font-family: Arial, Helvetica, sans-serif; }}
+  </style>
+  <text x="105" y="35" text-anchor="middle" font-size="8" font-weight="bold">{fig_label}</text>
+  <g transform="translate({tx},{ty}) scale({scale})">
+{body}
+  </g>
+</svg>
+'''
+    output_path.write_text(a4_svg)
+    print(f"Wrote {output_path.name}")
+
+
+# Figure 1A: Series
+TMP1A = OUTDIR / '_tmp_fig1a.svg'
+with schemdraw.Drawing(file=str(TMP1A), show=False) as d:
+    d += elm.SourceV().up().label('110')
+    d += elm.Line().right().length(2)
+    d += elm.Line().down().length(0.3)
+    d += elm.Resistor().down().label('R')
+    d += elm.LED().down().label('140').fill('white')
+    d += elm.Line().down().length(0.3)
+    d += elm.RBox(w=2.5, h=1.5).down().label('150')
+    d += elm.Ground()
+wrap_in_a4(TMP1A, 'Fig. 1A', OUTDIR / 'patent_fig1a.svg')
+
+
+# Figure 1B: Parallel
+TMP1B = OUTDIR / '_tmp_fig1b.svg'
+with schemdraw.Drawing(file=str(TMP1B), show=False) as d:
+    d += elm.SourceV().up().label('110')
+    d += elm.Line().right().length(3)
+    d += elm.Dot()
     d.push()
-    d.add(elm.Line().left().length(2))
-    d.add(elm.Resistor().down().label('R'))
-    d.add(elm.LED().down().label('140').fill('white'))
-    d.add(elm.Line().down().length(0.5))
-    d.add(elm.Ground())
+    d += elm.Resistor().down().label('R')
+    d += elm.LED().down().label('140').fill('white')
+    d += elm.Ground()
     d.pop()
+    d += elm.Line().right().length(3)
+    d += elm.RBox(w=2.5, h=1.5).down().label('150')
+    d += elm.Ground()
+wrap_in_a4(TMP1B, 'Fig. 1B', OUTDIR / 'patent_fig1b.svg')
 
-    # Right branch: sensor
-    d.add(elm.Line().right().length(2))
-    d.add(elm.RBox(w=2.5, h=1.5).down().label('150'))
-    d.add(elm.Line().down().length(0.5))
-    d.add(elm.Ground())
 
-print("Fig 1B done")
+# Cleanup tmp files
+TMP1A.unlink(missing_ok=True)
+TMP1B.unlink(missing_ok=True)
 
-# ============================================================
-# FIGURE 3: System block diagram
-# ============================================================
-with schemdraw.Drawing(file='/home/arthur/daemon/hardware/patent_fig3.svg',
-                      show=False) as d:
-    d.config(unit=2.5, fontsize=14)
-
-    # Outer device box
-    DEVICE = d.add(elm.Rect(w=14, h=10).label('100', loc='top'))
-
-    # Power supply
-    PWR = d.add(elm.RBox(w=2.5, h=1.5).at((-5, 2.5)).label('110'))
-
-    # Indicator
-    IND = d.add(elm.RBox(w=2.5, h=1.5).at((-1, 2.5)).label('140'))
-
-    # Sensor
-    SEN = d.add(elm.RBox(w=2.5, h=1.5).at((3, 2.5)).label('150'))
-
-    # Power line from PWR to IND to SEN
-    d.add(elm.Line().at((-3.5, 3.25)).right().length(1.5))
-    d.add(elm.Line().at((0.5, 3.25)).right().length(1.5))
-
-    # Processor below
-    PROC = d.add(elm.RBox(w=2.5, h=1.5).at((-5, -1)).label('160'))
-
-    # Wireless module
-    WL = d.add(elm.RBox(w=2.5, h=1.5).at((-1, -1)).label('170'))
-
-    # Storage
-    STO = d.add(elm.RBox(w=2.5, h=1.5).at((3, -1)).label('180'))
-
-    # Data line from sensor to processor (dashed)
-    d.add(elm.Line().at((4.25, 2.5)).down().length(2).linestyle('--'))
-    d.add(elm.Line().left().length(8).linestyle('--'))
-    d.add(elm.Line().up().length(0.75).linestyle('--'))
-
-print("Fig 3 done")
+print("Done.")
