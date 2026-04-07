@@ -9,6 +9,7 @@ import { createSSEStream, parseClaudeStreamLine, type SSEEvent } from '@/lib/str
 import { runAgentLoopStreaming } from '@/lib/agent-loop-streaming'
 import { matchSlashCommand } from '@/lib/slash-commands'
 import * as db from '@/lib/db'
+import { buildProjectContext, appendSessionSummary } from '@/lib/context'
 // ── Cost Calculation (inlined from removed billing.ts — v0 has no billing) ──
 
 const MODEL_COSTS: Record<string, { input: number; output: number; provider: string }> = {
@@ -533,7 +534,7 @@ export async function POST(req: NextRequest) {
     } catch {
       return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 })
     }
-    const { message, threadId, modelOverride, stream: wantStream } = body
+    const { message, threadId, modelOverride, stream: wantStream, projectId: bodyProjectId } = body
 
     if (!message || typeof message !== 'string') {
       return NextResponse.json({ error: 'No message provided' }, { status: 400 })
@@ -564,36 +565,43 @@ export async function POST(req: NextRequest) {
     const personality = loadPersonality()
     let systemPrompt = buildSystemPrompt(personality)
 
-    // ── Project memory (MEMORY.md pattern) ───────────────
-    // Load project memory if a thread is linked to a project
+    // ── Rich project context (CLAUDE.md + MEMORY + last session + git + devices) ──
+    // Replaces the previous thin file-based memory loader.
+    let resolvedProjectId: number | null = null
     try {
+      const userIdNum = parseInt(userId) || 0
+
       if (threadId) {
         const thread = db.getThread(threadId)
-        // Verify thread belongs to this user
-        if (thread && thread.user_id !== parseInt(userId)) {
+        if (thread && thread.user_id !== userIdNum) {
           return NextResponse.json({ error: 'Not authorized' }, { status: 403 })
         }
-        if (thread?.project_id) {
-          // Load from file-based memory
-          const memoryDir = join(DAEMON_ROOT, 'data', 'memory', `user_${userId}`, 'projects')
-          const project = db.getProject(parseInt(userId) || 0, thread.project_id)
-          if (project) {
-            const projectMemoryPath = join(memoryDir, project.name, 'MEMORY.md')
-            if (existsSync(projectMemoryPath)) {
-              const memoryContent = readFileSync(projectMemoryPath, 'utf-8').slice(0, 4000) // 4K token budget
-              systemPrompt += `\n\n## Project Memory (${project.display_name || project.name})\n${memoryContent}`
-            }
-          }
+        if (thread?.project_id) resolvedProjectId = thread.project_id
+      }
+
+      // Allow body to override / supply project (e.g. /resume on a fresh thread)
+      if (bodyProjectId && typeof bodyProjectId === 'number') {
+        const proj = db.getProject(userIdNum, bodyProjectId)
+        if (proj) resolvedProjectId = bodyProjectId
+      }
+
+      if (resolvedProjectId) {
+        const richContext = await buildProjectContext(userIdNum, resolvedProjectId, {
+          email,
+          daemonName: personality?.name,
+        })
+        if (richContext) {
+          systemPrompt += `\n\n${richContext}`
+        }
+      } else {
+        // No project — still inject the user's CLAUDE.md so global rules always apply
+        const userRules = db.getUserRules(userIdNum)
+        if (userRules) {
+          systemPrompt += `\n\n### User Rules (CLAUDE.md)\n${userRules.slice(0, 8000)}`
         }
       }
-      // Always load global memory if it exists
-      const globalMemoryPath = join(DAEMON_ROOT, 'data', 'memory', `user_${userId}`, 'global', 'MEMORY.md')
-      if (existsSync(globalMemoryPath)) {
-        const globalMemory = readFileSync(globalMemoryPath, 'utf-8').slice(0, 2000)
-        systemPrompt += `\n\n## Global Memory\n${globalMemory}`
-      }
-    } catch {
-      // Non-critical — memory loading should never break chat
+    } catch (e) {
+      console.warn('[chat] Rich context loading failed:', e)
     }
 
     const knowledgeContext = await getKnowledgeContext(effectiveMessage)
@@ -709,6 +717,9 @@ export async function POST(req: NextRequest) {
 
           // Generate project memory if enough messages accumulated (async, non-blocking)
           maybeGenerateMemory(threadKey, userId).catch(() => {})
+          if (resolvedProjectId) {
+            appendSessionSummary(resolvedProjectId, threadKey).catch(() => {})
+          }
 
           send({
             type: 'done',
@@ -781,6 +792,9 @@ export async function POST(req: NextRequest) {
 
     // Generate project memory if enough messages accumulated (async, non-blocking)
     maybeGenerateMemory(threadKey, userId).catch(() => {})
+    if (resolvedProjectId) {
+      appendSessionSummary(resolvedProjectId, threadKey).catch(() => {})
+    }
 
     return NextResponse.json({
       response: result.response,

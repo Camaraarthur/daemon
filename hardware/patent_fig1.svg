@@ -1,0 +1,234 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="210mm" height="297mm" viewBox="0 0 210 297">
+  <style>
+    text { font-family: Arial, Helvetica, sans-serif; }
+    line, rect, polyline, polygon, circle, path, ellipse { stroke: black; fill: none; }
+  </style>
+
+  <!-- Fig. 1 label -->
+  <text x="105" y="32" text-anchor="middle" font-size="6" font-weight="bold">Fig. 1</text>
+
+  <!-- ============================================ -->
+  <!-- SERIES CONFIGURATION (left side) -->
+  <!-- ============================================ -->
+
+  <text x="52" y="48" text-anchor="middle" font-size="3.5" font-weight="bold">1A</text>
+
+  <!-- Power source (110) -->
+  <rect x="32" y="54" width="40" height="14" stroke-width="0.5"/>
+  <text x="52" y="63" text-anchor="middle" font-size="3">110</text>
+  <!-- + and - terminals -->
+  <text x="38" y="61" font-size="2.5">+</text>
+  <text x="65" y="61" font-size="2.5">-</text>
+
+  <!-- Wire down from + terminal -->
+  <line x1="52" y1="68" x2="52" y2="78" stroke-width="0.5"/>
+
+  <!-- Label 130 (power supply conductor) -->
+  <text x="57" y="75" font-size="2.5">130</text>
+
+  <!-- Current limiting resistor R -->
+  <rect x="48" y="78" width="8" height="14" stroke-width="0.5"/>
+  <text x="60" y="87" font-size="2.5">R</text>
+
+  <!-- Wire from resistor to LED -->
+  <line x1="52" y1="92" x2="52" y2="100" stroke-width="0.5"/>
+
+  <!-- LED symbol (indicator element 140) -->
+  <!-- Triangle pointing down -->
+  <polygon points="42,100 62,100 52,112" stroke-width="0.5" fill="none"/>
+  <!-- Bar at cathode -->
+  <line x1="42" y1="112" x2="62" y2="112" stroke-width="0.5"/>
+  <!-- Light emission arrows -->
+  <line x1="61" y1="102" x2="67" y2="98" stroke-width="0.35"/>
+  <polygon points="67,98 64.5,100 65.5,99" fill="black" stroke="none"/>
+  <line x1="63" y1="105" x2="69" y2="101" stroke-width="0.35"/>
+  <polygon points="69,101 66.5,103 67.5,102" fill="black" stroke="none"/>
+  <!-- Label -->
+  <text x="28" y="108" font-size="2.5">140</text>
+  <text x="22" y="112" font-size="1.8">(Indicator</text>
+  <text x="22" y="115" font-size="1.8">Element)</text>
+
+  <!-- Wire from LED to sensor -->
+  <line x1="52" y1="112" x2="52" y2="125" stroke-width="0.5"/>
+
+  <!-- Sensor element (150) - box -->
+  <rect x="35" y="125" width="34" height="20" stroke-width="0.5"/>
+  <text x="52" y="136" text-anchor="middle" font-size="3">150</text>
+  <text x="52" y="141" text-anchor="middle" font-size="1.8">(Sensor Element)</text>
+  <!-- VDD pin label -->
+  <text x="52" y="124" text-anchor="middle" font-size="1.8">VDD</text>
+  <!-- GND pin at bottom -->
+  <text x="52" y="148" text-anchor="middle" font-size="1.8">GND</text>
+
+  <!-- Wire from sensor to ground -->
+  <line x1="52" y1="145" x2="52" y2="155" stroke-width="0.5"/>
+
+  <!-- Ground symbol -->
+  <line x1="44" y1="155" x2="60" y2="155" stroke-width="0.5"/>
+  <line x1="46" y1="158" x2="58" y2="158" stroke-width="0.4"/>
+  <line x1="48" y1="161" x2="56" y2="161" stroke-width="0.3"/>
+
+  <!-- Data output arrow from sensor -->
+  <line x1="69" y1="135" x2="80" y2="135" stroke-width="0.4"/>
+  <polygon points="80,135 77,133 77,137" fill="black" stroke="none"/>
+  <text x="81" y="134" font-size="1.8">Data</text>
+  <text x="81" y="137" font-size="1.8">Output</text>
+
+  <!-- Bracket: no switching elements -->
+  <line x1="73" y1="72" x2="76" y2="72" stroke-width="0.3" stroke-dasharray="1,0.5"/>
+  <line x1="76" y1="72" x2="76" y2="123" stroke-width="0.3" stroke-dasharray="1,0.5"/>
+  <line x1="73" y1="123" x2="76" y2="123" stroke-width="0.3" stroke-dasharray="1,0.5"/>
+  <text x="79" y="94" font-size="1.6">No electronically</text>
+  <text x="79" y="97" font-size="1.6">controllable</text>
+  <text x="79" y="100" font-size="1.6">switching elements</text>
+
+  <!-- ============================================ -->
+  <!-- PARALLEL CONFIGURATION (right side) -->
+  <!-- ============================================ -->
+
+  <text x="155" y="48" text-anchor="middle" font-size="3.5" font-weight="bold">1B</text>
+
+  <!-- Power source (110) -->
+  <rect x="135" y="54" width="40" height="14" stroke-width="0.5"/>
+  <text x="155" y="63" text-anchor="middle" font-size="3">110</text>
+
+  <!-- Wire down from power source -->
+  <line x1="155" y1="68" x2="155" y2="82" stroke-width="0.5"/>
+
+  <!-- Label 130 -->
+  <text x="160" y="77" font-size="2.5">130</text>
+
+  <!-- Junction node (dot) -->
+  <circle cx="155" cy="82" r="1.2" fill="black" stroke="none"/>
+
+  <!-- Label: Common power node -->
+  <text x="162" y="84" font-size="1.8">Common</text>
+  <text x="162" y="87" font-size="1.8">Power Node</text>
+
+  <!-- Left branch: Indicator (140) -->
+  <line x1="155" y1="82" x2="138" y2="82" stroke-width="0.5"/>
+  <line x1="138" y1="82" x2="138" y2="92" stroke-width="0.5"/>
+
+  <!-- Resistor on indicator branch -->
+  <rect x="134" y="92" width="8" height="10" stroke-width="0.5"/>
+  <text x="128" y="99" font-size="2">R</text>
+
+  <line x1="138" y1="102" x2="138" y2="108" stroke-width="0.5"/>
+
+  <!-- LED symbol -->
+  <polygon points="130,108 146,108 138,118" stroke-width="0.5" fill="none"/>
+  <line x1="130" y1="118" x2="146" y2="118" stroke-width="0.5"/>
+  <!-- Arrows -->
+  <line x1="145" y1="110" x2="150" y2="107" stroke-width="0.3"/>
+  <polygon points="150,107 147.5,109 148.5,108" fill="black" stroke="none"/>
+  <line x1="147" y1="113" x2="152" y2="110" stroke-width="0.3"/>
+  <polygon points="152,110 149.5,112 150.5,111" fill="black" stroke="none"/>
+  <!-- Label -->
+  <text x="120" y="114" font-size="2.5">140</text>
+
+  <line x1="138" y1="118" x2="138" y2="128" stroke-width="0.5"/>
+
+  <!-- Right branch: Sensor (150) -->
+  <line x1="155" y1="82" x2="170" y2="82" stroke-width="0.5"/>
+  <line x1="170" y1="82" x2="170" y2="100" stroke-width="0.5"/>
+
+  <!-- Sensor box -->
+  <rect x="153" y="100" width="34" height="20" stroke-width="0.5"/>
+  <text x="170" y="111" text-anchor="middle" font-size="3">150</text>
+  <text x="170" y="116" text-anchor="middle" font-size="1.8">(Sensor)</text>
+
+  <line x1="170" y1="120" x2="170" y2="128" stroke-width="0.5"/>
+
+  <!-- Data output -->
+  <line x1="187" y1="110" x2="196" y2="110" stroke-width="0.4"/>
+  <polygon points="196,110 193,108 193,112" fill="black" stroke="none"/>
+  <text x="197" y="109" font-size="1.8">Data</text>
+
+  <!-- Join ground lines -->
+  <line x1="138" y1="128" x2="170" y2="128" stroke-width="0.5"/>
+  <line x1="155" y1="128" x2="155" y2="135" stroke-width="0.5"/>
+
+  <!-- Ground symbol -->
+  <line x1="147" y1="135" x2="163" y2="135" stroke-width="0.5"/>
+  <line x1="149" y1="138" x2="161" y2="138" stroke-width="0.4"/>
+  <line x1="151" y1="141" x2="159" y2="141" stroke-width="0.3"/>
+
+  <!-- Bracket: no switching elements -->
+  <line x1="125" y1="72" x2="122" y2="72" stroke-width="0.3" stroke-dasharray="1,0.5"/>
+  <line x1="122" y1="72" x2="122" y2="126" stroke-width="0.3" stroke-dasharray="1,0.5"/>
+  <line x1="125" y1="126" x2="122" y2="126" stroke-width="0.3" stroke-dasharray="1,0.5"/>
+  <text x="106" y="95" font-size="1.6">No electronically</text>
+  <text x="106" y="98" font-size="1.6">controllable</text>
+  <text x="106" y="101" font-size="1.6">switching elements</text>
+
+  <!-- ============================================ -->
+  <!-- PREFERRED EMBODIMENT DETAIL (bottom) -->
+  <!-- ============================================ -->
+
+  <text x="105" y="178" text-anchor="middle" font-size="3.5" font-weight="bold">1C</text>
+  <text x="105" y="183" text-anchor="middle" font-size="2">(Preferred Embodiment — Series Configuration)</text>
+
+  <!-- Power source 3.3V -->
+  <rect x="30" y="190" width="30" height="12" stroke-width="0.5"/>
+  <text x="45" y="198" text-anchor="middle" font-size="2.5">110</text>
+
+  <!-- Wire -->
+  <line x1="60" y1="196" x2="68" y2="196" stroke-width="0.5"/>
+
+  <!-- Ferrite bead (120) - rectangle with X -->
+  <rect x="68" y="192" width="16" height="8" stroke-width="0.5"/>
+  <text x="76" y="198" text-anchor="middle" font-size="2">120</text>
+  <text x="76" y="205" text-anchor="middle" font-size="1.5">(EMI Filter)</text>
+
+  <!-- Wire -->
+  <line x1="84" y1="196" x2="95" y2="196" stroke-width="0.5"/>
+  <text x="90" y="193" font-size="1.5">130</text>
+
+  <!-- Resistor R -->
+  <rect x="95" y="192" width="12" height="8" stroke-width="0.5"/>
+  <text x="101" y="198" text-anchor="middle" font-size="2">R</text>
+
+  <!-- Wire -->
+  <line x1="107" y1="196" x2="115" y2="196" stroke-width="0.5"/>
+
+  <!-- LED (small) -->
+  <polygon points="115,190 115,202 125,196" stroke-width="0.5" fill="none"/>
+  <line x1="125" y1="190" x2="125" y2="202" stroke-width="0.5"/>
+  <!-- Arrows -->
+  <line x1="120" y1="189" x2="123" y2="185" stroke-width="0.3"/>
+  <polygon points="123,185 121,187.5 122,187" fill="black" stroke="none"/>
+  <line x1="122" y1="189" x2="125" y2="185" stroke-width="0.3"/>
+  <polygon points="125,185 123,187.5 124,187" fill="black" stroke="none"/>
+  <text x="120" y="208" text-anchor="middle" font-size="2">140</text>
+  <text x="120" y="212" text-anchor="middle" font-size="1.5">(LED)</text>
+
+  <!-- Wire -->
+  <line x1="125" y1="196" x2="138" y2="196" stroke-width="0.5"/>
+
+  <!-- Microphone (MEMS) box -->
+  <rect x="138" y="188" width="30" height="16" stroke-width="0.5"/>
+  <text x="153" y="197" text-anchor="middle" font-size="2.5">150</text>
+  <text x="153" y="201" text-anchor="middle" font-size="1.5">(MEMS Mic)</text>
+
+  <!-- GND from mic -->
+  <line x1="153" y1="204" x2="153" y2="215" stroke-width="0.5"/>
+  <!-- Ground -->
+  <line x1="147" y1="215" x2="159" y2="215" stroke-width="0.5"/>
+  <line x1="149" y1="217" x2="157" y2="217" stroke-width="0.35"/>
+  <line x1="151" y1="219" x2="155" y2="219" stroke-width="0.3"/>
+
+  <!-- Data output -->
+  <line x1="168" y1="196" x2="180" y2="196" stroke-width="0.4"/>
+  <polygon points="180,196 177,194 177,198" fill="black" stroke="none"/>
+  <text x="181" y="195" font-size="1.5">I2S Data</text>
+
+  <!-- Annotations for preferred embodiment -->
+  <text x="30" y="228" font-size="1.8">110 — Power supply (e.g. 3.3V LDO regulator)</text>
+  <text x="30" y="232" font-size="1.8">120 — EMI filter (e.g. ferrite bead)</text>
+  <text x="30" y="236" font-size="1.8">130 — Power supply conductor</text>
+  <text x="30" y="240" font-size="1.8">R — Current limiting resistor</text>
+  <text x="30" y="244" font-size="1.8">140 — Human-perceptible indicator element (e.g. LED)</text>
+  <text x="30" y="248" font-size="1.8">150 — Sensor element (e.g. MEMS microphone)</text>
+
+</svg>

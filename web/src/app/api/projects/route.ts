@@ -1,6 +1,31 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requireAuth, getUserId } from '@/lib/auth'
 import { listProjects, createProject, updateProject, type Project } from '@/lib/db'
+import { existsSync } from 'fs'
+import { join } from 'path'
+import { spawn } from 'child_process'
+
+const DAEMON_ROOT = join(process.cwd(), '..')
+const VENV_PYTHON = join(DAEMON_ROOT, '.venv', 'bin', 'python3')
+const FILE_INDEXER = join(DAEMON_ROOT, 'server', 'file_indexer.py')
+
+/**
+ * Spawn the semantic file indexer in the background for a project. Errors
+ * are logged but never block the API response — indexing is best-effort.
+ */
+function triggerBackgroundIndex(projectId: number, localPath: string): void {
+  try {
+    const child = spawn(
+      VENV_PYTHON,
+      [FILE_INDEXER, 'index', '--project-id', String(projectId), '--path', localPath],
+      { detached: true, stdio: 'ignore' },
+    )
+    child.on('error', (e) => console.error('[projects] indexer spawn error:', e.message))
+    child.unref()
+  } catch (e: any) {
+    console.error('[projects] failed to spawn indexer:', e?.message || e)
+  }
+}
 
 export async function GET(req: NextRequest) {
   const authErr = requireAuth(req)
@@ -25,6 +50,9 @@ export async function POST(req: NextRequest) {
 
   try {
     const project = createProject(userId, data)
+    if (project && data.local_path && existsSync(data.local_path)) {
+      triggerBackgroundIndex(project.id, data.local_path)
+    }
     return NextResponse.json({ project })
   } catch (e: any) {
     if (e.message?.includes('UNIQUE')) {

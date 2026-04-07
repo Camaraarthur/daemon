@@ -74,6 +74,22 @@ Show the diff of what you'd change before making changes.`,
 
   // ── Daemon Native ───────────────────────────────────────
   {
+    name: 'resume',
+    description: 'Reload project context and brief me on where we left off',
+    type: 'prompt',
+    icon: '⏯',
+    promptTemplate: `Re-read the rich project context already injected in your system prompt (Project Memory, User Rules, Last Session Summary, Current State, Connected Devices, Active Project Path).
+
+Brief me concisely:
+1. What project is this and what was I working on last? (2-3 sentences from "Last Session Summary")
+2. What's the current git state? (uncommitted files count, last commit)
+3. Which devices are online?
+4. Any pending TODOs or open threads from the project memory?
+5. The top 3 user rules I should keep in mind.
+
+Be terse — no preamble, just the brief.`,
+  },
+  {
     name: 'status',
     description: 'Show devices, services, and git status',
     type: 'prompt',
@@ -126,6 +142,22 @@ curl -X POST /api/deploy -H "Content-Type: application/json" -d '{"files": {"ind
 2. Grep through relevant files
 3. Check git log for context
 Report what you found concisely.`,
+  },
+  {
+    name: 'find',
+    description: 'Find files in the project by meaning (semantic search)',
+    type: 'prompt',
+    icon: '🔎',
+    promptTemplate: `Search project files using semantic search. Query: $ARGUMENTS
+
+Steps:
+1. Call \`GET /api/memory?action=file_search&projectId=<currentProjectId>&q=$ARGUMENTS\`
+   (use the active project's id; if unknown, ask the user or list projects first)
+2. Show the top results — for each: relative path, score, and a 1-line summary
+   of what the file does based on its preview
+3. Offer to read or edit any of them on request
+Do not fall back to grep unless semantic search returns nothing.`,
+    allowedTools: ['bash'],
   },
   {
     name: 'devices',

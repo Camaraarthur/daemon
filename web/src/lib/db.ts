@@ -174,6 +174,22 @@ function runMigrations(db: Database.Database) {
       CREATE INDEX idx_trust_tool ON trust_ledger(user_id, tool_name);
       CREATE INDEX idx_trust_time ON trust_ledger(user_id, created_at);
     `],
+    ['014_user_rules', `
+      CREATE TABLE IF NOT EXISTS user_rules (
+        user_id INTEGER PRIMARY KEY,
+        content TEXT NOT NULL,
+        updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+        FOREIGN KEY (user_id) REFERENCES users(id)
+      );
+    `],
+    ['015_project_memory', `
+      CREATE TABLE IF NOT EXISTS project_memory (
+        project_id INTEGER PRIMARY KEY,
+        content TEXT NOT NULL,
+        updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+        FOREIGN KEY (project_id) REFERENCES projects(id)
+      );
+    `],
   ]
 
   const insertMigration = db.prepare('INSERT INTO migrations (name, applied_at) VALUES (?, datetime(\'now\'))')
@@ -183,8 +199,103 @@ function runMigrations(db: Database.Database) {
       db.exec(sql)
       insertMigration.run(name)
       console.log(`[db] Applied migration: ${name}`)
+
+      // Post-migration seeds
+      if (name === '014_user_rules') {
+        try {
+          // Seed Arthur's CLAUDE.md (user_id=3) from disk if available
+          const fs = require('fs') as typeof import('fs')
+          const path = '/home/arthur/.claude/CLAUDE.md'
+          if (fs.existsSync(path)) {
+            const content = fs.readFileSync(path, 'utf-8')
+            db.prepare(
+              'INSERT OR REPLACE INTO user_rules (user_id, content, updated_at) VALUES (?, ?, datetime(\'now\'))'
+            ).run(3, content)
+            console.log('[db] Seeded user_rules for user_id=3 from CLAUDE.md')
+          }
+        } catch (e) {
+          console.warn('[db] Failed to seed user_rules:', e)
+        }
+      }
+
+      if (name === '015_project_memory') {
+        try {
+          // For each project, look up potential MEMORY/CLAUDE files
+          const fs = require('fs') as typeof import('fs')
+          const pathMod = require('path') as typeof import('path')
+          const projects = db.prepare('SELECT id, name, local_path FROM projects').all() as Array<{ id: number; name: string; local_path: string | null }>
+          let seeded = 0
+          for (const p of projects) {
+            const candidates: string[] = [
+              `/home/arthur/.claude/projects/-home-arthur/memory/${p.name}.md`,
+            ]
+            if (p.local_path) {
+              candidates.push(pathMod.join(p.local_path, 'CLAUDE.md'))
+              candidates.push(pathMod.join(p.local_path, 'MEMORY.md'))
+            }
+            const parts: string[] = []
+            for (const c of candidates) {
+              try {
+                if (fs.existsSync(c) && fs.statSync(c).isFile()) {
+                  parts.push(`# Source: ${c}\n\n${fs.readFileSync(c, 'utf-8')}`)
+                }
+              } catch {}
+            }
+            if (parts.length > 0) {
+              const content = parts.join('\n\n---\n\n')
+              db.prepare(
+                'INSERT OR REPLACE INTO project_memory (project_id, content, updated_at) VALUES (?, ?, datetime(\'now\'))'
+              ).run(p.id, content)
+              seeded++
+            }
+          }
+          console.log(`[db] Seeded project_memory for ${seeded} projects`)
+        } catch (e) {
+          console.warn('[db] Failed to seed project_memory:', e)
+        }
+      }
     }
   }
+}
+
+// ── User Rules (CLAUDE.md equivalent) ─────────────────────
+
+export function getUserRules(userId: number): string | null {
+  const row = getDb().prepare(
+    'SELECT content FROM user_rules WHERE user_id = ?'
+  ).get(userId) as { content: string } | undefined
+  return row?.content ?? null
+}
+
+export function setUserRules(userId: number, content: string): void {
+  getDb().prepare(`
+    INSERT INTO user_rules (user_id, content, updated_at)
+    VALUES (?, ?, datetime('now'))
+    ON CONFLICT(user_id) DO UPDATE SET content = excluded.content, updated_at = excluded.updated_at
+  `).run(userId, content)
+}
+
+// ── Project Memory (MEMORY.md equivalent) ─────────────────
+
+export function getProjectMemory(projectId: number): string | null {
+  const row = getDb().prepare(
+    'SELECT content FROM project_memory WHERE project_id = ?'
+  ).get(projectId) as { content: string } | undefined
+  return row?.content ?? null
+}
+
+export function setProjectMemory(projectId: number, content: string): void {
+  getDb().prepare(`
+    INSERT INTO project_memory (project_id, content, updated_at)
+    VALUES (?, ?, datetime('now'))
+    ON CONFLICT(project_id) DO UPDATE SET content = excluded.content, updated_at = excluded.updated_at
+  `).run(projectId, content)
+}
+
+export function appendProjectMemory(projectId: number, content: string): void {
+  const existing = getProjectMemory(projectId) ?? ''
+  const merged = existing ? `${existing}\n${content}` : content
+  setProjectMemory(projectId, merged)
 }
 
 // ── Projects ──────────────────────────────────────────────

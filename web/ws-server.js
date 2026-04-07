@@ -82,22 +82,23 @@ function validateCommand(command) {
   if (!command.type || !ALLOWED_COMMAND_TYPES.has(command.type)) {
     return `Invalid command type "${command.type}". Allowed: ${[...ALLOWED_COMMAND_TYPES].join(', ')}`
   }
-  // Check overall size
-  const serialized = JSON.stringify(command)
-  if (serialized.length > MAX_COMMAND_LENGTH) {
-    return `Command too large (${serialized.length} chars, max ${MAX_COMMAND_LENGTH})`
-  }
-  // Log run_command for audit trail
-  if (command.type === 'run_command' && command.command) {
-    console.log(`[ws] AUDIT run_command: ${String(command.command).slice(0, 200)}`)
-  }
-  // Check file size for receive_file
+  // Check file size for receive_file (uses higher limit)
   if (command.type === 'receive_file' && command.data) {
     const dataSize = typeof command.data === 'string' ? command.data.length : 0
     // Base64 is ~33% overhead, so raw size ~ dataSize * 0.75
     if (dataSize * 0.75 > MAX_FILE_SIZE) {
       return `File too large (estimated ${Math.round(dataSize * 0.75 / 1024 / 1024)}MB, max 10MB)`
     }
+  } else {
+    // Non-file commands: check overall size
+    const serialized = JSON.stringify(command)
+    if (serialized.length > MAX_COMMAND_LENGTH) {
+      return `Command too large (${serialized.length} chars, max ${MAX_COMMAND_LENGTH})`
+    }
+  }
+  // Log run_command for audit trail
+  if (command.type === 'run_command' && command.command) {
+    console.log(`[ws] AUDIT run_command: ${String(command.command).slice(0, 200)}`)
   }
   return null  // valid
 }
@@ -284,7 +285,7 @@ const server = http.createServer((req, res) => {
   res.end()
 })
 
-const wss = new WebSocketServer({ server, path: '/ws/device' })
+const wss = new WebSocketServer({ server, path: '/ws/device', maxPayload: 16 * 1024 * 1024 })
 
 wss.on('connection', (ws, req) => {
   console.log('[ws] New device connection from', req.socket.remoteAddress)

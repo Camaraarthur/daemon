@@ -5,6 +5,46 @@ import { join } from 'path'
 const DAEMON_ROOT = join(process.cwd(), '..')
 const VENV_PYTHON = join(DAEMON_ROOT, '.venv', 'bin', 'python3')
 const MEMORY_SEARCH = join(DAEMON_ROOT, 'server', 'memory_search.py')
+const FILE_INDEXER = join(DAEMON_ROOT, 'server', 'file_indexer.py')
+
+/**
+ * Run file_indexer.py in search mode and return parsed results.
+ * Parameters are passed as argv (project id is coerced to int, query is
+ * passed as a single argv element so shell metacharacters are inert).
+ */
+async function runFileSearch(projectId: string, query: string, limit: number): Promise<any[]> {
+  const pid = parseInt(projectId, 10)
+  if (!Number.isFinite(pid) || pid < 0) throw new Error('Invalid projectId')
+  const lim = Math.min(Math.max(parseInt(String(limit), 10) || 10, 1), 50)
+
+  const { execFile } = require('child_process')
+  // Clean env: pass only essentials so Python doesn't inherit Node-specific
+  // variables (NODE_OPTIONS etc.) that have caused odd hangs in this stack.
+  const cleanEnv: Record<string, string> = {
+    HOME: process.env.HOME || '/home/arthur',
+    PATH: '/home/arthur/.local/bin:/usr/local/bin:/usr/bin:/bin',
+    LANG: process.env.LANG || 'C.UTF-8',
+    LC_ALL: process.env.LC_ALL || 'C.UTF-8',
+  }
+  return new Promise((resolve, reject) => {
+    execFile(
+      VENV_PYTHON,
+      ['-u', FILE_INDEXER, 'search', '--project-id', String(pid), '--query', query, '--limit', String(lim)],
+      { timeout: 60000, maxBuffer: 4 * 1024 * 1024, env: cleanEnv, cwd: DAEMON_ROOT },
+      (err: any, stdout: string, stderr: string) => {
+        if (err) {
+          console.error('[file_search] error:', err.message, 'code=', err.code, 'signal=', err.signal, '\nstderr:', stderr, '\nstdout:', stdout)
+          return reject(new Error(`${err.message} code=${err.code} signal=${err.signal} :: ${stderr || stdout || 'no output'}`))
+        }
+        try {
+          resolve(JSON.parse(stdout.trim() || '[]'))
+        } catch (e) {
+          reject(new Error(`Bad JSON from file_indexer: ${stdout.slice(0, 200)}`))
+        }
+      },
+    )
+  })
+}
 
 /**
  * Run memory_search.py via Python and return JSON results.
@@ -93,6 +133,15 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ results })
     }
 
+    if (action === 'file_search') {
+      const projectId = params.get('projectId') || '0'
+      const query = params.get('q') || ''
+      const limit = parseInt(params.get('limit') || '10', 10)
+      if (!query) return NextResponse.json({ error: 'Missing q parameter' }, { status: 400 })
+      const results = await runFileSearch(projectId, query, limit)
+      return NextResponse.json({ results })
+    }
+
     if (action === 'context') {
       const projectId = params.get('projectId')
       if (!projectId) return NextResponse.json({ error: 'Missing projectId parameter' }, { status: 400 })
@@ -101,7 +150,7 @@ export async function GET(req: NextRequest) {
     }
 
     return NextResponse.json(
-      { error: 'Missing or invalid action. Use: search, grep, context' },
+      { error: 'Missing or invalid action. Use: search, grep, context, file_search' },
       { status: 400 }
     )
   } catch (err: any) {
