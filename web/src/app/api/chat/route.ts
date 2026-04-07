@@ -612,6 +612,37 @@ export async function POST(req: NextRequest) {
     const needsTools = TOOLS_REGEX.test(effectiveMessage) || (slashMatch?.command.type === 'prompt')
     const threadKey = threadId || 'default'
 
+    // ── Claude Code sync IN: pull any new messages from the linked JSONL ──
+    // This catches messages typed in `claude` CLI in the terminal between page loads.
+    // We sync into the project's CANONICAL thread (one-thread-per-project model),
+    // not the request's threadKey which may be a transient default.
+    let claudeUserUuid: string | null = null
+    if (resolvedProjectId) {
+      try {
+        const { syncFromJsonl, appendUserMessage } = await import('@/lib/claude-sync')
+        const link = db.getClaudeCodeLink(resolvedProjectId)
+        if (link?.enabled) {
+          // Find the project's canonical thread
+          const dbInner = (await import('@/lib/db')).default
+          const canonical = dbInner().prepare(
+            'SELECT id FROM chat_threads WHERE project_id = ? ORDER BY created_at ASC LIMIT 1'
+          ).get(resolvedProjectId) as { id: string } | undefined
+          const syncTargetThread = canonical?.id || threadKey
+
+          const imported = syncFromJsonl(resolvedProjectId, syncTargetThread)
+          if (imported > 0) {
+            console.log(`[claude-sync] Pulled ${imported} messages from JSONL into thread ${syncTargetThread} for project ${resolvedProjectId}`)
+          }
+          // Write the user message to JSONL too — daemon and CLI share one history
+          const proj = db.getProject(parseInt(userId) || 0, resolvedProjectId)
+          const cwd = proj?.local_path || process.cwd()
+          claudeUserUuid = appendUserMessage(resolvedProjectId, message, cwd)
+        }
+      } catch (e) {
+        console.warn('[claude-sync] sync IN failed:', e)
+      }
+    }
+
     // Persist user message to SQLite
     try {
       // Ensure thread exists in DB
@@ -685,6 +716,16 @@ export async function POST(req: NextRequest) {
               tool_calls: result.toolCalls?.length ? JSON.stringify(result.toolCalls) : undefined,
             })
           } catch {}
+
+          // ── Claude Code sync OUT: write assistant message to JSONL ──
+          if (resolvedProjectId && claudeUserUuid) {
+            try {
+              const { appendAssistantMessage } = await import('@/lib/claude-sync')
+              appendAssistantMessage(resolvedProjectId, result.response, claudeUserUuid, result.model)
+            } catch (e) {
+              console.warn('[claude-sync] sync OUT (stream) failed:', e)
+            }
+          }
 
           // Log usage
           try {
@@ -766,6 +807,16 @@ export async function POST(req: NextRequest) {
         tool_calls: result.toolCalls?.length ? JSON.stringify(result.toolCalls) : undefined,
       })
     } catch {}
+
+    // ── Claude Code sync OUT: write assistant message to JSONL ──
+    if (resolvedProjectId && claudeUserUuid) {
+      try {
+        const { appendAssistantMessage } = await import('@/lib/claude-sync')
+        appendAssistantMessage(resolvedProjectId, result.response, claudeUserUuid, result.model)
+      } catch (e) {
+        console.warn('[claude-sync] sync OUT (non-stream) failed:', e)
+      }
+    }
 
     // Log usage
     try {

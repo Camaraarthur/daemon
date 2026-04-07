@@ -1,91 +1,96 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" width="210mm" height="297mm" viewBox="0 0 210 297">
-  <style>
-    text { font-family: Arial, Helvetica, sans-serif; }
-    .num { font-size: 5px; font-weight: bold; }
-    .fig { font-size: 8px; font-weight: bold; }
-    rect, line, polygon, circle, path { fill: none; stroke: black; }
-  </style>
 
   <!-- Fig label -->
-  <text x="105" y="35" text-anchor="middle" class="fig">Fig. 3</text>
+  <text x="105" y="40" text-anchor="middle" font-family="Arial" font-size="9" font-weight="bold" fill="black">Fig. 3</text>
 
   <!-- ============================================ -->
   <!-- OUTER DEVICE BOUNDARY (100) -->
   <!-- ============================================ -->
-  <rect x="30" y="60" width="150" height="170" rx="3" ry="3" stroke-width="0.8"/>
-  <text x="35" y="69" class="num">100</text>
+  <rect x="25" y="60" width="160" height="180" rx="4" ry="4" fill="none" stroke="black" stroke-width="1"/>
+  <text x="32" y="72" font-family="Arial" font-size="6" font-weight="bold" fill="black">100</text>
 
   <!-- ============================================ -->
-  <!-- POWER SUPPLY (110) — top left -->
+  <!-- TOP ZONE: Privacy Interlock (Power → Indicator → Sensor) -->
   <!-- ============================================ -->
-  <rect x="42" y="80" width="32" height="20" stroke-width="0.6"/>
-  <text x="58" y="93" text-anchor="middle" class="num">110</text>
 
-  <!-- Power line going right (130) — to indicator/sensor -->
-  <line x1="74" y1="90" x2="100" y2="90" stroke-width="0.8"/>
-  <text x="87" y="86" text-anchor="middle" class="num">130</text>
+  <!-- Power Supply (110) -->
+  <rect x="40" y="90" width="35" height="22" fill="none" stroke="black" stroke-width="0.8"/>
+  <text x="57.5" y="105" text-anchor="middle" font-family="Arial" font-size="6" font-weight="bold" fill="black">110</text>
 
-  <!-- ============================================ -->
-  <!-- INDICATOR (140) -->
-  <!-- ============================================ -->
-  <rect x="100" y="80" width="32" height="20" stroke-width="0.6"/>
-  <text x="116" y="93" text-anchor="middle" class="num">140</text>
+  <!-- Power line (130) — solid thick line -->
+  <line x1="75" y1="101" x2="92" y2="101" stroke="black" stroke-width="1.2"/>
+  <text x="83.5" y="97" text-anchor="middle" font-family="Arial" font-size="5" font-weight="bold" fill="black">130</text>
 
-  <!-- Connection between indicator and sensor -->
-  <line x1="132" y1="90" x2="148" y2="90" stroke-width="0.8"/>
+  <!-- Indicator (140) -->
+  <rect x="92" y="90" width="35" height="22" fill="none" stroke="black" stroke-width="0.8"/>
+  <text x="109.5" y="105" text-anchor="middle" font-family="Arial" font-size="6" font-weight="bold" fill="black">140</text>
 
-  <!-- ============================================ -->
-  <!-- SENSOR (150) -->
-  <!-- ============================================ -->
-  <rect x="148" y="80" width="32" height="20" stroke-width="0.6"/>
-  <text x="164" y="93" text-anchor="middle" class="num">150</text>
+  <!-- Coupling line between indicator and sensor (thick = power) -->
+  <line x1="127" y1="101" x2="143" y2="101" stroke="black" stroke-width="1.2"/>
 
-  <!-- Visible-to-user arrow from indicator going up out of device -->
-  <line x1="116" y1="80" x2="116" y2="50" stroke-width="0.5"/>
-  <polygon points="116,50 113,55 119,55" fill="black" stroke="none"/>
+  <!-- Sensor (150) -->
+  <rect x="143" y="90" width="35" height="22" fill="none" stroke="black" stroke-width="0.8"/>
+  <text x="160.5" y="105" text-anchor="middle" font-family="Arial" font-size="6" font-weight="bold" fill="black">150</text>
+
+  <!-- Visible-to-user arrow from indicator going UP and out of device -->
+  <line x1="109.5" y1="90" x2="109.5" y2="50" stroke="black" stroke-width="0.8"/>
+  <polygon points="109.5,50 106,57 113,57" fill="black" stroke="black" stroke-width="0.5"/>
 
   <!-- ============================================ -->
-  <!-- PROCESSOR (160) -->
+  <!-- HORIZONTAL DIVIDER (visual separation between zones) -->
   <!-- ============================================ -->
-  <rect x="42" y="130" width="32" height="20" stroke-width="0.6"/>
-  <text x="58" y="143" text-anchor="middle" class="num">160</text>
-
-  <!-- Data line from sensor to processor (DASHED — DATA, not power) -->
-  <line x1="164" y1="100" x2="164" y2="115" stroke-width="0.5" stroke-dasharray="2,1"/>
-  <line x1="164" y1="115" x2="58" y2="115" stroke-width="0.5" stroke-dasharray="2,1"/>
-  <line x1="58" y1="115" x2="58" y2="130" stroke-width="0.5" stroke-dasharray="2,1"/>
-  <polygon points="58,130 55,124 61,124" fill="black" stroke="none"/>
-
-  <!-- BIG X marking absence of control path between processor and indicator/sensor power -->
-  <line x1="92" y1="108" x2="100" y2="116" stroke-width="0.8"/>
-  <line x1="100" y1="108" x2="92" y2="116" stroke-width="0.8"/>
+  <line x1="35" y1="135" x2="175" y2="135" stroke="black" stroke-width="0.5" stroke-dasharray="3,2"/>
 
   <!-- ============================================ -->
-  <!-- WIRELESS MODULE (170) -->
+  <!-- BOTTOM ZONE: Compute (Processor, Wireless, Storage) -->
+  <!-- These have NO power-control connection to the privacy zone -->
   <!-- ============================================ -->
-  <rect x="84" y="130" width="32" height="20" stroke-width="0.6"/>
-  <text x="100" y="143" text-anchor="middle" class="num">170</text>
+
+  <!-- Processor (160) -->
+  <rect x="40" y="155" width="35" height="22" fill="none" stroke="black" stroke-width="0.8"/>
+  <text x="57.5" y="170" text-anchor="middle" font-family="Arial" font-size="6" font-weight="bold" fill="black">160</text>
+
+  <!-- Wireless (170) -->
+  <rect x="92" y="155" width="35" height="22" fill="none" stroke="black" stroke-width="0.8"/>
+  <text x="109.5" y="170" text-anchor="middle" font-family="Arial" font-size="6" font-weight="bold" fill="black">170</text>
+
+  <!-- Storage (180) -->
+  <rect x="143" y="155" width="35" height="22" fill="none" stroke="black" stroke-width="0.8"/>
+  <text x="160.5" y="170" text-anchor="middle" font-family="Arial" font-size="6" font-weight="bold" fill="black">180</text>
+
+  <!-- Battery (190) -->
+  <rect x="92" y="200" width="35" height="22" fill="none" stroke="black" stroke-width="0.8"/>
+  <text x="109.5" y="215" text-anchor="middle" font-family="Arial" font-size="6" font-weight="bold" fill="black">190</text>
 
   <!-- ============================================ -->
-  <!-- STORAGE (180) -->
+  <!-- DATA LINE: Sensor → Processor (DASHED, thin) -->
+  <!-- This is the ONLY connection from privacy zone to compute zone -->
   <!-- ============================================ -->
-  <rect x="126" y="130" width="32" height="20" stroke-width="0.6"/>
-  <text x="142" y="143" text-anchor="middle" class="num">180</text>
+  <line x1="160.5" y1="112" x2="160.5" y2="145" stroke="black" stroke-width="0.6" stroke-dasharray="2,1.5"/>
+  <line x1="160.5" y1="145" x2="57.5" y2="145" stroke="black" stroke-width="0.6" stroke-dasharray="2,1.5"/>
+  <line x1="57.5" y1="145" x2="57.5" y2="155" stroke="black" stroke-width="0.6" stroke-dasharray="2,1.5"/>
+  <polygon points="57.5,155 54.5,150 60.5,150" fill="black" stroke="black" stroke-width="0.3"/>
 
   <!-- ============================================ -->
-  <!-- BATTERY (190) -->
+  <!-- POWER LINE: Battery → Power Supply (solid) -->
   <!-- ============================================ -->
-  <rect x="84" y="170" width="32" height="20" stroke-width="0.6"/>
-  <text x="100" y="183" text-anchor="middle" class="num">190</text>
+  <line x1="109.5" y1="200" x2="109.5" y2="190" stroke="black" stroke-width="1"/>
+  <line x1="109.5" y1="190" x2="40" y2="190" stroke="black" stroke-width="1"/>
+  <line x1="40" y1="190" x2="40" y2="101" stroke="black" stroke-width="1"/>
+  <line x1="40" y1="101" x2="40" y2="101" stroke="black" stroke-width="1"/>
 
-  <!-- Battery powers the power supply (110) -->
-  <line x1="100" y1="170" x2="100" y2="120" stroke-width="0.5"/>
-  <line x1="100" y1="120" x2="58" y2="120" stroke-width="0.5"/>
-  <line x1="58" y1="120" x2="58" y2="100" stroke-width="0.5"/>
+  <!-- Data lines between processor / wireless / storage (dashed) -->
+  <line x1="75" y1="166" x2="92" y2="166" stroke="black" stroke-width="0.6" stroke-dasharray="2,1.5"/>
+  <line x1="127" y1="166" x2="143" y2="166" stroke="black" stroke-width="0.6" stroke-dasharray="2,1.5"/>
 
-  <!-- Processor connects to wireless and storage (data lines, dashed) -->
-  <line x1="74" y1="143" x2="84" y2="143" stroke-width="0.5" stroke-dasharray="2,1"/>
-  <line x1="116" y1="143" x2="126" y2="143" stroke-width="0.5" stroke-dasharray="2,1"/>
+  <!-- ============================================ -->
+  <!-- LEGEND (no descriptive text — just symbol meanings) -->
+  <!-- ============================================ -->
+  <line x1="40" y1="255" x2="60" y2="255" stroke="black" stroke-width="1.2"/>
+  <text x="63" y="257" font-family="Arial" font-size="4" fill="black">power</text>
+
+  <line x1="90" y1="255" x2="110" y2="255" stroke="black" stroke-width="0.6" stroke-dasharray="2,1.5"/>
+  <text x="113" y="257" font-family="Arial" font-size="4" fill="black">data</text>
 
 </svg>

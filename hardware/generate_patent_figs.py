@@ -36,7 +36,7 @@ def wrap_in_a4(content_svg_path: Path, fig_label: str, output_path: Path):
     ty = 60 + (avail_h - scaled_h) / 2 - vb[1] * scale
 
     a4_svg = f'''<?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" width="210mm" height="297mm" viewBox="0 0 210 297">
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="210mm" height="297mm" viewBox="0 0 210 297">
   <style>
     text {{ font-family: Arial, Helvetica, sans-serif; }}
   </style>

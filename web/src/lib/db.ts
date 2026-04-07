@@ -190,6 +190,18 @@ function runMigrations(db: Database.Database) {
         FOREIGN KEY (project_id) REFERENCES projects(id)
       );
     `],
+    ['016_claude_code_links', `
+      CREATE TABLE IF NOT EXISTS claude_code_links (
+        project_id INTEGER PRIMARY KEY,
+        claude_project_dir TEXT NOT NULL,
+        active_session_id TEXT,
+        last_synced_uuid TEXT,
+        last_synced_at TEXT,
+        enabled INTEGER DEFAULT 1,
+        FOREIGN KEY (project_id) REFERENCES projects(id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_claude_links_session ON claude_code_links(active_session_id);
+    `],
   ]
 
   const insertMigration = db.prepare('INSERT INTO migrations (name, applied_at) VALUES (?, datetime(\'now\'))')
@@ -856,6 +868,54 @@ export function getTrustSummary(userId: number): TrustScore[] {
   `).all(userId) as { tool_name: string }[]
 
   return tools.map(t => getTrustScore(userId, t.tool_name))
+}
+
+// ── Claude Code link (bidirectional JSONL sync) ─────────────
+
+export interface ClaudeCodeLink {
+  project_id: number
+  claude_project_dir: string
+  active_session_id: string | null
+  last_synced_uuid: string | null
+  last_synced_at: string | null
+  enabled: number
+}
+
+export function getClaudeCodeLink(projectId: number): ClaudeCodeLink | undefined {
+  return getDb().prepare(
+    'SELECT * FROM claude_code_links WHERE project_id = ?'
+  ).get(projectId) as ClaudeCodeLink | undefined
+}
+
+export function upsertClaudeCodeLink(
+  projectId: number,
+  claudeProjectDir: string,
+  activeSessionId?: string | null,
+): void {
+  getDb().prepare(`
+    INSERT INTO claude_code_links (project_id, claude_project_dir, active_session_id, enabled)
+    VALUES (?, ?, ?, 1)
+    ON CONFLICT(project_id) DO UPDATE SET
+      claude_project_dir = excluded.claude_project_dir,
+      active_session_id = COALESCE(excluded.active_session_id, claude_code_links.active_session_id),
+      enabled = 1
+  `).run(projectId, claudeProjectDir, activeSessionId || null)
+}
+
+export function updateClaudeCodeLinkSync(
+  projectId: number,
+  sessionId: string,
+  lastUuid: string,
+): void {
+  getDb().prepare(`
+    UPDATE claude_code_links
+    SET active_session_id = ?, last_synced_uuid = ?, last_synced_at = datetime('now')
+    WHERE project_id = ?
+  `).run(sessionId, lastUuid, projectId)
+}
+
+export function disableClaudeCodeLink(projectId: number): void {
+  getDb().prepare('UPDATE claude_code_links SET enabled = 0 WHERE project_id = ?').run(projectId)
 }
 
 export default getDb
