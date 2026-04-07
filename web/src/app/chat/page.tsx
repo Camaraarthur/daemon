@@ -241,6 +241,32 @@ function AuthedChat({ user }: { user: any }) {
   const chatThread = getActiveThread()
   const displayMessages: Message[] = chatThread?.messages || []
 
+  // Restore project from URL on mount (so refresh keeps you in the right conversation)
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    const params = new URLSearchParams(window.location.search)
+    const urlProjectId = params.get('p')
+    if (urlProjectId && !activeProjectId) {
+      const pid = parseInt(urlProjectId, 10)
+      if (!isNaN(pid)) {
+        setActiveProject(pid)
+      }
+    }
+  }, []) // run once on mount
+
+  // Sync URL when active project changes (so the page is bookmarkable / refresh-safe)
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    const url = new URL(window.location.href)
+    if (activeProjectId) {
+      url.searchParams.set('p', String(activeProjectId))
+    } else {
+      url.searchParams.delete('p')
+    }
+    // Use replaceState so we don't pollute browser history
+    window.history.replaceState({}, '', url.toString())
+  }, [activeProjectId])
+
   // Load most recent thread when switching projects
   useEffect(() => {
     if (activeProjectId) {
