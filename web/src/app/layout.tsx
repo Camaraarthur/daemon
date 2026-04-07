@@ -29,7 +29,7 @@ export const metadata: Metadata = {
   metadataBase: new URL("https://daemon.page"),
   robots: { index: true, follow: true },
   icons: {
-    icon: "/favicon2.png",
+    icon: "/favicon3.png",
     apple: "/app-icon.png",
   },
 };
