@@ -113,12 +113,20 @@ export async function runAgentLoopStreaming(opts: {
   const { provider, systemPrompt, userMessage, userId, maxIterations = 10, onEvent, history, conversationId } = opts
 
   // Discover the user's device tools. NO local sandbox.
+  // Dedupe by short tool name so the model sees clean names like "bash"
+  // instead of "arturito-linux-x64__bash" (which models tend to ignore
+  // because the format is unfamiliar). Routing happens by short name.
   const deviceTools = await fetchDeviceTools(userId)
   const deviceToolMap = new Map<string, { device_id: string; tool_name: string }>()
+  const dedupedByShortName = new Map<string, DeviceTool>()
   for (const dt of deviceTools) {
-    deviceToolMap.set(dt.name, { device_id: dt.device_id, tool_name: dt.tool_name })
+    deviceToolMap.set(dt.tool_name, { device_id: dt.device_id, tool_name: dt.tool_name })
+    dedupedByShortName.set(dt.tool_name, dt)
   }
-  const tools = deviceToolsToOpenAI(deviceTools)
+  const tools = Array.from(dedupedByShortName.values()).map(t => ({
+    type: 'function' as const,
+    function: { name: t.tool_name, description: t.description, parameters: t.inputSchema },
+  }))
 
   // Inject device context into the system prompt
   let enrichedSystemPrompt = systemPrompt

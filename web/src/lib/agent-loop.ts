@@ -186,16 +186,32 @@ export async function runAgentLoop(opts: {
   // Discover the user's device tools. The relay holds NO local sandbox —
   // every tool runs on the user's own device via the WS hub.
   const deviceTools = await fetchDeviceTools(userId)
+
+  // Dedupe by short tool name (read_file, bash, etc.) — present ONE entry
+  // per tool to the model with a clean name. The deviceToolMap routes
+  // each short name to the actual (device_id, tool_name). When multiple
+  // devices expose the same tool, the most recently registered wins
+  // (later devices in the list overwrite earlier).
+  // Multi-device per-tool routing is a later optimization (Phase v1.1).
   const deviceToolMap: DeviceToolMap = new Map()
+  const dedupedTools: Map<string, DeviceTool> = new Map()
   for (const dt of deviceTools) {
-    deviceToolMap.set(dt.name, {
+    deviceToolMap.set(dt.tool_name, {
       device_id: dt.device_id,
       tool_name: dt.tool_name,
     })
+    dedupedTools.set(dt.tool_name, dt)
   }
 
-  // Tool surface = ONLY the user's device tools.
-  const allTools = deviceToolsToOpenAI(deviceTools)
+  // Convert to OpenAI tool defs with the SHORT names the model expects.
+  const allTools = Array.from(dedupedTools.values()).map(t => ({
+    type: 'function' as const,
+    function: {
+      name: t.tool_name,
+      description: t.description,
+      parameters: t.inputSchema,
+    },
+  }))
 
   // Plan/Act separation: first iteration plans, subsequent iterations execute
   const planPrefix = `## Instructions
