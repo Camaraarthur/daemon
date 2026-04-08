@@ -204,3 +204,210 @@ export function listThreads(limit = 50) {
 export function getStorePath() {
   return STORE_PATH
 }
+
+// ── Memory operations (Letta-style) ──────────────────────
+//
+// memory_blocks and project_facts tables are created by the MCP server's
+// migrations (mcp_001_memory_blocks, mcp_002_project_facts). The device
+// daemon shares the same tables — both processes are on the same machine
+// reading/writing the same SQLite file. WAL mode handles concurrent
+// access cleanly.
+//
+// We use CREATE TABLE IF NOT EXISTS guards in case the device daemon
+// starts before the MCP server has ever run.
+
+function ensureMemoryTables() {
+  const db = getStore()
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS memory_blocks (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      project_id INTEGER NOT NULL,
+      label TEXT NOT NULL,
+      content TEXT NOT NULL,
+      max_chars INTEGER DEFAULT 4000,
+      updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+      UNIQUE(project_id, label)
+    );
+    CREATE INDEX IF NOT EXISTS idx_blocks_project ON memory_blocks(project_id);
+
+    CREATE TABLE IF NOT EXISTS project_facts (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      project_id INTEGER NOT NULL,
+      category TEXT NOT NULL,
+      content TEXT NOT NULL,
+      source TEXT,
+      embedded INTEGER DEFAULT 0,
+      importance INTEGER DEFAULT 5,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      last_accessed_at TEXT,
+      access_count INTEGER DEFAULT 0
+    );
+    CREATE INDEX IF NOT EXISTS idx_facts_project ON project_facts(project_id, category);
+    CREATE INDEX IF NOT EXISTS idx_facts_importance ON project_facts(project_id, importance DESC);
+  `)
+}
+
+export function addFact({ project_id, category, content, source, importance }) {
+  ensureMemoryTables()
+  const db = getStore()
+  const result = db
+    .prepare(
+      `INSERT INTO project_facts (project_id, category, content, source, importance)
+       VALUES (?, ?, ?, ?, ?)`,
+    )
+    .run(
+      Number(project_id),
+      String(category || ''),
+      String(content || ''),
+      source ? String(source) : null,
+      importance ?? 5,
+    )
+  return Number(result.lastInsertRowid)
+}
+
+export function listFacts(project_id, category, limit = 50) {
+  ensureMemoryTables()
+  const db = getStore()
+  if (category) {
+    return db
+      .prepare(
+        `SELECT * FROM project_facts WHERE project_id = ? AND category = ?
+         ORDER BY importance DESC, created_at DESC LIMIT ?`,
+      )
+      .all(Number(project_id), String(category), Number(limit))
+  }
+  return db
+    .prepare(
+      `SELECT * FROM project_facts WHERE project_id = ?
+       ORDER BY importance DESC, created_at DESC LIMIT ?`,
+    )
+    .all(Number(project_id), Number(limit))
+}
+
+export function grepFacts(project_id, pattern, limit = 20) {
+  ensureMemoryTables()
+  return getStore()
+    .prepare(
+      `SELECT * FROM project_facts WHERE project_id = ? AND content LIKE ?
+       ORDER BY importance DESC LIMIT ?`,
+    )
+    .all(Number(project_id), `%${pattern}%`, Number(limit))
+}
+
+export function touchFact(id) {
+  getStore()
+    .prepare(
+      `UPDATE project_facts SET last_accessed_at = datetime('now'),
+       access_count = access_count + 1 WHERE id = ?`,
+    )
+    .run(Number(id))
+}
+
+export function countFacts(project_id) {
+  ensureMemoryTables()
+  const db = getStore()
+  const total = db
+    .prepare('SELECT COUNT(*) as c FROM project_facts WHERE project_id = ?')
+    .get(Number(project_id)).c
+  const byCat = db
+    .prepare(
+      'SELECT category, COUNT(*) as c FROM project_facts WHERE project_id = ? GROUP BY category',
+    )
+    .all(Number(project_id))
+  const by_category = {}
+  for (const r of byCat) by_category[r.category] = r.c
+  return { total, by_category }
+}
+
+export function getMemoryBlocks(project_id) {
+  ensureMemoryTables()
+  return getStore()
+    .prepare('SELECT * FROM memory_blocks WHERE project_id = ? ORDER BY label')
+    .all(Number(project_id))
+}
+
+export function getMemoryBlock(project_id, label) {
+  ensureMemoryTables()
+  return getStore()
+    .prepare('SELECT * FROM memory_blocks WHERE project_id = ? AND label = ?')
+    .get(Number(project_id), String(label))
+}
+
+export function upsertMemoryBlock(project_id, label, content, maxChars = 4000) {
+  ensureMemoryTables()
+  getStore()
+    .prepare(
+      `INSERT INTO memory_blocks (project_id, label, content, max_chars, updated_at)
+       VALUES (?, ?, ?, ?, datetime('now'))
+       ON CONFLICT(project_id, label) DO UPDATE SET
+         content = excluded.content,
+         max_chars = excluded.max_chars,
+         updated_at = datetime('now')`,
+    )
+    .run(Number(project_id), String(label), String(content), Number(maxChars))
+}
+
+export function appendMemoryBlock(project_id, label, addition) {
+  const existing = getMemoryBlock(project_id, label)
+  const current = existing?.content || ''
+  const maxChars = existing?.max_chars || 4000
+  let next = current ? `${current}\n${addition}` : String(addition)
+  if (next.length > maxChars) next = next.slice(next.length - maxChars)
+  upsertMemoryBlock(project_id, label, next, maxChars)
+}
+
+/**
+ * Unified search across blocks, facts, and (optionally) recent chat
+ * messages for a project. Same scoring as the MCP server's recall().
+ */
+export function recallMemory(project_id, query, limit = 20) {
+  const terms = String(query)
+    .toLowerCase()
+    .split(/\s+/)
+    .filter((t) => t.length > 2)
+  if (terms.length === 0) return []
+
+  const score = (text) => {
+    if (!text) return 0
+    const lower = text.toLowerCase()
+    let hits = 0
+    for (const t of terms) if (lower.includes(t)) hits++
+    return hits / terms.length
+  }
+
+  const hits = []
+
+  for (const block of getMemoryBlocks(project_id)) {
+    const s = score(block.content)
+    if (s > 0) {
+      hits.push({
+        source: 'block',
+        id: block.id,
+        label_or_category: block.label,
+        score: s + 0.1,
+        content: block.content,
+      })
+    }
+  }
+
+  const candidates = new Map()
+  for (const term of terms) {
+    for (const f of grepFacts(project_id, term, 50)) candidates.set(f.id, f)
+  }
+  for (const f of candidates.values()) {
+    const s = score(f.content)
+    if (s > 0) {
+      hits.push({
+        source: 'fact',
+        id: f.id,
+        label_or_category: f.category,
+        score: s * (0.5 + f.importance / 10),
+        content: f.content,
+      })
+      touchFact(f.id)
+    }
+  }
+
+  hits.sort((a, b) => b.score - a.score)
+  return hits.slice(0, Number(limit))
+}

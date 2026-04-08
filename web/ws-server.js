@@ -134,6 +134,10 @@ const ALLOWED_COMMAND_TYPES = new Set([
   'chat.message_imported', 'store.stats',
   // Step 8: relay reads thread history from device, not its own DB
   'chat.fetch_messages', 'chat.get_latest_session',
+  // Step 8c: memory tools dispatched to device
+  'memory.remember', 'memory.recall', 'memory.list_facts',
+  'memory.get_block', 'memory.list_blocks',
+  'memory.update_block', 'memory.append_block',
 ])
 const MAX_COMMAND_LENGTH = 10_000  // 10K chars
 const MAX_FILE_SIZE = 10 * 1024 * 1024  // 10MB

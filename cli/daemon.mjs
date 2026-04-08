@@ -27,6 +27,15 @@ import {
   listChatMessages,
   countChatMessages,
   getStorePath,
+  addFact,
+  listFacts,
+  grepFacts,
+  countFacts,
+  getMemoryBlock,
+  getMemoryBlocks,
+  upsertMemoryBlock,
+  appendMemoryBlock,
+  recallMemory,
 } from './store.mjs'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -1004,6 +1013,107 @@ async function handleCommand(msg) {
            ORDER BY created_at DESC LIMIT 1`,
         ).get(threadId)
         result = { ok: true, source_session_id: row?.source_session_id || null }
+      } catch (e) {
+        result = { ok: false, error: e.message }
+      }
+      break
+    }
+
+    // ── Memory operations (Letta-style) ─────────────────────
+    // The relay's agent loop dispatches memory tool calls here so the
+    // device's local store is the single source of truth. The MCP server
+    // (mcp-memory-server.mjs) reads/writes the same SQLite file directly,
+    // so memory written via the daemon web UI is visible in Claude Code
+    // terminal and vice versa.
+
+    case 'memory.remember': {
+      try {
+        const id = addFact({
+          project_id: msg.project_id || 1,
+          category: msg.category || '',
+          content: msg.content || '',
+          source: msg.source,
+          importance: msg.importance,
+        })
+        result = { ok: true, fact_id: id }
+      } catch (e) {
+        result = { ok: false, error: e.message }
+      }
+      break
+    }
+
+    case 'memory.recall': {
+      try {
+        const hits = recallMemory(
+          msg.project_id || 1,
+          msg.query || '',
+          msg.limit || 20,
+        )
+        result = { ok: true, count: hits.length, hits }
+      } catch (e) {
+        result = { ok: false, error: e.message }
+      }
+      break
+    }
+
+    case 'memory.list_facts': {
+      try {
+        const facts = listFacts(
+          msg.project_id || 1,
+          msg.category || null,
+          msg.limit || 50,
+        )
+        const counts = countFacts(msg.project_id || 1)
+        result = { ok: true, total: counts.total, by_category: counts.by_category, facts }
+      } catch (e) {
+        result = { ok: false, error: e.message }
+      }
+      break
+    }
+
+    case 'memory.get_block': {
+      try {
+        const block = getMemoryBlock(msg.project_id || 1, msg.label || '')
+        result = block
+          ? { ok: true, block }
+          : { ok: false, error: `block not found: ${msg.label}` }
+      } catch (e) {
+        result = { ok: false, error: e.message }
+      }
+      break
+    }
+
+    case 'memory.list_blocks': {
+      try {
+        const blocks = getMemoryBlocks(msg.project_id || 1)
+        result = { ok: true, blocks }
+      } catch (e) {
+        result = { ok: false, error: e.message }
+      }
+      break
+    }
+
+    case 'memory.update_block': {
+      try {
+        const maxChars = msg.max_chars || 4000
+        const content = String(msg.content || '')
+        if (content.length > maxChars) {
+          result = { ok: false, error: `content (${content.length}) exceeds max_chars (${maxChars})` }
+          break
+        }
+        upsertMemoryBlock(msg.project_id || 1, msg.label || '', content, maxChars)
+        result = { ok: true }
+      } catch (e) {
+        result = { ok: false, error: e.message }
+      }
+      break
+    }
+
+    case 'memory.append_block': {
+      try {
+        appendMemoryBlock(msg.project_id || 1, msg.label || '', msg.addition || '')
+        const block = getMemoryBlock(msg.project_id || 1, msg.label || '')
+        result = { ok: true, total_chars: block?.content?.length || 0 }
       } catch (e) {
         result = { ok: false, error: e.message }
       }

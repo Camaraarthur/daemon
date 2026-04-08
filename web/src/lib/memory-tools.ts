@@ -15,15 +15,14 @@
  */
 
 import {
-  remember as memRemember,
-  recall as memRecall,
-  updateBlock as memUpdateBlock,
-  appendBlock as memAppendBlock,
-  listFacts,
-  countFacts,
-  getMemoryBlock,
-  getMemoryBlocks,
-} from './memory'
+  deviceRemember,
+  deviceRecall,
+  deviceListFacts,
+  deviceGetBlock,
+  deviceListBlocks,
+  deviceUpdateBlock,
+  deviceAppendBlock,
+} from './device-memory'
 
 export interface MemoryToolDef {
   type: 'function'
@@ -136,9 +135,13 @@ export const MEMORY_TOOLS: MemoryToolDef[] = [
 ]
 
 /**
- * Execute a memory tool call. Returns a JSON-stringifiable result that the
- * agent loop appends to the message history. All errors are caught and
- * returned as a string so the model sees them and can react.
+ * Execute a memory tool call. Routes the call to the user's daemon
+ * device's local SQLite via WS — same store the MCP memory server
+ * reads/writes. Single source of truth, no drift between the daemon
+ * web UI and Claude Code terminal.
+ *
+ * All errors are caught and returned as a string so the model sees
+ * them and can react.
  */
 export async function executeMemoryTool(
   toolName: string,
@@ -148,29 +151,35 @@ export async function executeMemoryTool(
   if (!ctx.projectId) {
     return 'Error: memory tools require a project context. The user must be in a project conversation.'
   }
+  if (!ctx.userId) {
+    return 'Error: memory tools require a user context.'
+  }
   try {
     switch (toolName) {
       case 'remember': {
-        const result = memRemember({
+        const r = await deviceRemember({
+          userId: ctx.userId,
           projectId: ctx.projectId,
           category: String(args.category || ''),
           content: String(args.content || ''),
           importance: typeof args.importance === 'number' ? args.importance : undefined,
           source: typeof args.source === 'string' ? args.source : undefined,
         })
-        return JSON.stringify({ ok: true, fact_id: result.id })
+        if (!r.ok) return `Error: ${r.error || 'remember failed'}`
+        return JSON.stringify({ ok: true, fact_id: r.fact_id })
       }
       case 'recall': {
-        const hits = memRecall({
+        const r = await deviceRecall({
+          userId: ctx.userId,
           projectId: ctx.projectId,
           query: String(args.query || ''),
-          userId: ctx.userId,
           limit: typeof args.limit === 'number' ? args.limit : 20,
         })
+        if (!r.ok) return `Error: ${r.error || 'recall failed'}`
         return JSON.stringify({
           ok: true,
-          count: hits.length,
-          hits: hits.map(h => ({
+          count: r.count,
+          hits: (r.hits || []).map((h) => ({
             source: h.source,
             label_or_category: h.label_or_category,
             score: Math.round(h.score * 100) / 100,
@@ -179,34 +188,39 @@ export async function executeMemoryTool(
         })
       }
       case 'update_memory_block': {
-        const result = memUpdateBlock({
+        const r = await deviceUpdateBlock({
+          userId: ctx.userId,
           projectId: ctx.projectId,
           label: String(args.label || ''),
           content: String(args.content || ''),
           maxChars: typeof args.max_chars === 'number' ? args.max_chars : undefined,
         })
-        return JSON.stringify(result)
+        if (!r.ok) return `Error: ${r.error || 'update_memory_block failed'}`
+        return JSON.stringify({ ok: true })
       }
       case 'append_memory_block': {
-        const result = memAppendBlock({
+        const r = await deviceAppendBlock({
+          userId: ctx.userId,
           projectId: ctx.projectId,
           label: String(args.label || ''),
           addition: String(args.addition || ''),
         })
-        return JSON.stringify(result)
+        if (!r.ok) return `Error: ${r.error || 'append_memory_block failed'}`
+        return JSON.stringify({ ok: true, total_chars: r.total_chars })
       }
       case 'list_facts': {
-        const facts = listFacts(
-          ctx.projectId,
-          typeof args.category === 'string' ? args.category : undefined,
-          typeof args.limit === 'number' ? args.limit : 50,
-        )
-        const counts = countFacts(ctx.projectId)
+        const r = await deviceListFacts({
+          userId: ctx.userId,
+          projectId: ctx.projectId,
+          category: typeof args.category === 'string' ? args.category : undefined,
+          limit: typeof args.limit === 'number' ? args.limit : 50,
+        })
+        if (!r.ok) return `Error: ${r.error || 'list_facts failed'}`
         return JSON.stringify({
           ok: true,
-          total: counts.total,
-          by_category: counts.by_category,
-          facts: facts.map(f => ({
+          total: r.total,
+          by_category: r.by_category,
+          facts: (r.facts || []).map((f) => ({
             id: f.id,
             category: f.category,
             content: f.content,
@@ -216,15 +230,19 @@ export async function executeMemoryTool(
         })
       }
       case 'get_memory_block': {
-        const block = getMemoryBlock(ctx.projectId, String(args.label || ''))
-        if (!block) return JSON.stringify({ ok: false, error: 'block not found' })
+        const r = await deviceGetBlock({
+          userId: ctx.userId,
+          projectId: ctx.projectId,
+          label: String(args.label || ''),
+        })
+        if (!r.ok || !r.block) return JSON.stringify({ ok: false, error: r.error || 'block not found' })
         return JSON.stringify({
           ok: true,
-          label: block.label,
-          content: block.content,
-          max_chars: block.max_chars,
-          chars: block.content.length,
-          updated_at: block.updated_at,
+          label: r.block.label,
+          content: r.block.content,
+          max_chars: r.block.max_chars,
+          chars: r.block.content.length,
+          updated_at: r.block.updated_at,
         })
       }
       default:
