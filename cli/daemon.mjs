@@ -360,29 +360,230 @@ const err = (msg) => console.error(`[daemon ${new Date().toISOString().slice(11,
 
 // ── Command Executor ─────────────────────────────────────
 //
-// Step 3 will replace `runBash` with a persistent node-pty session per
-// conversation_id. For now this is a fresh shell per call. The
-// conversation_id parameter is accepted but ignored — Step 3 wires it.
+// Persistent shell sessions per conversation_id via node-pty. State (cwd,
+// env, exported funcs, shell history) survives across tool calls within
+// the same conversation. Sessions GC after 30 minutes idle.
+//
+// This is the pattern every mature agent runtime converged on (OpenHands,
+// Letta, the tmux-MCP crowd). Without it, `cd /tmp` silently evaporates
+// between calls and the agent looks broken.
 
 const MAX_STDOUT = 100_000  // 100 KB cap on tool call output
-const MAX_STDERR = 20_000
+const PTY_IDLE_TIMEOUT_MS = 30 * 60 * 1000  // 30 minutes
+const PTY_GC_INTERVAL_MS = 5 * 60 * 1000    // GC sweep every 5 minutes
+const PTY_DEFAULT_TIMEOUT_MS = 30_000
 
-function runBash(command, timeout = 30000, cwd, _conversationId) {
+// node-pty is a native dep — load it lazily so a missing build doesn't
+// crash daemon startup, falling back to fresh-shell-per-call.
+let _ptyLib = null
+async function loadPty() {
+  if (_ptyLib === false) return null
+  if (_ptyLib) return _ptyLib
+  try {
+    _ptyLib = await import('node-pty')
+    log('node-pty loaded — persistent shell sessions enabled')
+    return _ptyLib
+  } catch (e) {
+    err(`node-pty unavailable, falling back to exec(): ${e.message}`)
+    _ptyLib = false
+    return null
+  }
+}
+
+// Per-conversation pty session.
+//   sessions: Map<conversationId, { pty, lastUsed, busy }>
+const ptySessions = new Map()
+
+// Marker emitted by every command so we know when output is complete.
+// Includes a random nonce so prompts and unrelated output can't fake it.
+function makeSentinel() {
+  return `___DAEMON_DONE_${Math.random().toString(36).slice(2)}___`
+}
+
+async function getOrCreatePtySession(conversationId, initialCwd) {
+  let session = ptySessions.get(conversationId)
+  if (session) {
+    session.lastUsed = Date.now()
+    return session
+  }
+  const pty = await loadPty()
+  if (!pty) return null
+
+  // Spawn a bash that doesn't load rc files (clean env), in the requested cwd.
+  const shell = process.env.SHELL || '/bin/bash'
+  const ptyProc = pty.spawn(shell, ['--noprofile', '--norc', '-i'], {
+    name: 'xterm-256color',
+    cols: 200,
+    rows: 50,
+    cwd: initialCwd || userInfo().homedir,
+    env: {
+      ...process.env,
+      // Disable command-not-found, custom prompts, etc.
+      PS1: '$ ',
+      PROMPT_COMMAND: '',
+      TERM: 'xterm-256color',
+      // Force LC for consistent output
+      LANG: 'C.UTF-8',
+      LC_ALL: 'C.UTF-8',
+    },
+  })
+
+  session = {
+    conversationId,
+    pty: ptyProc,
+    buffer: '',
+    lastUsed: Date.now(),
+    busy: false,
+    onData: null,
+  }
+
+  ptyProc.onData((data) => {
+    session.buffer += data
+    if (session.onData) session.onData(data)
+  })
+
+  ptyProc.onExit(({ exitCode }) => {
+    log(`pty session ${conversationId} exited (code ${exitCode})`)
+    ptySessions.delete(conversationId)
+  })
+
+  ptySessions.set(conversationId, session)
+
+  // Disable terminal echo so commands don't get echoed back into our buffer.
+  // Disable bracketed paste mode so we don't get \e[?2004h spam.
+  // Set a stable PS1 we can detect/strip.
+  ptyProc.write('stty -echo -onlcr 2>/dev/null; bind "set enable-bracketed-paste off" 2>/dev/null; PS1=""; PROMPT_COMMAND=""\n')
+
+  // Drain initial output before first command runs.
+  await new Promise((r) => setTimeout(r, 120))
+  session.buffer = ''
+  return session
+}
+
+// Run a command inside a persistent pty session and wait for the sentinel.
+function runInPtySession(session, command, timeoutMs) {
   return new Promise((resolve) => {
-    const opts = { timeout, maxBuffer: 4 * 1024 * 1024 }
-    if (cwd) opts.cwd = cwd
-    exec(command, opts, (error, stdout, stderr) => {
-      const out = (stdout || '').toString()
-      const errOut = (stderr || '').toString()
-      resolve({
-        ok: !error || error.code === 0,
-        stdout: out.length > MAX_STDOUT ? out.slice(0, MAX_STDOUT) + `\n... [truncated, ${out.length - MAX_STDOUT} more chars]` : out,
-        stderr: errOut.length > MAX_STDERR ? errOut.slice(0, MAX_STDERR) + `\n... [truncated]` : errOut,
-        exit_code: error?.code ?? 0,
-        cwd: cwd || process.cwd(),
+    if (session.busy) {
+      return resolve({
+        ok: false,
+        error: 'session busy with previous command',
+        stdout: '',
+        stderr: '',
+        exit_code: 1,
+      })
+    }
+    session.busy = true
+    session.buffer = ''
+
+    const sentinel = makeSentinel()
+    let finished = false
+
+    const finish = (result) => {
+      if (finished) return
+      finished = true
+      session.busy = false
+      session.onData = null
+      clearTimeout(timer)
+      resolve(result)
+    }
+
+    // Search for sentinel preceded by a newline AND followed by a space then
+    // a number, so we never match the sentinel inside an echoed input line.
+    const markerRe = new RegExp(`(?:^|\\n)${sentinel.replace(/[$.*+?^()|[\]{}\\]/g, '\\$&')} (\\d+)`)
+
+    session.onData = () => {
+      const m = session.buffer.match(markerRe)
+      if (!m) return
+      const idx = m.index + (m[0].startsWith('\n') ? 1 : 0)
+      const exitCode = parseInt(m[1], 10) || 0
+      let output = session.buffer.slice(0, idx)
+      output = stripAnsi(output)
+      if (output.length > MAX_STDOUT) {
+        output = output.slice(0, MAX_STDOUT) + `\n... [truncated, ${output.length - MAX_STDOUT} more chars]`
+      }
+      finish({
+        ok: exitCode === 0,
+        stdout: output,
+        stderr: '',
+        exit_code: exitCode,
+      })
+    }
+
+    const timer = setTimeout(() => {
+      finish({
+        ok: false,
+        error: `timeout after ${timeoutMs}ms`,
+        stdout: stripAnsi(session.buffer).slice(0, MAX_STDOUT),
+        stderr: '',
+        exit_code: 124,
+      })
+    }, timeoutMs)
+
+    // Send the command + sentinel as ONE line. Echo is off so neither shows
+    // up in the buffer until the shell actually runs them.
+    session.pty.write(`${command}\nprintf '\\n%s %d\\n' '${sentinel}' $?\n`)
+  })
+}
+
+// Strip basic ANSI escape sequences and CR from pty buffer.
+// Echo is disabled at the pty level so we don't need to strip echoed input.
+function stripAnsi(text) {
+  // CSI sequences (color codes, cursor movement, etc.)
+  // eslint-disable-next-line no-control-regex
+  let cleaned = text.replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, '')
+  // OSC and DCS sequences
+  // eslint-disable-next-line no-control-regex
+  cleaned = cleaned.replace(/\x1b[PX^_\]].*?\x1b\\/g, '')
+  // Bracketed paste markers in case stty didn't catch them
+  // eslint-disable-next-line no-control-regex
+  cleaned = cleaned.replace(/\x1b\[\?2004[hl]/g, '')
+  // Normalize line endings
+  cleaned = cleaned.replace(/\r\n/g, '\n').replace(/\r/g, '')
+  return cleaned.replace(/^\n+/, '').replace(/\n+$/, '')
+}
+
+// GC sweeper — kill idle pty sessions every 5 minutes.
+setInterval(() => {
+  const now = Date.now()
+  for (const [id, session] of ptySessions) {
+    if (now - session.lastUsed > PTY_IDLE_TIMEOUT_MS) {
+      log(`GC pty session ${id} (idle ${Math.round((now - session.lastUsed) / 1000)}s)`)
+      try { session.pty.kill() } catch {}
+      ptySessions.delete(id)
+    }
+  }
+}, PTY_GC_INTERVAL_MS).unref()
+
+async function runBash(command, timeoutMs, cwd, conversationId) {
+  const timeout = timeoutMs || PTY_DEFAULT_TIMEOUT_MS
+
+  // Without a conversation_id we can't reuse a session — fall back to
+  // a fresh shell per call. (Tools like ad-hoc curl don't need state.)
+  if (!conversationId) {
+    return new Promise((resolve) => {
+      const opts = { timeout, maxBuffer: 4 * 1024 * 1024 }
+      if (cwd) opts.cwd = cwd
+      exec(command, opts, (error, stdout, stderr) => {
+        const out = (stdout || '').toString()
+        const errOut = (stderr || '').toString()
+        resolve({
+          ok: !error || error.code === 0,
+          stdout: out.length > MAX_STDOUT ? out.slice(0, MAX_STDOUT) + `\n... [truncated]` : out,
+          stderr: errOut.length > 20_000 ? errOut.slice(0, 20_000) + `\n... [truncated]` : errOut,
+          exit_code: error?.code ?? 0,
+          cwd: cwd || process.cwd(),
+        })
       })
     })
-  })
+  }
+
+  // Persistent path: get or create the conversation's session, run command.
+  const session = await getOrCreatePtySession(conversationId, cwd)
+  if (!session) {
+    // node-pty failed to load — fall back.
+    return runBash(command, timeoutMs, cwd, undefined)
+  }
+  return runInPtySession(session, command, timeout)
 }
 
 async function getDeviceInfo() {
