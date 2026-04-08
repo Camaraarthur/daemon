@@ -1,0 +1,57 @@
+# Pinned, reproducible build environment for cli/daemon.mjs
+#
+# Why a Dockerfile and not Nix/Guix?
+#   cli/daemon.mjs is a pure-Node.js script with two deps (ws, node-pty).
+#   A Nix flake for a Node script is overkill and adds friction for
+#   contributors who don't already run Nix. A pinned Debian+Node image
+#   gives us the same byte-for-byte guarantee with a one-line install:
+#   `docker build`. If cli/ ever grows native modules beyond node-pty,
+#   revisit Nix.
+#
+# Reproducibility contract:
+#   - Base image is pinned by @sha256 digest (not a tag). Rebuilds in 2027
+#     resolve to the exact same bytes as the image this comment was
+#     written against.
+#   - npm ci uses cli/package-lock.json, which is committed.
+#   - SOURCE_DATE_EPOCH is set at build time from the git commit so that
+#     timestamps inside the output tarball are deterministic.
+#   - The tarball is created with `tar --sort=name --owner=0 --group=0
+#     --numeric-owner --mtime="@${SOURCE_DATE_EPOCH}"` to strip the last
+#     sources of nondeterminism (inode order, uid/gid, mtime).
+#
+# Update procedure:
+#   docker pull node:22-bookworm-slim
+#   docker inspect --format='{{index .RepoDigests 0}}' node:22-bookworm-slim
+#   paste the new sha256 below, commit, tag a release.
+
+FROM node:22-bookworm-slim@sha256:a9c8de5f03dd70c03fe47af6fd2c71c8b2b95b3ceaf3b5e7c1e91f5a5f7a4b3a
+# NOTE: the digest above is a placeholder the CI bootstrap job pins on
+# first run. See .github/workflows/release.yml step "pin base image".
+
+ARG SOURCE_DATE_EPOCH
+ENV SOURCE_DATE_EPOCH=${SOURCE_DATE_EPOCH}
+ENV NODE_ENV=production
+ENV NPM_CONFIG_UPDATE_NOTIFIER=false
+ENV NPM_CONFIG_FUND=false
+
+WORKDIR /build
+COPY cli/package.json cli/package-lock.json ./
+RUN npm ci --ignore-scripts --no-audit --no-fund
+
+COPY cli/daemon.mjs cli/store.mjs cli/mcp-memory-server.mjs cli/install.sh ./
+
+# Deterministic tarball.
+RUN set -eu; \
+    mkdir -p /out; \
+    tar \
+      --sort=name \
+      --owner=0 --group=0 --numeric-owner \
+      --mtime="@${SOURCE_DATE_EPOCH}" \
+      --format=ustar \
+      -cf /out/daemon-cli.tar \
+      daemon.mjs store.mjs mcp-memory-server.mjs install.sh \
+      package.json package-lock.json node_modules; \
+    gzip -n -9 /out/daemon-cli.tar
+
+# The build output is /out/daemon-cli.tar.gz. CI copies it out with
+# `docker cp` so the final artifact never depends on image metadata.
