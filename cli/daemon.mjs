@@ -25,9 +25,14 @@ import http from 'http'
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
 // ── Version ─────────────────────────────────────────────
-const CLI_VERSION = '0.1.1'
+const CLI_VERSION = '0.1.3'
 const VERSION_CHECK_URL = 'https://my.daemon.page/cli/version.json'
 const UPDATE_CHECK_INTERVAL = 6 * 60 * 60 * 1000 // 6 hours
+
+// Auto-update is opt-out: --no-update or DAEMON_NO_UPDATE=1 disables it.
+// Systemd services should always pass --no-update so the package manager
+// (or operator) controls upgrades.
+const NO_UPDATE = process.argv.includes('--no-update') || process.env.DAEMON_NO_UPDATE === '1'
 
 // ── Config ───────────────────────────────────────────────
 
@@ -680,6 +685,7 @@ function compareVersions(a, b) {
 }
 
 async function checkForUpdate() {
+  if (NO_UPDATE) return false
   try {
     const raw = await httpGet(VERSION_CHECK_URL)
     const info = JSON.parse(raw)
@@ -744,7 +750,7 @@ if (process.argv.includes('--uninstall')) {
 
 if (process.argv.includes('--help') || process.argv.includes('-h')) {
   console.log(`
-daemon CLI — device bridge for daemon.page
+daemon CLI �� device bridge for daemon.page
 
 Usage:
   node daemon.mjs                     Connect with defaults

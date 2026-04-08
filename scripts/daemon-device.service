@@ -1,0 +1,28 @@
+[Unit]
+Description=Daemon Device — local daemon protocol bridge
+Documentation=https://github.com/arthurwiedmer/daemon
+After=network-online.target daemon-web.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=arthur
+Group=arthur
+WorkingDirectory=/home/arthur/daemon/cli
+Environment=NODE_ENV=production
+Environment=DAEMON_NO_UPDATE=1
+ExecStart=/usr/bin/node /home/arthur/daemon/cli/daemon.mjs --no-update --name arturito
+Restart=on-failure
+RestartSec=5
+StandardOutput=append:/var/log/daemon-device.log
+StandardError=append:/var/log/daemon-device.log
+
+# Hardening (lighter than the relay because the device IS supposed to access /home)
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+
+[Install]
+WantedBy=multi-user.target
