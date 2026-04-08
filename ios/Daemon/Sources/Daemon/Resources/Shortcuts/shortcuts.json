@@ -1,0 +1,32 @@
+[
+  {
+    "title": "Ask Daemon",
+    "phrase": "Ask daemon",
+    "activityType": "page.daemon.ChatWithDaemonIntent"
+  },
+  {
+    "title": "Read File",
+    "phrase": "Read file with daemon",
+    "activityType": "page.daemon.ReadFileIntent"
+  },
+  {
+    "title": "Write File",
+    "phrase": "Write file with daemon",
+    "activityType": "page.daemon.WriteFileIntent"
+  },
+  {
+    "title": "Remind Me",
+    "phrase": "Daemon remind me",
+    "activityType": "page.daemon.RemindMeIntent"
+  },
+  {
+    "title": "Where Am I",
+    "phrase": "Daemon where am I",
+    "activityType": "page.daemon.WhereAmIIntent"
+  },
+  {
+    "title": "Clipboard to Daemon",
+    "phrase": "Send clipboard to daemon",
+    "activityType": "page.daemon.ClipboardToDaemonIntent"
+  }
+]

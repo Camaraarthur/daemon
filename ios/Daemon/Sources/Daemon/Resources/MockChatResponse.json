@@ -1,0 +1,6 @@
+{
+  "message": "hello from the mock relay — this fixture is loaded when my.daemon.page is unreachable",
+  "threadId": "mock-thread-0001",
+  "role": "assistant",
+  "createdAt": "2026-04-08T12:00:00Z"
+}
