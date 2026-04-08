@@ -70,23 +70,29 @@ const DEVICE_NAME = process.argv.find(a => a.startsWith('--name='))?.split('=')[
 const DEVICE_ID = `${hostname()}-${platform()}-${arch()}`
 
 // ── MCP Tool Definitions ────────────────────────────────
+//
+// Tool vocabulary matches Claude Code (bash, read_file, write_file,
+// edit_file, glob, grep, list_files). Old names are kept as aliases
+// for one release so existing clients don't break.
 
 const MCP_TOOLS = [
   {
-    name: 'run_shell',
-    description: 'Execute a shell command on this device',
+    name: 'bash',
+    description: 'Execute a shell command on this device. Returns stdout, stderr, exit_code.',
     inputSchema: {
       type: 'object',
       properties: {
         command: { type: 'string', description: 'The shell command to run' },
         timeout_ms: { type: 'number', description: 'Timeout in milliseconds (default: 30000)' },
+        cwd: { type: 'string', description: 'Working directory (default: $HOME)' },
+        conversation_id: { type: 'string', description: 'Persistent shell session id (Step 3 — same id reuses cwd/env)' },
       },
       required: ['command'],
     },
   },
   {
     name: 'read_file',
-    description: 'Read the contents of a file',
+    description: 'Read the contents of a file. Returns content, size. Files >1MB rejected.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -97,7 +103,7 @@ const MCP_TOOLS = [
   },
   {
     name: 'write_file',
-    description: 'Write content to a file',
+    description: 'Write content to a file. Creates the file (and parent dirs) if needed. Returns size + lines.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -108,42 +114,103 @@ const MCP_TOOLS = [
     },
   },
   {
-    name: 'list_directory',
-    description: 'List files and directories at a path',
+    name: 'edit_file',
+    description: 'Replace exactly one occurrence of old_string with new_string in a file. Errors if old_string is missing or appears more than once. Returns line delta.',
     inputSchema: {
       type: 'object',
       properties: {
-        path: { type: 'string', description: 'Directory path' },
+        path: { type: 'string', description: 'Absolute file path' },
+        old_string: { type: 'string', description: 'Exact text to replace (must be unique in the file)' },
+        new_string: { type: 'string', description: 'Replacement text' },
+      },
+      required: ['path', 'old_string', 'new_string'],
+    },
+  },
+  {
+    name: 'list_files',
+    description: 'List files and directories at a path. Returns files: [{name, is_dir, size?}].',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        path: { type: 'string', description: 'Directory path (default: $HOME)' },
+      },
+    },
+  },
+  {
+    name: 'glob',
+    description: 'Find files matching a glob pattern. Returns sorted list. Uses ** for recursive.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        pattern: { type: 'string', description: 'Glob pattern, e.g. **/*.ts' },
+        path: { type: 'string', description: 'Root directory to search from (default: cwd)' },
+      },
+      required: ['pattern'],
+    },
+  },
+  {
+    name: 'grep',
+    description: 'Search file contents for a regex pattern via ripgrep. Returns matching lines with file:line:content.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        pattern: { type: 'string', description: 'Regex pattern' },
+        path: { type: 'string', description: 'Directory or file to search (default: cwd)' },
+        glob: { type: 'string', description: 'Glob filter, e.g. *.ts' },
+        type: { type: 'string', description: 'File type filter, e.g. py, js, rust' },
+        case_insensitive: { type: 'boolean' },
+      },
+      required: ['pattern'],
+    },
+  },
+  {
+    name: 'lint_file',
+    description: 'Run a syntax/lint check on a file. Picks the right linter for the extension. Returns ok + errors.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        path: { type: 'string', description: 'Absolute file path' },
       },
       required: ['path'],
     },
   },
   {
-    name: 'get_system_info',
-    description: 'Get device system information (OS, CPU, memory, etc.)',
+    name: 'device_info',
+    description: 'Get device system information (OS, CPU, memory, hostname, uptime).',
     inputSchema: { type: 'object', properties: {} },
   },
 ]
 
+// Back-compat: old names map to new implementations for one release.
+const TOOL_ALIASES = {
+  run_shell: 'bash',
+  list_directory: 'list_files',
+  get_system_info: 'device_info',
+}
+
 // ── MCP Tool Executor ───────────────────────────────────
 
 async function executeMcpTool(name, args) {
-  switch (name) {
-    case 'run_shell':
-      return await runCommand(args.command || '', args.timeout_ms || 30000)
+  // Resolve alias to canonical name
+  const canonical = TOOL_ALIASES[name] || name
+  switch (canonical) {
+    case 'bash':
+      return await runBash(args.command || '', args.timeout_ms || 30000, args.cwd, args.conversation_id)
     case 'read_file':
       return await readFileContent(args.path || '')
-    case 'write_file': {
-      try {
-        await writeFile(args.path, args.content || '')
-        return { path: args.path, written: true, size: (args.content || '').length }
-      } catch (e) {
-        return { error: e.message }
-      }
-    }
-    case 'list_directory':
+    case 'write_file':
+      return await writeFileContent(args.path || '', args.content || '')
+    case 'edit_file':
+      return await editFile(args.path || '', args.old_string || '', args.new_string || '')
+    case 'list_files':
       return await listFiles(args.path || userInfo().homedir)
-    case 'get_system_info':
+    case 'glob':
+      return await globFiles(args.pattern || '*', args.path || process.cwd())
+    case 'grep':
+      return await grepFiles(args.pattern || '', args.path || process.cwd(), args.glob, args.type, args.case_insensitive)
+    case 'lint_file':
+      return await lintFile(args.path || '')
+    case 'device_info':
       return await getDeviceInfo()
     default:
       return { error: `Unknown tool: ${name}` }
@@ -292,14 +359,27 @@ const log = (msg) => console.log(`[daemon ${new Date().toISOString().slice(11, 1
 const err = (msg) => console.error(`[daemon ${new Date().toISOString().slice(11, 19)}] ERROR: ${msg}`)
 
 // ── Command Executor ─────────────────────────────────────
+//
+// Step 3 will replace `runBash` with a persistent node-pty session per
+// conversation_id. For now this is a fresh shell per call. The
+// conversation_id parameter is accepted but ignored — Step 3 wires it.
 
-function runCommand(command, timeout = 30000) {
+const MAX_STDOUT = 100_000  // 100 KB cap on tool call output
+const MAX_STDERR = 20_000
+
+function runBash(command, timeout = 30000, cwd, _conversationId) {
   return new Promise((resolve) => {
-    const proc = exec(command, { timeout, maxBuffer: 1024 * 1024 }, (error, stdout, stderr) => {
+    const opts = { timeout, maxBuffer: 4 * 1024 * 1024 }
+    if (cwd) opts.cwd = cwd
+    exec(command, opts, (error, stdout, stderr) => {
+      const out = (stdout || '').toString()
+      const errOut = (stderr || '').toString()
       resolve({
-        stdout: stdout?.slice(0, 10000) || '',
-        stderr: stderr?.slice(0, 5000) || '',
-        exit_code: error?.code || 0,
+        ok: !error || error.code === 0,
+        stdout: out.length > MAX_STDOUT ? out.slice(0, MAX_STDOUT) + `\n... [truncated, ${out.length - MAX_STDOUT} more chars]` : out,
+        stderr: errOut.length > MAX_STDERR ? errOut.slice(0, MAX_STDERR) + `\n... [truncated]` : errOut,
+        exit_code: error?.code ?? 0,
+        cwd: cwd || process.cwd(),
       })
     })
   })
@@ -317,31 +397,243 @@ async function getDeviceInfo() {
     home: userInfo().homedir,
     node_version: process.version,
     uptime_hours: Math.round(process.uptime() / 3600 * 10) / 10,
+    cwd: process.cwd(),
   }
 }
 
 async function listFiles(path) {
   try {
     const entries = await readdir(path, { withFileTypes: true })
-    const files = entries.slice(0, 200).map(e => ({
-      name: e.name,
-      is_dir: e.isDirectory(),
-    }))
-    return { path, files, count: files.length }
+    const files = []
+    for (const e of entries.slice(0, 500)) {
+      const entry = { name: e.name, is_dir: e.isDirectory() }
+      if (!e.isDirectory()) {
+        try {
+          const s = await stat(join(path, e.name))
+          entry.size = s.size
+        } catch {}
+      }
+      files.push(entry)
+    }
+    return { ok: true, path, files, count: files.length, truncated: entries.length > 500 }
   } catch (e) {
-    return { error: e.message }
+    return { ok: false, error: e.message, path }
   }
 }
 
 async function readFileContent(path) {
   try {
     const s = await stat(path)
-    if (s.size > 1_000_000) return { error: 'File too large (>1MB)', size: s.size }
+    if (s.size > 1_000_000) return { ok: false, error: 'File too large (>1MB)', size: s.size, path }
     const content = await readFile(path, 'utf-8')
-    return { path, content, size: s.size }
+    return { ok: true, path, content, size: s.size, lines: content.split('\n').length }
   } catch (e) {
-    return { error: e.message }
+    return { ok: false, error: e.message, path }
   }
+}
+
+async function writeFileContent(path, content) {
+  try {
+    // Ensure parent dir exists
+    const dir = dirname(path)
+    if (!existsSync(dir)) await mkdir(dir, { recursive: true })
+    await writeFile(path, content)
+    return {
+      ok: true,
+      path,
+      size: content.length,
+      lines: content.split('\n').length,
+    }
+  } catch (e) {
+    return { ok: false, error: e.message, path }
+  }
+}
+
+async function editFile(path, oldString, newString) {
+  try {
+    if (!oldString) return { ok: false, error: 'old_string must not be empty', path }
+    const original = await readFile(path, 'utf-8')
+    // Count occurrences of oldString
+    const occurrences = original.split(oldString).length - 1
+    if (occurrences === 0) {
+      return { ok: false, error: `old_string not found in ${path}`, path }
+    }
+    if (occurrences > 1) {
+      return {
+        ok: false,
+        error: `old_string appears ${occurrences} times in ${path}; must be unique. Add surrounding context.`,
+        path,
+      }
+    }
+    const updated = original.replace(oldString, newString)
+    await writeFile(path, updated)
+    const oldLines = oldString.split('\n').length
+    const newLines = newString.split('\n').length
+    return {
+      ok: true,
+      path,
+      lines_added: newLines,
+      lines_removed: oldLines,
+      net_lines: newLines - oldLines,
+      total_size: updated.length,
+    }
+  } catch (e) {
+    return { ok: false, error: e.message, path }
+  }
+}
+
+// Glob via Node fs walk. Supports * (one segment) and ** (many segments).
+// We avoid `fast-glob` to keep daemon.mjs zero-dep beyond ws.
+async function globFiles(pattern, root) {
+  try {
+    const segments = pattern.split('/')
+    const matches = []
+    const MAX_RESULTS = 2000
+
+    function segToRe(seg) {
+      // Convert one glob segment to a regex part. ** is handled at the
+      // walker level, not here.
+      return seg
+        .replace(/[.+^${}()|[\]\\]/g, '\\$&')
+        .replace(/\*/g, '[^/]*')
+        .replace(/\?/g, '[^/]')
+    }
+
+    async function walk(dir, segIdx) {
+      if (matches.length >= MAX_RESULTS) return
+      if (segIdx >= segments.length) {
+        matches.push(dir)
+        return
+      }
+      const seg = segments[segIdx]
+      // Recursive **: match zero or more dirs
+      if (seg === '**') {
+        // Match the rest at the current level too
+        await walk(dir, segIdx + 1)
+        let entries
+        try { entries = await readdir(dir, { withFileTypes: true }) } catch { return }
+        for (const e of entries) {
+          if (e.name.startsWith('.git') || e.name === 'node_modules') continue
+          if (e.isDirectory()) await walk(join(dir, e.name), segIdx)
+        }
+        return
+      }
+      const re = new RegExp(`^${segToRe(seg)}$`)
+      let entries
+      try { entries = await readdir(dir, { withFileTypes: true }) } catch { return }
+      for (const e of entries) {
+        if (!re.test(e.name)) continue
+        const full = join(dir, e.name)
+        const isLast = segIdx === segments.length - 1
+        if (isLast) {
+          matches.push(full)
+        } else if (e.isDirectory()) {
+          await walk(full, segIdx + 1)
+        }
+        if (matches.length >= MAX_RESULTS) return
+      }
+    }
+
+    await walk(root, 0)
+    matches.sort()
+    return {
+      ok: true,
+      pattern,
+      root,
+      matches: matches.slice(0, MAX_RESULTS),
+      count: matches.length,
+      truncated: matches.length >= MAX_RESULTS,
+    }
+  } catch (e) {
+    return { ok: false, error: e.message, pattern, root }
+  }
+}
+
+// Grep via ripgrep. Falls back to a clear error if rg isn't installed.
+function grepFiles(pattern, path, globFilter, typeFilter, caseInsensitive) {
+  return new Promise((resolve) => {
+    const args = ['--color=never', '--line-number', '--no-heading', '--max-count', '500', '--max-columns', '300']
+    if (caseInsensitive) args.push('-i')
+    if (globFilter) args.push('--glob', globFilter)
+    if (typeFilter) args.push('--type', typeFilter)
+    args.push('--', pattern, path)
+    exec(`rg ${args.map(a => `'${a.replace(/'/g, "'\\''")}'`).join(' ')}`,
+      { maxBuffer: 4 * 1024 * 1024, timeout: 30000 },
+      (error, stdout, stderr) => {
+        // rg exits 1 when no matches found — that's not an error
+        if (error && error.code !== 1) {
+          return resolve({ ok: false, error: stderr?.trim() || error.message, pattern, path })
+        }
+        const lines = (stdout || '').split('\n').filter(Boolean)
+        resolve({
+          ok: true,
+          pattern,
+          path,
+          matches: lines.slice(0, 500),
+          count: lines.length,
+          truncated: lines.length >= 500,
+        })
+      })
+  })
+}
+
+// Lint via the right tool for the file extension.
+function lintFile(path) {
+  return new Promise((resolve) => {
+    if (!existsSync(path)) {
+      return resolve({ ok: false, error: `File not found: ${path}`, path })
+    }
+    const ext = path.split('.').pop()?.toLowerCase()
+    let cmd
+    switch (ext) {
+      case 'ts':
+      case 'tsx':
+      case 'js':
+      case 'jsx':
+        // Use `node --check` for JS — fast, built-in, no dep on tsc.
+        // For TS, fall back to /home/arthur/daemon/web's local tsc if it exists.
+        if (ext === 'ts' || ext === 'tsx') {
+          const localTsc = '/home/arthur/daemon/web/node_modules/.bin/tsc'
+          if (existsSync(localTsc)) {
+            cmd = `${localTsc} --noEmit --allowJs --target es2022 --module esnext --moduleResolution bundler "${path}" 2>&1 || true`
+          } else {
+            return resolve({ ok: true, path, skipped: true, reason: 'tsc not available — install typescript locally' })
+          }
+        } else {
+          cmd = `node --check "${path}" 2>&1 || true`
+        }
+        break
+      case 'py':
+        cmd = `python3 -m py_compile "${path}" 2>&1 || true`
+        break
+      case 'rs':
+        cmd = `rustc --edition 2021 --emit=metadata -o /dev/null "${path}" 2>&1 || true`
+        break
+      case 'go':
+        cmd = `gofmt -e -l "${path}" 2>&1 || true`
+        break
+      case 'sh':
+      case 'bash':
+        cmd = `bash -n "${path}" 2>&1 || true`
+        break
+      case 'json':
+        cmd = `python3 -c 'import json,sys; json.load(open("${path.replace(/"/g, '\\"')}"))' 2>&1 || true`
+        break
+      default:
+        return resolve({ ok: true, path, skipped: true, reason: `No linter configured for .${ext}` })
+    }
+    exec(cmd, { maxBuffer: 1024 * 1024, timeout: 30000 }, (_error, stdout) => {
+      const output = (stdout || '').trim()
+      // hasError is true ONLY if the output is non-empty AND looks like an error.
+      // Empty output → linter passed.
+      const hasError = output.length > 0 && /error|syntaxerror|indentationerror|nameerror|importerror|TS\d+:|unexpected token|invalid/i.test(output)
+      resolve({
+        ok: !hasError,
+        path,
+        errors: hasError ? output.slice(0, 5000) : null,
+      })
+    })
+  })
 }
 
 async function receiveFile(filename, data) {
@@ -388,7 +680,7 @@ async function handleCommand(msg) {
 
     // ── Legacy Command Messages (backward compat) ──────
     case 'run_command':
-      result = await runCommand(msg.command || '')
+      result = await runBash(msg.command || '', msg.timeout || 30000)
       break
     case 'get_device_info':
       result = await getDeviceInfo()
