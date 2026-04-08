@@ -688,35 +688,30 @@ export async function POST(req: NextRequest) {
           ).run(threadKey, parseInt(userId) || 0, message.slice(0, 40))
         } catch {}
       }
-      const persistedUser = db.addMessage(threadKey, {
-        role: 'user',
-        content: message,
-        // Tag with the bound Claude Code session so this web-typed message
-        // joins the same conversation view as terminal messages.
-        source_session_id: boundSessionId || undefined,
-      })
-      // Broadcast so any other open tabs/devices on this thread see the
-      // user message appear immediately. Also gossip to the user's
-      // daemon devices so each device's local SQLite mirrors it.
+      // No relay-DB write — gossip is the persistence path. The user
+      // message gets a fresh UUID, broadcast to subscribed clients, and
+      // gossipped to the user's daemon devices in one shot.
+      const userMessageId = crypto.randomUUID()
+      const userCreatedAt = new Date().toISOString().replace('T', ' ').slice(0, 19)
       try {
         const { broadcastThreadEvent, gossipChatMessage } = await import('@/lib/ws-broadcast')
         broadcastThreadEvent(threadKey, {
           type: 'message.created',
-          message_id: persistedUser.id,
+          message_id: userMessageId,
           thread_id: threadKey,
           role: 'user',
           content: message,
           model: null,
-          created_at: persistedUser.created_at,
+          created_at: userCreatedAt,
           source_session_id: boundSessionId || null,
           complete: true,
         })
         gossipChatMessage(parseInt(userId, 10) || 0, {
-          id: persistedUser.id,
+          id: userMessageId,
           thread_id: threadKey,
           role: 'user',
           content: message,
-          created_at: persistedUser.created_at,
+          created_at: userCreatedAt,
           source_session_id: boundSessionId || null,
           complete: true,
           project_id: resolvedProjectId || null,
@@ -908,43 +903,36 @@ export async function POST(req: NextRequest) {
 
     // Persist assistant response
     let nonStreamMessageId: string | null = null
+    // No relay-DB write — gossip is the persistence path.
+    const assistantMessageId = crypto.randomUUID()
+    const assistantCreatedAt = new Date().toISOString().replace('T', ' ').slice(0, 19)
+    nonStreamMessageId = assistantMessageId
     try {
-      const persisted = db.addMessage(threadKey, {
+      const { broadcastThreadEvent, gossipChatMessage } = await import('@/lib/ws-broadcast')
+      broadcastThreadEvent(threadKey, {
+        type: 'message.completed',
+        message_id: assistantMessageId,
+        thread_id: threadKey,
         role: 'assistant',
         content: result.response,
+        tool_calls: result.toolCalls,
         model: result.model,
-        tool_calls: result.toolCalls?.length ? JSON.stringify(result.toolCalls) : undefined,
-        source_session_id: boundSessionId || undefined,
+        created_at: assistantCreatedAt,
+        source_session_id: boundSessionId || null,
+        complete: true,
       })
-      nonStreamMessageId = persisted.id
-      // Broadcast to subscribed tabs/devices + gossip to daemon devices.
-      try {
-        const { broadcastThreadEvent, gossipChatMessage } = await import('@/lib/ws-broadcast')
-        broadcastThreadEvent(threadKey, {
-          type: 'message.completed',
-          message_id: persisted.id,
-          thread_id: threadKey,
-          role: 'assistant',
-          content: result.response,
-          tool_calls: result.toolCalls,
-          model: result.model,
-          created_at: persisted.created_at,
-          source_session_id: boundSessionId || null,
-          complete: true,
-        })
-        gossipChatMessage(parseInt(userId, 10) || 0, {
-          id: persisted.id,
-          thread_id: threadKey,
-          role: 'assistant',
-          content: result.response,
-          tool_calls: result.toolCalls?.length ? JSON.stringify(result.toolCalls) : null,
-          model: result.model,
-          created_at: persisted.created_at,
-          source_session_id: boundSessionId || null,
-          complete: true,
-          project_id: resolvedProjectId || null,
-        })
-      } catch {}
+      gossipChatMessage(parseInt(userId, 10) || 0, {
+        id: assistantMessageId,
+        thread_id: threadKey,
+        role: 'assistant',
+        content: result.response,
+        tool_calls: result.toolCalls?.length ? JSON.stringify(result.toolCalls) : null,
+        model: result.model,
+        created_at: assistantCreatedAt,
+        source_session_id: boundSessionId || null,
+        complete: true,
+        project_id: resolvedProjectId || null,
+      })
     } catch {}
 
     // ── Claude Code sync OUT: write assistant message to JSONL ──

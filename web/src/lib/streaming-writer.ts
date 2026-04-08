@@ -1,37 +1,44 @@
 /**
- * StreamingWriter — production-grade streaming-into-DB.
+ * StreamingWriter — pure broadcaster, no relay DB writes.
  *
  * Wraps the SSE `send` callback used by the chat route's streaming functions
  * (streamClaudeCLI, runAgentLoopStreaming, streamOpenAICompatible). Every
- * event is forwarded to the SSE client AND persisted to chat_messages so:
+ * event is:
+ *   1. Forwarded to the SSE client (browser)
+ *   2. Broadcast via WS push to subscribed clients (other tabs/devices)
+ *   3. Gossipped to the user's daemon devices (their local SQLite)
  *
- *   - Refreshing the page mid-stream restores the partial response from DB
- *   - Other tabs/devices subscribed to the thread see updates live via WS
- *   - A server crash mid-stream leaves a complete=0 row that the next ws-server
- *     startup reaps with an "[interrupted]" suffix
+ * The relay process holds NO chat content. The device's local SQLite is
+ * the source of truth. Mid-stream refreshes read from the device via the
+ * /api/threads/[id]/messages endpoint which fetches over the WS hub.
  *
  * Lifecycle:
  *
  *   const w = new StreamingWriter({...})
- *   //   → INSERT chat_messages (complete=0), broadcast message.created
+ *   //   → broadcast message.created + gossip empty placeholder
  *
  *   // pass w.handleEvent as `onEvent` to the streaming function
  *   await runAgentLoopStreaming({..., onEvent: w.handleEvent})
  *
  *   w.finalize({content, model, toolCalls})
- *   //   → UPDATE chat_messages SET complete=1, content=..., broadcast message.completed
+ *   //   → broadcast message.completed + gossip final state
  *
  * On error, call w.finalizeError(message) instead.
  */
 
-import {
-  createStreamingMessage,
-  updateMessageContent,
-  markMessageComplete,
-  type ChatMessage,
-} from './db'
+import { randomUUID } from 'crypto'
 import { broadcastThreadEvent, gossipChatMessage } from './ws-broadcast'
 import type { SSEEvent } from './streaming'
+
+// Minimal local shape — we no longer fetch from the DB.
+interface LocalMessage {
+  id: string
+  thread_id: string
+  role: string
+  model: string | null
+  source_session_id: string | null
+  created_at: string
+}
 
 export interface StreamingWriterOpts {
   threadId: string
@@ -55,8 +62,12 @@ interface InternalToolCall {
 
 const FLUSH_INTERVAL_MS = 120
 
+function nowSqliteTimestamp(): string {
+  return new Date().toISOString().replace('T', ' ').slice(0, 19)
+}
+
 export class StreamingWriter {
-  private message: ChatMessage
+  private message: LocalMessage
   private contentBuffer = ''
   private toolCalls: InternalToolCall[] = []
   private toolCallById = new Map<string, InternalToolCall>()
@@ -65,15 +76,17 @@ export class StreamingWriter {
   private finalized = false
 
   constructor(private opts: StreamingWriterOpts) {
-    // Create the placeholder row immediately so the client (or another tab)
-    // can already see "an assistant message exists, complete=0" via the
-    // initial /messages fetch.
-    this.message = createStreamingMessage({
+    // Generate a fresh UUID for this message — same shape as the relay's
+    // old createStreamingMessage but without writing anything to disk.
+    // The device's local SQLite gets the row via the gossip event below.
+    this.message = {
+      id: randomUUID(),
       thread_id: opts.threadId,
       role: opts.role,
-      model: opts.model,
-      source_session_id: opts.sourceSessionId || undefined,
-    })
+      model: opts.model || null,
+      source_session_id: opts.sourceSessionId || null,
+      created_at: nowSqliteTimestamp(),
+    }
 
     // Push message.created so any subscribed clients render the bubble
     // immediately, even before the first token arrives.
@@ -151,7 +164,7 @@ export class StreamingWriter {
     this.dirty = false
     const tcJson = this.toolCalls.length ? JSON.stringify(this.toolCalls) : null
     try {
-      updateMessageContent(this.message.id, this.contentBuffer, tcJson)
+      // No relay-DB write — gossip is the persistence path.
       broadcastThreadEvent(this.opts.threadId, {
         type: 'message.updated',
         message_id: this.message.id,
@@ -204,11 +217,7 @@ export class StreamingWriter {
     const model = opts.model ?? this.message.model ?? undefined
 
     try {
-      markMessageComplete(this.message.id, {
-        content,
-        tool_calls: tcJson,
-        model,
-      })
+      // No relay-DB write — gossip is the persistence path.
       broadcastThreadEvent(this.opts.threadId, {
         type: 'message.completed',
         message_id: this.message.id,
@@ -252,7 +261,7 @@ export class StreamingWriter {
     const tcJson = this.toolCalls.length ? JSON.stringify(this.toolCalls) : null
 
     try {
-      markMessageComplete(this.message.id, { content, tool_calls: tcJson })
+      // No relay-DB write — gossip is the persistence path.
       broadcastThreadEvent(this.opts.threadId, {
         type: 'message.error',
         message_id: this.message.id,
