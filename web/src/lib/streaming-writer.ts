@@ -30,7 +30,7 @@ import {
   markMessageComplete,
   type ChatMessage,
 } from './db'
-import { broadcastThreadEvent } from './ws-broadcast'
+import { broadcastThreadEvent, gossipChatMessage } from './ws-broadcast'
 import type { SSEEvent } from './streaming'
 
 export interface StreamingWriterOpts {
@@ -40,6 +40,10 @@ export interface StreamingWriterOpts {
   sourceSessionId?: string | null
   /** The SSE send callback that pushes events to the connected browser. */
   sseSend: (event: SSEEvent) => void
+  /** User id — used to gossip the message to the user's daemon devices. */
+  userId?: number
+  /** Project id — included in gossip so devices can populate chat_threads. */
+  projectId?: number | null
 }
 
 interface InternalToolCall {
@@ -180,6 +184,22 @@ export class StreamingWriter {
         model: model || null,
         complete: true,
       })
+      // Gossip the final message to all of the user's daemon devices so
+      // their local SQLite mirrors the conversation. Fire-and-forget.
+      if (this.opts.userId) {
+        gossipChatMessage(this.opts.userId, {
+          id: this.message.id,
+          thread_id: this.opts.threadId,
+          role: this.message.role,
+          content,
+          tool_calls: tcJson,
+          model: model || null,
+          created_at: this.message.created_at,
+          source_session_id: this.message.source_session_id || null,
+          complete: true,
+          project_id: this.opts.projectId || null,
+        })
+      }
     } catch (e) {
       console.warn('[streaming-writer] finalize failed:', e)
     }
@@ -208,6 +228,19 @@ export class StreamingWriter {
         complete: true,
         error: errMsg,
       })
+      if (this.opts.userId) {
+        gossipChatMessage(this.opts.userId, {
+          id: this.message.id,
+          thread_id: this.opts.threadId,
+          role: this.message.role,
+          content,
+          tool_calls: tcJson,
+          created_at: this.message.created_at,
+          source_session_id: this.message.source_session_id || null,
+          complete: true,
+          project_id: this.opts.projectId || null,
+        })
+      }
     } catch (e) {
       console.warn('[streaming-writer] finalizeError failed:', e)
     }

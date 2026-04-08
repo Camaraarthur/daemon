@@ -21,6 +21,13 @@ import { join, dirname } from 'path'
 import { fileURLToPath } from 'url'
 import https from 'https'
 import http from 'http'
+import {
+  getStore,
+  upsertChatMessage,
+  listChatMessages,
+  countChatMessages,
+  getStorePath,
+} from './store.mjs'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
@@ -919,6 +926,33 @@ async function handleCommand(msg) {
       log(`Registered: ${msg.message}`)
       startClipboardSync()
       return null
+
+    // ── Gossip from the relay: chat message replication ──────
+    // The relay pushes us chat messages so our local SQLite mirrors
+    // every conversation we participate in. Idempotent — same id is
+    // an in-place update (lets streaming content grow).
+    case 'chat.message_imported': {
+      try {
+        upsertChatMessage(msg.message || msg)
+      } catch (e) {
+        err(`upsertChatMessage failed: ${e.message}`)
+      }
+      // No response needed — gossip is fire-and-forget.
+      return null
+    }
+
+    // Allow relay/devops to query our local store for verification.
+    case 'store.stats': {
+      try {
+        const db = getStore()
+        const total = db.prepare('SELECT COUNT(*) as c FROM chat_messages').get().c
+        const threads = db.prepare('SELECT COUNT(*) as c FROM chat_threads').get().c
+        result = { ok: true, store_path: getStorePath(), total_messages: total, total_threads: threads }
+      } catch (e) {
+        result = { ok: false, error: e.message }
+      }
+      break
+    }
     default:
       result = { error: `Unknown command: ${type}` }
   }
@@ -1323,6 +1357,17 @@ if (process.argv.includes('pair')) {
 log(`daemon CLI v${CLI_VERSION}`)
 log(`Device: ${DEVICE_NAME} (${platform()}/${arch()})`)
 log(`Server: ${SERVER_URL}`)
+
+// Initialize the local SQLite store. node:sqlite is experimental in Node 22
+// but stable enough for our schema; the warning is suppressed by NO_WARNINGS.
+try {
+  getStore()
+  const initialCount = countChatMessages('') // 0 if empty, just confirms the table works
+  void initialCount
+  log(`Store ready at ${getStorePath()}`)
+} catch (e) {
+  err(`Failed to initialize local store: ${e.message}`)
+}
 
 // Handle graceful shutdown
 process.on('SIGINT', () => { log('Shutting down...'); process.exit(0) })

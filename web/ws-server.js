@@ -130,6 +130,8 @@ const ALLOWED_COMMAND_TYPES = new Set([
   'run_command', 'get_device_info', 'list_files', 'read_file',
   'receive_file', 'ping', 'clipboard_update',
   'skill.list', 'skill.invoke',
+  // Step 7: chat message gossip and local store inspection
+  'chat.message_imported', 'store.stats',
 ])
 const MAX_COMMAND_LENGTH = 10_000  // 10K chars
 const MAX_FILE_SIZE = 10 * 1024 * 1024  // 10MB
@@ -472,6 +474,56 @@ const server = http.createServer((req, res) => {
 
         device.stats.commandsSent++
         console.log(`[ws] skill.invoke ${tool_name} → ${device_id} (${requestId})`)
+      } catch (e) {
+        res.writeHead(400, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify({ error: e.message }))
+      }
+    })
+    return
+  }
+
+  // POST /gossip/chat-message — fan a chat message out to every connected
+  // daemon device belonging to a user. Step 7 of the relay/device split:
+  // each device's local SQLite mirrors the conversation. Fire-and-forget
+  // from the relay's perspective. Returns the count of devices that
+  // received the gossip event (does NOT wait for ack).
+  if (req.url === '/gossip/chat-message' && req.method === 'POST') {
+    if (req.headers['x-broadcast-secret'] !== BROADCAST_SECRET) {
+      res.writeHead(403, { 'Content-Type': 'application/json' })
+      res.end(JSON.stringify({ error: 'forbidden' }))
+      return
+    }
+    let body = ''
+    req.on('data', chunk => { body += chunk })
+    req.on('end', () => {
+      try {
+        const { user_id, message } = JSON.parse(body)
+        if (!user_id || !message || !message.id || !message.thread_id) {
+          res.writeHead(400, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify({ error: 'user_id and message{id,thread_id} required' }))
+          return
+        }
+        const numericUserId = parseInt(user_id, 10)
+        if (isNaN(numericUserId)) {
+          res.writeHead(400, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify({ error: 'user_id must be an integer' }))
+          return
+        }
+        const userDevs = getDevicesForUser(numericUserId)
+        let sent = 0
+        for (const [, dev] of userDevs) {
+          if (dev.ws.readyState !== WebSocket.OPEN) continue
+          try {
+            dev.ws.send(JSON.stringify({
+              type: 'chat.message_imported',
+              message,
+              request_id: `gossip-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+            }))
+            sent++
+          } catch (_) {}
+        }
+        res.writeHead(200, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify({ ok: true, sent }))
       } catch (e) {
         res.writeHead(400, { 'Content-Type': 'application/json' })
         res.end(JSON.stringify({ error: e.message }))

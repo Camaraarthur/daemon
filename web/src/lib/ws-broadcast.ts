@@ -45,3 +45,51 @@ export function broadcastThreadEvent(threadId: string, event: ThreadEvent): void
 }
 
 let _warnedOnce = false
+
+// ── Device gossip ────────────────────────────────────────
+//
+// Step 7: when the relay persists a chat message, fan it out to all of
+// the user's connected daemon devices so each device's local SQLite
+// mirrors the conversation. The relay holds the canonical copy today;
+// later steps reverse the direction so the device becomes authoritative
+// and the relay holds nothing.
+
+export interface GossipChatMessage {
+  id: string
+  thread_id: string
+  role: string
+  content?: string | null
+  tool_calls?: string | null
+  tool_call_id?: string | null
+  model?: string | null
+  created_at?: string
+  source_session_id?: string | null
+  complete?: boolean
+  // Optional thread metadata so the device can populate chat_threads
+  project_id?: number | null
+  thread_title?: string | null
+}
+
+/**
+ * Push a chat message to every daemon device of a user. Fire-and-forget;
+ * never blocks the chat route. The ws-server's /gossip/chat-message
+ * endpoint walks the user's connected device map and sends each one a
+ * `chat.message_imported` WS message.
+ */
+export function gossipChatMessage(userId: number, message: GossipChatMessage): void {
+  fetch(`${WS_URL}/gossip/chat-message`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Broadcast-Secret': SECRET,
+    },
+    body: JSON.stringify({ user_id: userId, message }),
+  }).catch((e) => {
+    if (!_warnedGossipOnce) {
+      _warnedGossipOnce = true
+      console.warn('[gossip] failed (will not warn again):', e?.message || e)
+    }
+  })
+}
+
+let _warnedGossipOnce = false

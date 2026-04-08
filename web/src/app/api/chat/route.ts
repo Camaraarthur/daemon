@@ -696,9 +696,10 @@ export async function POST(req: NextRequest) {
         source_session_id: boundSessionId || undefined,
       })
       // Broadcast so any other open tabs/devices on this thread see the
-      // user message appear immediately.
+      // user message appear immediately. Also gossip to the user's
+      // daemon devices so each device's local SQLite mirrors it.
       try {
-        const { broadcastThreadEvent } = await import('@/lib/ws-broadcast')
+        const { broadcastThreadEvent, gossipChatMessage } = await import('@/lib/ws-broadcast')
         broadcastThreadEvent(threadKey, {
           type: 'message.created',
           message_id: persistedUser.id,
@@ -709,6 +710,16 @@ export async function POST(req: NextRequest) {
           created_at: persistedUser.created_at,
           source_session_id: boundSessionId || null,
           complete: true,
+        })
+        gossipChatMessage(parseInt(userId, 10) || 0, {
+          id: persistedUser.id,
+          thread_id: threadKey,
+          role: 'user',
+          content: message,
+          created_at: persistedUser.created_at,
+          source_session_id: boundSessionId || null,
+          complete: true,
+          project_id: resolvedProjectId || null,
         })
       } catch {}
     } catch (e) {
@@ -753,6 +764,8 @@ export async function POST(req: NextRequest) {
           model: undefined, // updated on finalize once we know which model answered
           sourceSessionId: boundSessionId,
           sseSend: send,
+          userId: parseInt(userId, 10) || 0,
+          projectId: resolvedProjectId || null,
         })
         const wrappedSend = writer.handleEvent
 
@@ -904,9 +917,9 @@ export async function POST(req: NextRequest) {
         source_session_id: boundSessionId || undefined,
       })
       nonStreamMessageId = persisted.id
-      // Broadcast to subscribed tabs/devices.
+      // Broadcast to subscribed tabs/devices + gossip to daemon devices.
       try {
-        const { broadcastThreadEvent } = await import('@/lib/ws-broadcast')
+        const { broadcastThreadEvent, gossipChatMessage } = await import('@/lib/ws-broadcast')
         broadcastThreadEvent(threadKey, {
           type: 'message.completed',
           message_id: persisted.id,
@@ -918,6 +931,18 @@ export async function POST(req: NextRequest) {
           created_at: persisted.created_at,
           source_session_id: boundSessionId || null,
           complete: true,
+        })
+        gossipChatMessage(parseInt(userId, 10) || 0, {
+          id: persisted.id,
+          thread_id: threadKey,
+          role: 'assistant',
+          content: result.response,
+          tool_calls: result.toolCalls?.length ? JSON.stringify(result.toolCalls) : null,
+          model: result.model,
+          created_at: persisted.created_at,
+          source_session_id: boundSessionId || null,
+          complete: true,
+          project_id: resolvedProjectId || null,
         })
       } catch {}
     } catch {}
