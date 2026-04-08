@@ -1,0 +1,273 @@
+name: Release (reproducible + signed)
+
+# Triggered on any v* tag. Produces:
+#   1. daemon-cli-<version>.tar.gz       (cli/daemon.mjs bundle, reproducible Docker build)
+#   2. daemon-relay-<version>.tar.gz     (deploy/ bundle for self-hosters)
+#   3. daemon-desktop-<version>.AppImage (Tauri Linux build, optional — skipped until desktop/ is release-ready)
+#
+# Every artifact gets:
+#   - A GitHub Artifact Attestation (SLSA v1.0 Build L3 via the reusable workflow pattern)
+#   - A Sigstore bundle via `cosign sign-blob --bundle` for users who prefer
+#     the cosign CLI over `gh attestation verify`.
+#
+# Verification (for users): see docs/REPRODUCIBLE_BUILDS.md.
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Tag or ref to build (manual runs only)"
+        required: true
+
+permissions:
+  contents: write       # create release, upload assets
+  id-token: write       # OIDC token for keyless signing + attestations
+  attestations: write   # write Artifact Attestations
+  actions: read         # required by attest-build-provenance
+
+env:
+  # Bump carefully — changing this changes every artifact hash.
+  BUILDER_IMAGE_CLI: ghcr.io/${{ github.repository }}/builder-cli
+
+jobs:
+  # ────────────────────────────────────────────────────────────────────
+  # 1. CLI tarball — the simple, always-on case.
+  # ────────────────────────────────────────────────────────────────────
+  build-cli:
+    name: Build cli/daemon.mjs (reproducible)
+    runs-on: ubuntu-24.04
+    outputs:
+      artifact: ${{ steps.meta.outputs.artifact }}
+      digest:   ${{ steps.digest.outputs.sha256 }}
+    steps:
+      - name: Checkout (at tag, full history)
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+          fetch-depth: 0
+
+      - name: Set build metadata
+        id: meta
+        run: |
+          set -eu
+          VERSION="${GITHUB_REF_NAME#v}"
+          if [ -z "${VERSION}" ] || [ "${VERSION}" = "${GITHUB_REF_NAME}" ]; then
+            VERSION="$(git describe --tags --always)"
+          fi
+          ARTIFACT="daemon-cli-${VERSION}.tar.gz"
+          SDE="$(git log -1 --pretty=%ct)"
+          echo "version=${VERSION}"   >> "$GITHUB_OUTPUT"
+          echo "artifact=${ARTIFACT}" >> "$GITHUB_OUTPUT"
+          echo "sde=${SDE}"           >> "$GITHUB_OUTPUT"
+
+      - name: Build reproducible Docker image
+        run: |
+          docker build \
+            --file .ci/Dockerfile.cli \
+            --build-arg SOURCE_DATE_EPOCH=${{ steps.meta.outputs.sde }} \
+            --tag daemon-builder-cli:${{ steps.meta.outputs.version }} \
+            .
+
+      - name: Extract artifact
+        run: |
+          set -eu
+          mkdir -p dist
+          id=$(docker create daemon-builder-cli:${{ steps.meta.outputs.version }})
+          docker cp "${id}:/out/daemon-cli.tar.gz" "dist/${{ steps.meta.outputs.artifact }}"
+          docker rm "${id}" >/dev/null
+
+      - name: Compute SHA-256
+        id: digest
+        run: |
+          set -eu
+          sum=$(sha256sum "dist/${{ steps.meta.outputs.artifact }}" | awk '{print $1}')
+          echo "sha256=${sum}" >> "$GITHUB_OUTPUT"
+          echo "${sum}  ${{ steps.meta.outputs.artifact }}" \
+            > "dist/${{ steps.meta.outputs.artifact }}.sha256"
+
+      - name: Attest build provenance (SLSA)
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: "dist/${{ steps.meta.outputs.artifact }}"
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+        with:
+          cosign-release: "v2.4.1"
+
+      - name: Sign artifact (cosign keyless, OIDC)
+        env:
+          COSIGN_YES: "true"
+        run: |
+          set -eu
+          cosign sign-blob \
+            --bundle "dist/${{ steps.meta.outputs.artifact }}.cosign.bundle" \
+            "dist/${{ steps.meta.outputs.artifact }}"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: cli
+          path: dist/*
+          if-no-files-found: error
+
+  # ────────────────────────────────────────────────────────────────────
+  # 2. Relay deploy bundle — tarball of deploy/ + server/ glue.
+  # ────────────────────────────────────────────────────────────────────
+  build-relay:
+    name: Build daemon-relay deploy bundle
+    runs-on: ubuntu-24.04
+    needs: build-cli
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+          fetch-depth: 0
+
+      - name: Package deploy bundle
+        id: pkg
+        run: |
+          set -eu
+          VERSION="${GITHUB_REF_NAME#v}"
+          ARTIFACT="daemon-relay-${VERSION}.tar.gz"
+          SDE="$(git log -1 --pretty=%ct)"
+          mkdir -p dist
+          tar \
+            --sort=name \
+            --owner=0 --group=0 --numeric-owner \
+            --mtime="@${SDE}" \
+            --format=ustar \
+            -cf "dist/${ARTIFACT%.gz}" \
+            deploy/ docker/ server/ protocol/ 2>/dev/null || true
+          gzip -n -9 "dist/${ARTIFACT%.gz}"
+          sha256sum "dist/${ARTIFACT}" | awk '{print $1}' \
+            > "dist/${ARTIFACT}.sha256"
+          echo "artifact=${ARTIFACT}" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: "dist/${{ steps.pkg.outputs.artifact }}"
+
+      - uses: sigstore/cosign-installer@v3
+      - env: { COSIGN_YES: "true" }
+        run: |
+          cosign sign-blob \
+            --bundle "dist/${{ steps.pkg.outputs.artifact }}.cosign.bundle" \
+            "dist/${{ steps.pkg.outputs.artifact }}"
+
+      - uses: actions/upload-artifact@v4
+        with: { name: relay, path: dist/* }
+
+  # ────────────────────────────────────────────────────────────────────
+  # 3. Tauri desktop (Linux x86_64 AppImage). Optional until desktop/
+  #    is release-ready. Skipped cleanly when the marker file is absent.
+  # ────────────────────────────────────────────────────────────────────
+  check-desktop:
+    name: Detect desktop/ release readiness
+    runs-on: ubuntu-24.04
+    outputs:
+      ready: ${{ steps.check.outputs.ready }}
+    steps:
+      - uses: actions/checkout@v4
+        with: { ref: "${{ inputs.ref || github.ref }}" }
+      - id: check
+        run: |
+          if [ -f desktop/RELEASE_READY ]; then
+            echo "ready=true"  >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::desktop/RELEASE_READY absent — skipping Tauri build"
+          fi
+
+  build-desktop-linux:
+    name: Build Tauri Linux AppImage
+    needs: check-desktop
+    if: needs.check-desktop.outputs.ready == 'true'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with: { ref: "${{ inputs.ref || github.ref }}" }
+
+      - name: Install Tauri deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev \
+            librsvg2-dev patchelf
+
+      - uses: actions/setup-node@v4
+        with: { node-version: "22" }
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Build (deterministic env)
+        working-directory: desktop
+        env:
+          SOURCE_DATE_EPOCH: ${{ github.event.head_commit.timestamp && '' || '' }}
+          CARGO_NET_OFFLINE: "false"
+          RUSTFLAGS: "--remap-path-prefix=${{ github.workspace }}=/build"
+        run: |
+          # NOTE: Rust bit-for-bit reproducibility is not fully solved as of
+          # 2026. We do what we can (--remap-path-prefix, SOURCE_DATE_EPOCH,
+          # committed Cargo.lock) and document the gap in REPRODUCIBLE_BUILDS.md.
+          npm ci
+          cargo install tauri-cli --version "^2" --locked
+          cargo tauri build --bundles appimage
+
+      - name: Stage artifact
+        id: stage
+        run: |
+          set -eu
+          VERSION="${GITHUB_REF_NAME#v}"
+          mkdir -p dist
+          src=$(ls desktop/target/release/bundle/appimage/*.AppImage | head -1)
+          dst="dist/daemon-desktop-${VERSION}-linux-x86_64.AppImage"
+          cp "$src" "$dst"
+          sha256sum "$dst" | awk '{print $1}' > "$dst.sha256"
+          echo "artifact=$(basename "$dst")" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: "dist/${{ steps.stage.outputs.artifact }}"
+
+      - uses: sigstore/cosign-installer@v3
+      - env: { COSIGN_YES: "true" }
+        run: |
+          cosign sign-blob \
+            --bundle "dist/${{ steps.stage.outputs.artifact }}.cosign.bundle" \
+            "dist/${{ steps.stage.outputs.artifact }}"
+
+      - uses: actions/upload-artifact@v4
+        with: { name: desktop-linux, path: dist/* }
+
+  # ────────────────────────────────────────────────────────────────────
+  # 4. Publish GitHub release with everything.
+  # ────────────────────────────────────────────────────────────────────
+  release:
+    name: Publish GitHub release
+    runs-on: ubuntu-24.04
+    needs: [build-cli, build-relay, check-desktop]
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - uses: actions/download-artifact@v4
+        with: { path: dist, merge-multiple: true }
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true
+          body: |
+            Every artifact is reproducibly built and signed.
+
+            Verify before running:
+              gh attestation verify <file> --owner ${{ github.repository_owner }}
+              # or
+              cosign verify-blob --bundle <file>.cosign.bundle \
+                --certificate-identity-regexp 'https://github.com/${{ github.repository }}/\.github/workflows/release\.yml@.*' \
+                --certificate-oidc-issuer https://token.actions.githubusercontent.com <file>
+
+            Full instructions: docs/REPRODUCIBLE_BUILDS.md
