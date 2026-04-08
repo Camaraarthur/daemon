@@ -1,86 +1,23 @@
 /**
- * Streaming variant of the agent loop — emits SSE events as tool calls happen.
- * Re-uses sandbox management from agent-loop.ts.
+ * Streaming variant of the agent loop. Same model as agent-loop.ts:
+ * NO local execution. NO sandbox. All tool calls dispatched to the user's
+ * device via the WS hub. The relay is a router, never an executor.
  */
 
 import type { SSEEvent } from './streaming'
-import { getOrCreateSandbox, AGENT_TOOLS } from './agent-loop'
-import { exec } from 'child_process'
+import { fetchDeviceTools, invokeDeviceTool } from './agent-loop'
 
-// --- Sandbox exec (duplicated to avoid tight coupling) ---
-
-function execInSandbox(containerId: string, cmd: string, timeout: number = 30, stdin?: string): Promise<string> {
-  return new Promise((resolve) => {
-    const escapedCmd = cmd.replace(/'/g, "'\\''")
-    const child = exec(
-      `docker exec -i ${containerId} timeout ${timeout} bash -c '${escapedCmd}'`,
-      { maxBuffer: 1024 * 1024, timeout: (timeout + 5) * 1000 },
-      (err, stdout, stderr) => {
-        if (err && !stdout && !stderr) {
-          resolve(`Error: ${err.message}`)
-        } else {
-          const out = stdout + (stderr ? `\nSTDERR: ${stderr}` : '')
-          resolve(out.length > 10000 ? out.slice(0, 10000) + '\n... (truncated)' : out)
-        }
-      },
-    )
-    if (stdin) {
-      child.stdin?.write(stdin)
-      child.stdin?.end()
-    }
-  })
-}
-
-// --- Lint-on-edit: after writing a file, run a quick lint check ---
-
-async function lintFile(containerId: string, filePath: string): Promise<string | null> {
-  const ext = filePath.split('.').pop()?.toLowerCase()
-  let lintCmd: string | null = null
-
-  if (ext === 'ts' || ext === 'tsx' || ext === 'js' || ext === 'jsx') {
-    lintCmd = `npx tsc --noEmit "${filePath}" 2>&1 || true`
-  } else if (ext === 'py') {
-    lintCmd = `python3 -m py_compile "${filePath}" 2>&1 || true`
-  }
-
-  if (!lintCmd) return null
-
-  const output = await execInSandbox(containerId, lintCmd, 15)
-  const trimmed = output.trim()
-  if (!trimmed || trimmed === 'true') return null
-  if (/error TS|SyntaxError|IndentationError|NameError|ImportError/i.test(trimmed)) {
-    return trimmed
-  }
-  return null
-}
-
-async function executeTool(containerId: string, toolName: string, args: Record<string, string>): Promise<string> {
-  switch (toolName) {
-    case 'bash':
-      return execInSandbox(containerId, args.command)
-    case 'read_file':
-      return execInSandbox(containerId, `cat "${args.path}"`)
-    case 'write_file': {
-      const b64 = Buffer.from(args.content).toString('base64')
-      const writeResult = await execInSandbox(containerId, `echo "${b64}" | base64 -d > "${args.path}" && echo "Written ${args.path}"`)
-
-      // Lint-on-edit: check for syntax errors after writing
-      const lintErrors = await lintFile(containerId, args.path)
-      if (lintErrors) {
-        return `${writeResult}\n\n[LINT ERRORS detected — fix before continuing]\n${lintErrors}`
-      }
-      return writeResult
-    }
-    case 'list_files':
-      return execInSandbox(containerId, `ls -la ${args.path || '.'}`)
-    case 'search':
-      return execInSandbox(containerId, `rg --color=never -n "${args.pattern}" ${args.path || '.'} 2>/dev/null || echo "No matches found"`)
-    default:
-      return `Unknown tool: ${toolName}`
-  }
-}
-
-// --- Types ---
+// Idempotent tools can run in parallel within a single turn. Stateful
+// tools (bash with shared pty session, write_file, edit_file) must run
+// serially.
+const IDEMPOTENT_TOOLS = new Set([
+  'read_file',
+  'list_files',
+  'glob',
+  'grep',
+  'lint_file',
+  'device_info',
+])
 
 interface ToolCallMessage {
   role: 'assistant'
@@ -102,11 +39,31 @@ interface ProviderConfig {
   maxTokens: number
 }
 
-// --- Provider call with tools ---
+interface DeviceTool {
+  name: string
+  device_id: string
+  device_name: string
+  platform: string
+  tool_name: string
+  description: string
+  inputSchema: Record<string, unknown>
+}
+
+function deviceToolsToOpenAI(deviceTools: DeviceTool[]) {
+  return deviceTools.map(t => ({
+    type: 'function' as const,
+    function: {
+      name: t.name,
+      description: t.description,
+      parameters: t.inputSchema,
+    },
+  }))
+}
 
 async function callProviderWithTools(
   provider: ProviderConfig,
   messages: Message[],
+  tools: ReturnType<typeof deviceToolsToOpenAI>,
 ): Promise<{ message: ToolCallMessage; usage: { prompt_tokens: number; completion_tokens: number }; model: string }> {
   const res = await fetch(provider.baseUrl, {
     method: 'POST',
@@ -118,7 +75,7 @@ async function callProviderWithTools(
     body: JSON.stringify({
       model: provider.model,
       messages,
-      tools: AGENT_TOOLS,
+      tools,
       max_tokens: provider.maxTokens,
       temperature: 0.3,
     }),
@@ -150,12 +107,32 @@ export async function runAgentLoopStreaming(opts: {
   maxIterations?: number
   onEvent: (event: SSEEvent) => void
   history?: Array<{ role: string; content: string }>
+  /** Conversation id for persistent shell sessions on the device side. */
+  conversationId?: string
 }): Promise<{ response: string; model: string; toolCalls: Array<{ tool: string; args: Record<string, string>; result: string }> }> {
-  const { provider, systemPrompt, userMessage, userId, maxIterations = 10, onEvent, history } = opts
-  const containerId = await getOrCreateSandbox(userId)
+  const { provider, systemPrompt, userMessage, userId, maxIterations = 10, onEvent, history, conversationId } = opts
+
+  // Discover the user's device tools. NO local sandbox.
+  const deviceTools = await fetchDeviceTools(userId)
+  const deviceToolMap = new Map<string, { device_id: string; tool_name: string }>()
+  for (const dt of deviceTools) {
+    deviceToolMap.set(dt.name, { device_id: dt.device_id, tool_name: dt.tool_name })
+  }
+  const tools = deviceToolsToOpenAI(deviceTools)
+
+  // Inject device context into the system prompt
+  let enrichedSystemPrompt = systemPrompt
+  if (deviceTools.length > 0) {
+    const deviceSummary = Array.from(
+      new Map(deviceTools.map(t => [t.device_id, { id: t.device_id, name: t.device_name, platform: t.platform }])).values(),
+    ).map(d => `- ${d.name} (${d.platform}) [${d.id}]`).join('\n')
+    enrichedSystemPrompt += `\n\nYour devices:\n${deviceSummary}\n\nEvery tool you call runs on one of these devices via the daemon WebSocket. Pass the same conversation_id to bash to keep shell state (cwd, env vars) across calls.`
+  } else {
+    enrichedSystemPrompt += `\n\n⚠️ No devices online for this user. Tool calls will fail. Tell the user to pair a device at /settings/devices.`
+  }
 
   const messages: Message[] = [
-    { role: 'system', content: systemPrompt },
+    { role: 'system', content: enrichedSystemPrompt },
     // Include conversation history for continuity
     ...(history || []).slice(-20).map(m => ({ role: m.role as 'user' | 'assistant', content: m.content })),
     { role: 'user', content: userMessage },
@@ -165,10 +142,42 @@ export async function runAgentLoopStreaming(opts: {
   let finalResponse = ''
   let modelName = provider.model
 
+  type DispatchedCall = {
+    tc: NonNullable<ToolCallMessage['tool_calls']>[0]
+    args: Record<string, unknown>
+    result: string
+  }
+
+  const dispatchOne = async (
+    tc: NonNullable<ToolCallMessage['tool_calls']>[0],
+  ): Promise<DispatchedCall> => {
+    let args: Record<string, unknown>
+    try {
+      args = JSON.parse(tc.function.arguments)
+    } catch {
+      return { tc, args: {}, result: `Error: failed to parse arguments: ${tc.function.arguments}` }
+    }
+    const route = deviceToolMap.get(tc.function.name)
+    if (!route) {
+      return {
+        tc, args,
+        result: `Error: no device online with tool "${tc.function.name}". Pair a device at /settings/devices.`,
+      }
+    }
+    // Inject conversation_id for stateful bash sessions
+    if (route.tool_name === 'bash' && conversationId && !args.conversation_id) {
+      args.conversation_id = conversationId
+    }
+    onEvent({ type: 'tool_call', data: { id: tc.id, name: tc.function.name, args } })
+    const result = await invokeDeviceTool(route.device_id, route.tool_name, args, userId)
+    onEvent({ type: 'tool_result', data: { id: tc.id, name: tc.function.name, output: result } })
+    return { tc, args, result }
+  }
+
   for (let i = 0; i < maxIterations; i++) {
     onEvent({ type: 'thinking', data: { text: i === 0 ? 'Reasoning...' : `Iteration ${i + 1}...` } })
 
-    const { message, model } = await callProviderWithTools(provider, messages)
+    const { message, model } = await callProviderWithTools(provider, messages, tools)
     modelName = model
 
     // Strip thinking blocks
@@ -189,41 +198,50 @@ export async function runAgentLoopStreaming(opts: {
       onEvent({ type: 'text', data: { text: content } })
     }
 
-    // Add assistant message to history
+    // Add assistant message with tool calls to history
     messages.push({
       role: 'assistant',
       content: message.content,
       tool_calls: message.tool_calls,
     })
 
-    // Execute each tool call with streaming events
+    // Partition into idempotent (parallel) and stateful (serial) tool calls
+    const idempotentBatch: typeof message.tool_calls = []
+    const statefulBatch: typeof message.tool_calls = []
     for (const tc of message.tool_calls) {
-      let args: Record<string, string>
-      try {
-        args = JSON.parse(tc.function.arguments)
-      } catch {
-        args = { error: `Failed to parse arguments: ${tc.function.arguments}` }
+      const route = deviceToolMap.get(tc.function.name)
+      if (route && IDEMPOTENT_TOOLS.has(route.tool_name)) {
+        idempotentBatch.push(tc)
+      } else {
+        statefulBatch.push(tc)
       }
+    }
 
-      // Emit tool_call event
-      onEvent({
-        type: 'tool_call',
-        data: { id: tc.id, name: tc.function.name, args },
+    const idempotentResults = idempotentBatch.length > 0
+      ? await Promise.all(idempotentBatch.map(dispatchOne))
+      : []
+    const statefulResults: DispatchedCall[] = []
+    for (const tc of statefulBatch) {
+      statefulResults.push(await dispatchOne(tc))
+    }
+
+    // Re-order results to match the model's emitted order
+    const byId = new Map<string, DispatchedCall>()
+    for (const r of [...idempotentResults, ...statefulResults]) {
+      byId.set(r.tc.id, r)
+    }
+    for (const tc of message.tool_calls) {
+      const r = byId.get(tc.id)
+      if (!r) continue
+      allToolCalls.push({
+        tool: tc.function.name,
+        args: r.args as Record<string, string>,
+        result: r.result,
       })
-
-      const result = await executeTool(containerId, tc.function.name, args)
-      allToolCalls.push({ tool: tc.function.name, args, result })
-
-      // Emit tool_result event
-      onEvent({
-        type: 'tool_result',
-        data: { id: tc.id, name: tc.function.name, output: result },
-      })
-
       messages.push({
         role: 'tool',
         tool_call_id: tc.id,
-        content: result,
+        content: r.result,
       })
     }
 
