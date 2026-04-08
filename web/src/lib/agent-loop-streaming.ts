@@ -12,6 +12,12 @@ import {
   IDEMPOTENT_MEMORY_TOOLS,
   executeMemoryTool,
 } from './memory-tools'
+import {
+  SECRETS_TOOLS,
+  SECRETS_TOOL_NAMES,
+  IDEMPOTENT_SECRETS_TOOLS,
+  executeSecretsTool,
+} from './secrets-tools'
 
 // Idempotent device tools can run in parallel within a single turn.
 // Stateful device tools (bash with shared pty session, write_file,
@@ -26,7 +32,11 @@ const IDEMPOTENT_DEVICE_TOOLS = new Set([
 ])
 
 function isIdempotent(toolName: string): boolean {
-  return IDEMPOTENT_DEVICE_TOOLS.has(toolName) || IDEMPOTENT_MEMORY_TOOLS.has(toolName)
+  return (
+    IDEMPOTENT_DEVICE_TOOLS.has(toolName) ||
+    IDEMPOTENT_MEMORY_TOOLS.has(toolName) ||
+    IDEMPOTENT_SECRETS_TOOLS.has(toolName)
+  )
 }
 
 interface ToolCallMessage {
@@ -140,9 +150,10 @@ export async function runAgentLoopStreaming(opts: {
     type: 'function' as const,
     function: { name: t.tool_name, description: t.description, parameters: t.inputSchema },
   }))
+  // Tool surface = device tools + memory tools (when project context exists) + secrets tools (always)
   const tools = projectId
-    ? [...deviceToolDefs, ...MEMORY_TOOLS]
-    : deviceToolDefs
+    ? [...deviceToolDefs, ...MEMORY_TOOLS, ...SECRETS_TOOLS]
+    : [...deviceToolDefs, ...SECRETS_TOOLS]
 
   // Inject device context into the system prompt
   let enrichedSystemPrompt = systemPrompt
@@ -182,12 +193,22 @@ export async function runAgentLoopStreaming(opts: {
       return { tc, args: {}, result: `Error: failed to parse arguments: ${tc.function.arguments}` }
     }
 
-    // Memory tool? Run in-process (relay-side, accessing the chat DB directly).
+    // Memory tool? Route to the device's local store via WS.
     if (MEMORY_TOOL_NAMES.has(tc.function.name)) {
       onEvent({ type: 'tool_call', data: { id: tc.id, name: tc.function.name, args } })
       const result = projectId
         ? await executeMemoryTool(tc.function.name, args, { projectId, userId: parseInt(userId, 10) || 0 })
         : 'Error: memory tools require a project context.'
+      onEvent({ type: 'tool_result', data: { id: tc.id, name: tc.function.name, output: result } })
+      return { tc, args, result }
+    }
+
+    // Secrets tool? Route through device-secrets (vault → platform broker fallback).
+    if (SECRETS_TOOL_NAMES.has(tc.function.name)) {
+      onEvent({ type: 'tool_call', data: { id: tc.id, name: tc.function.name, args } })
+      const result = await executeSecretsTool(tc.function.name, args, {
+        userId: parseInt(userId, 10) || 0,
+      })
       onEvent({ type: 'tool_result', data: { id: tc.id, name: tc.function.name, output: result } })
       return { tc, args, result }
     }

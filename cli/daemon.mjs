@@ -37,6 +37,14 @@ import {
   appendMemoryBlock,
   recallMemory,
 } from './store.mjs'
+import {
+  setSecret,
+  getSecret,
+  deleteSecret,
+  listSecrets,
+  existsSecret,
+  isVaultInitialized,
+} from './secrets.mjs'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
@@ -1114,6 +1122,85 @@ async function handleCommand(msg) {
         appendMemoryBlock(msg.project_id || 1, msg.label || '', msg.addition || '')
         const block = getMemoryBlock(msg.project_id || 1, msg.label || '')
         result = { ok: true, total_chars: block?.content?.length || 0 }
+      } catch (e) {
+        result = { ok: false, error: e.message }
+      }
+      break
+    }
+
+    // ── Secrets vault (encrypted at rest with AES-256-GCM) ─────
+    // The agent's get_secret() / set_secret() agent tools route here.
+    // Per vision.md §3.2 and the API broker layer, the relay-side
+    // wrapper (web/src/lib/device-secrets.ts) checks the user vault
+    // first, falls through to platform broker if not found.
+    //
+    // CRITICAL: secrets.get returns PLAINTEXT. Only use it inside the
+    // agent loop's tool dispatch path. Never log, never persist on
+    // the relay, never send to a browser.
+
+    case 'secrets.set': {
+      try {
+        const r = setSecret(
+          String(msg.name || ''),
+          String(msg.value || ''),
+          {
+            category: msg.category || undefined,
+            description: msg.description || undefined,
+          },
+        )
+        result = r
+      } catch (e) {
+        result = { ok: false, error: e.message }
+      }
+      break
+    }
+
+    case 'secrets.get': {
+      try {
+        const value = getSecret(String(msg.name || ''))
+        if (value === null) {
+          result = { ok: false, error: 'not found' }
+        } else {
+          result = { ok: true, value }
+        }
+      } catch (e) {
+        result = { ok: false, error: e.message }
+      }
+      break
+    }
+
+    case 'secrets.delete': {
+      try {
+        const removed = deleteSecret(String(msg.name || ''))
+        result = { ok: true, removed }
+      } catch (e) {
+        result = { ok: false, error: e.message }
+      }
+      break
+    }
+
+    case 'secrets.list': {
+      try {
+        const list = listSecrets()
+        result = { ok: true, count: list.length, secrets: list }
+      } catch (e) {
+        result = { ok: false, error: e.message }
+      }
+      break
+    }
+
+    case 'secrets.exists': {
+      try {
+        result = { ok: true, exists: existsSecret(String(msg.name || '')) }
+      } catch (e) {
+        result = { ok: false, error: e.message }
+      }
+      break
+    }
+
+    case 'secrets.status': {
+      try {
+        result = { ok: true, initialized: isVaultInitialized(), count: listSecrets().length }
       } catch (e) {
         result = { ok: false, error: e.message }
       }

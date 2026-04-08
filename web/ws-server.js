@@ -138,6 +138,9 @@ const ALLOWED_COMMAND_TYPES = new Set([
   'memory.remember', 'memory.recall', 'memory.list_facts',
   'memory.get_block', 'memory.list_blocks',
   'memory.update_block', 'memory.append_block',
+  // Vision §3.2: encrypted secrets vault on the device
+  'secrets.set', 'secrets.get', 'secrets.delete',
+  'secrets.list', 'secrets.exists', 'secrets.status',
 ])
 const MAX_COMMAND_LENGTH = 10_000  // 10K chars
 const MAX_FILE_SIZE = 10 * 1024 * 1024  // 10MB

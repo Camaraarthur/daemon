@@ -100,6 +100,38 @@ function runMigrations(db) {
       CREATE INDEX IF NOT EXISTS idx_threads_project ON chat_threads(project_id);
     `,
     ],
+    [
+      '003_secrets',
+      `
+      -- Per-user encrypted secrets vault. Each row stores ONE secret
+      -- (e.g. "openai_api_key") encrypted at rest with a key derived
+      -- from the user's password (Argon2id) plus an optional OS keychain
+      -- entry. The secrets are never written to disk in plaintext.
+      --
+      -- For v1 we use a simpler scheme: a master key file at
+      -- ~/.daemon/master.key (chmod 600) generated at first run, and
+      -- per-secret nonce + libsodium box (XChaCha20-Poly1305 via the
+      -- 'sodium-native' lib if available, or AES-256-GCM via Node's
+      -- built-in crypto otherwise).
+      --
+      -- Recovery: if master.key is lost, every secret is unrecoverable.
+      -- Per the architecture critic finding M-6, v1.5 adds a BIP-39
+      -- recovery phrase the user writes down at signup.
+      CREATE TABLE IF NOT EXISTS secrets (
+        name TEXT PRIMARY KEY,
+        ciphertext TEXT NOT NULL,        -- base64
+        nonce TEXT NOT NULL,             -- base64 (random per encryption)
+        algo TEXT NOT NULL DEFAULT 'aes-256-gcm',
+        category TEXT,                   -- 'api_key', 'token', 'password', 'env'
+        description TEXT,                -- human-readable, never the secret value
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+        last_used_at TEXT,
+        use_count INTEGER NOT NULL DEFAULT 0
+      );
+      CREATE INDEX IF NOT EXISTS idx_secrets_category ON secrets(category);
+    `,
+    ],
   ]
 
   const insertMigration = db.prepare(

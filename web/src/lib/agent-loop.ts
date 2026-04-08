@@ -16,6 +16,12 @@ import {
   IDEMPOTENT_MEMORY_TOOLS,
   executeMemoryTool,
 } from './memory-tools'
+import {
+  SECRETS_TOOLS,
+  SECRETS_TOOL_NAMES,
+  IDEMPOTENT_SECRETS_TOOLS,
+  executeSecretsTool,
+} from './secrets-tools'
 
 // Idempotent tools can be dispatched in parallel within a single turn.
 // Stateful tools (anything that touches a persistent shell session, mutates
@@ -31,7 +37,11 @@ const IDEMPOTENT_DEVICE_TOOLS = new Set([
 ])
 
 function isIdempotent(toolName: string): boolean {
-  return IDEMPOTENT_DEVICE_TOOLS.has(toolName) || IDEMPOTENT_MEMORY_TOOLS.has(toolName)
+  return (
+    IDEMPOTENT_DEVICE_TOOLS.has(toolName) ||
+    IDEMPOTENT_MEMORY_TOOLS.has(toolName) ||
+    IDEMPOTENT_SECRETS_TOOLS.has(toolName)
+  )
 }
 
 // --- Device MCP tool discovery and execution ---
@@ -226,9 +236,10 @@ export async function runAgentLoop(opts: {
       parameters: t.inputSchema,
     },
   }))
+  // Tool surface = device tools + memory tools (when project context exists) + secrets tools (always)
   const allTools = projectId
-    ? [...deviceToolDefs, ...MEMORY_TOOLS]
-    : deviceToolDefs
+    ? [...deviceToolDefs, ...MEMORY_TOOLS, ...SECRETS_TOOLS]
+    : [...deviceToolDefs, ...SECRETS_TOOLS]
 
   // Plan/Act separation: first iteration plans, subsequent iterations execute
   const planPrefix = `## Instructions
@@ -305,11 +316,18 @@ If a lint error is reported after writing a file, fix it before moving on.
           result: `Error: failed to parse arguments: ${tc.function.arguments}`,
         }
       }
-      // Memory tool? Run in-process against the chat DB.
+      // Memory tool? Route to the device's local store.
       if (MEMORY_TOOL_NAMES.has(tc.function.name)) {
         const result = projectId
           ? await executeMemoryTool(tc.function.name, args, { projectId, userId: parseInt(userId, 10) || 0 })
           : 'Error: memory tools require a project context.'
+        return { tc, args, result }
+      }
+      // Secrets tool? Route through device-secrets (vault → platform broker fallback).
+      if (SECRETS_TOOL_NAMES.has(tc.function.name)) {
+        const result = await executeSecretsTool(tc.function.name, args, {
+          userId: parseInt(userId, 10) || 0,
+        })
         return { tc, args, result }
       }
       // Device tool — dispatch via WS.
