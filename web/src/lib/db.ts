@@ -267,6 +267,14 @@ function runMigrations(db: Database.Database) {
       ALTER TABLE chat_messages ADD COLUMN complete INTEGER NOT NULL DEFAULT 1;
       CREATE INDEX IF NOT EXISTS idx_messages_inflight ON chat_messages(thread_id, complete);
     `],
+    ['021_drop_memory_tables', `
+      -- Step 8c moved memory_blocks and project_facts to the device's local
+      -- store (~/.daemon/store.db). The relay no longer reads from or
+      -- writes to these tables. Drop them so the relay's data/users.db
+      -- has no application content. Idempotent — DROP IF EXISTS is fine.
+      DROP TABLE IF EXISTS project_facts;
+      DROP TABLE IF EXISTS memory_blocks;
+    `],
   ]
 
   const insertMigration = db.prepare('INSERT INTO migrations (name, applied_at) VALUES (?, datetime(\'now\'))')
@@ -1175,31 +1183,18 @@ export function upsertSessionCursor(projectId: number, sessionId: string, jsonlP
   `).run(projectId, sessionId, jsonlPath, lastUuid)
 }
 
-// ── Letta-style memory: blocks (core) + facts (archival) ─────
+// ── Letta-style memory ─────────────────────────────────────
+//
+// Memory blocks and project facts moved to the device's local store
+// (~/.daemon/store.db) in Step 8c. The relay no longer holds memory
+// content. The dead helpers (getMemoryBlocks, addFact, etc.) and the
+// in-process tables (memory_blocks, project_facts) are gone — see
+// migration 021_drop_memory_tables. Memory access from the relay
+// process now routes through web/src/lib/device-memory.ts which sends
+// memory.* commands over the WS hub.
 
-export interface MemoryBlock {
-  id: number
-  project_id: number
-  label: string
-  content: string
-  max_chars: number
-  updated_at: string
-}
-
-export interface ProjectFact {
-  id: number
-  project_id: number
-  category: string
-  content: string
-  source: string | null
-  embedded: number
-  importance: number
-  created_at: string
-  last_accessed_at: string | null
-  access_count: number
-}
-
-// Standard core memory blocks every project should have
+// Standard core memory block labels — kept here as the canonical
+// vocabulary the agent should use when calling update_memory_block.
 export const CORE_BLOCK_LABELS = [
   'project',       // What this project is, its purpose, stack
   'recent',        // What was just being worked on (last session)
@@ -1207,112 +1202,5 @@ export const CORE_BLOCK_LABELS = [
   'gotchas',       // Things that bit you, common mistakes
   'preferences',   // How the user wants this project handled
 ] as const
-
-export function getMemoryBlocks(projectId: number): MemoryBlock[] {
-  return getDb().prepare(
-    'SELECT * FROM memory_blocks WHERE project_id = ? ORDER BY label'
-  ).all(projectId) as MemoryBlock[]
-}
-
-export function getMemoryBlock(projectId: number, label: string): MemoryBlock | undefined {
-  return getDb().prepare(
-    'SELECT * FROM memory_blocks WHERE project_id = ? AND label = ?'
-  ).get(projectId, label) as MemoryBlock | undefined
-}
-
-export function upsertMemoryBlock(projectId: number, label: string, content: string, maxChars = 4000): void {
-  getDb().prepare(`
-    INSERT INTO memory_blocks (project_id, label, content, max_chars, updated_at)
-    VALUES (?, ?, ?, ?, datetime('now'))
-    ON CONFLICT(project_id, label) DO UPDATE SET
-      content = excluded.content,
-      max_chars = excluded.max_chars,
-      updated_at = datetime('now')
-  `).run(projectId, label, content, maxChars)
-}
-
-export function appendMemoryBlock(projectId: number, label: string, addition: string): void {
-  const existing = getMemoryBlock(projectId, label)
-  const current = existing?.content || ''
-  const maxChars = existing?.max_chars || 4000
-  // Append, keep within max_chars (drop oldest from front)
-  let newContent = current ? `${current}\n${addition}` : addition
-  if (newContent.length > maxChars) {
-    newContent = newContent.slice(newContent.length - maxChars)
-  }
-  upsertMemoryBlock(projectId, label, newContent, maxChars)
-}
-
-// ── Facts (archival memory) ─────────────────────────────────
-
-export function addFact(args: {
-  projectId: number
-  category: string
-  content: string
-  source?: string
-  importance?: number
-}): ProjectFact {
-  const result = getDb().prepare(`
-    INSERT INTO project_facts (project_id, category, content, source, importance)
-    VALUES (?, ?, ?, ?, ?)
-  `).run(args.projectId, args.category, args.content, args.source || null, args.importance || 5)
-  return getDb().prepare('SELECT * FROM project_facts WHERE id = ?').get(result.lastInsertRowid) as ProjectFact
-}
-
-export function listFacts(projectId: number, category?: string, limit = 50): ProjectFact[] {
-  if (category) {
-    return getDb().prepare(
-      'SELECT * FROM project_facts WHERE project_id = ? AND category = ? ORDER BY importance DESC, created_at DESC LIMIT ?'
-    ).all(projectId, category, limit) as ProjectFact[]
-  }
-  return getDb().prepare(
-    'SELECT * FROM project_facts WHERE project_id = ? ORDER BY importance DESC, created_at DESC LIMIT ?'
-  ).all(projectId, limit) as ProjectFact[]
-}
-
-export function grepFacts(projectId: number, pattern: string, limit = 20): ProjectFact[] {
-  const like = `%${pattern}%`
-  return getDb().prepare(
-    'SELECT * FROM project_facts WHERE project_id = ? AND content LIKE ? ORDER BY importance DESC LIMIT ?'
-  ).all(projectId, like, limit) as ProjectFact[]
-}
-
-export function touchFact(factId: number): void {
-  getDb().prepare(`
-    UPDATE project_facts SET last_accessed_at = datetime('now'), access_count = access_count + 1
-    WHERE id = ?
-  `).run(factId)
-}
-
-export function deleteFact(factId: number, projectId: number): boolean {
-  const result = getDb().prepare(
-    'DELETE FROM project_facts WHERE id = ? AND project_id = ?'
-  ).run(factId, projectId)
-  return result.changes > 0
-}
-
-export function updateFact(factId: number, projectId: number, updates: Partial<Pick<ProjectFact, 'content' | 'category' | 'importance'>>): boolean {
-  const fields: string[] = []
-  const values: any[] = []
-  if (updates.content !== undefined) { fields.push('content = ?'); values.push(updates.content) }
-  if (updates.category !== undefined) { fields.push('category = ?'); values.push(updates.category) }
-  if (updates.importance !== undefined) { fields.push('importance = ?'); values.push(updates.importance) }
-  if (fields.length === 0) return false
-  values.push(factId, projectId)
-  const result = getDb().prepare(
-    `UPDATE project_facts SET ${fields.join(', ')} WHERE id = ? AND project_id = ?`
-  ).run(...values)
-  return result.changes > 0
-}
-
-export function countFacts(projectId: number): { total: number; by_category: Record<string, number> } {
-  const total = (getDb().prepare('SELECT COUNT(*) as c FROM project_facts WHERE project_id = ?').get(projectId) as any).c
-  const byCat = getDb().prepare(
-    'SELECT category, COUNT(*) as c FROM project_facts WHERE project_id = ? GROUP BY category'
-  ).all(projectId) as { category: string; c: number }[]
-  const by_category: Record<string, number> = {}
-  for (const row of byCat) by_category[row.category] = row.c
-  return { total, by_category }
-}
 
 export default getDb

@@ -23,9 +23,8 @@ import {
   listRecentMessages,
   countMessages,
   appendProjectMemory,
-  getMemoryBlocks,
 } from './db'
-import { assembleCoreMemory, migrateLegacyProjectMemory } from './memory'
+import { deviceListBlocks } from './device-memory'
 
 const execFileAsync = promisify(execFile)
 
@@ -209,17 +208,43 @@ export async function buildProjectContext(
   let userRules: string | null = null
   try { userRules = getUserRules(userId) } catch {}
 
-  // Letta-style core memory (blocks). If the project has no blocks yet but
-  // has legacy unstructured project_memory, auto-migrate on first read so
-  // existing context isn't lost.
+  // Letta-style core memory (blocks). Post Step 8c the canonical store is
+  // on the user's daemon device — fetched via WS through the relay's hub.
+  // If the device is offline, we fall back to no core memory in the prompt
+  // (the legacy project_memory string still loads via getProjectMemory below).
   let coreMemory = ''
   try {
-    const blocks = getMemoryBlocks(projectId)
-    if (blocks.length === 0) {
-      try { migrateLegacyProjectMemory(projectId) } catch {}
+    const r = await deviceListBlocks({ userId, projectId })
+    if (r.ok && r.blocks && r.blocks.length > 0) {
+      const lines: string[] = ['## Project Memory (core blocks)']
+      lines.push(
+        '_Edit with `update_memory_block(label, content)`. ' +
+        'Write durable facts with `remember(category, content)`. ' +
+        'Search everything with `recall(query)`._',
+      )
+      // Standard label order
+      const order = ['project', 'recent', 'open_threads', 'gotchas', 'preferences']
+      const byLabel = new Map(r.blocks.map(b => [b.label, b]))
+      const seen = new Set<string>()
+      for (const label of order) {
+        seen.add(label)
+        const b = byLabel.get(label)
+        if (b && b.content.trim()) {
+          lines.push(`\n### ${label} (${b.content.length}/${b.max_chars} chars)`)
+          lines.push(b.content.trim())
+        }
+      }
+      // Any non-standard labels
+      for (const b of r.blocks) {
+        if (seen.has(b.label) || !b.content.trim()) continue
+        lines.push(`\n### ${b.label} (${b.content.length}/${b.max_chars} chars)`)
+        lines.push(b.content.trim())
+      }
+      coreMemory = lines.join('\n')
     }
-    coreMemory = assembleCoreMemory(projectId)
-  } catch {}
+  } catch (e) {
+    console.warn('[context] deviceListBlocks failed:', e)
+  }
 
   // Legacy fallback — only used if the structured memory is empty.
   let projectMemoryRaw: string | null = null
