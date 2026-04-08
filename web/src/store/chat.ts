@@ -5,6 +5,11 @@ export interface ToolCallData {
   name: string
   args: Record<string, any>
   output?: string
+  status?: 'running' | 'done' | 'error'
+  device_id?: string
+  duration_ms?: number
+  /** Internal: when the tool_call event arrived (for duration calc). */
+  started_at?: number
 }
 
 export interface Message {
@@ -228,7 +233,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
               ...t,
               messages: t.messages.map((m, i) =>
                 i === t.messages.length - 1 && m.role === 'daemon'
-                  ? { ...m, toolCalls: [...(m.toolCalls || []), toolCall] }
+                  ? { ...m, toolCalls: [...(m.toolCalls || []), {
+                      ...toolCall,
+                      status: 'running',
+                      started_at: Date.now(),
+                    }] }
                   : m
               ),
             }
@@ -246,9 +255,17 @@ export const useChatStore = create<ChatState>((set, get) => ({
                 i === t.messages.length - 1 && m.role === 'daemon'
                   ? {
                       ...m,
-                      toolCalls: (m.toolCalls || []).map((tc) =>
-                        tc.id === toolCallId ? { ...tc, output } : tc
-                      ),
+                      toolCalls: (m.toolCalls || []).map((tc) => {
+                        if (tc.id !== toolCallId) return tc
+                        const isError = typeof output === 'string' && /^\s*Error[: ]|^\{.*"ok"\s*:\s*false/i.test(output)
+                        const duration = tc.started_at ? Date.now() - tc.started_at : undefined
+                        return {
+                          ...tc,
+                          output,
+                          status: isError ? 'error' : 'done',
+                          duration_ms: duration,
+                        }
+                      }),
                     }
                   : m
               ),

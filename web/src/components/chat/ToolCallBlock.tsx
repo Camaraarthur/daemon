@@ -7,20 +7,59 @@ export interface ToolCall {
   name: string
   args: Record<string, any>
   output?: string
+  /** Live status — set to 'running' when the tool_call event arrives,
+   *  'done' when tool_result arrives, 'error' when output starts with "Error". */
+  status?: 'running' | 'done' | 'error'
+  /** Device that ran the tool (set by the streaming layer when known). */
+  device_id?: string
+  /** Wall-clock duration in ms (set when status flips to done). */
+  duration_ms?: number
 }
 
 const TOOL_LABELS: Record<string, string> = {
-  bash: 'Command',
-  read_file: 'Read file',
-  write_file: 'Write file',
-  list_files: 'List files',
-  search: 'Search',
-  Bash: 'Command',
-  Read: 'Read file',
-  Write: 'Write file',
-  Edit: 'Edit file',
-  Glob: 'Find files',
-  Grep: 'Search',
+  // Daemon device tools
+  bash: 'Bash',
+  read_file: 'Read',
+  write_file: 'Write',
+  edit_file: 'Edit',
+  list_files: 'List',
+  glob: 'Glob',
+  grep: 'Grep',
+  lint_file: 'Lint',
+  device_info: 'Device',
+  // Memory tools
+  remember: 'Remember',
+  recall: 'Recall',
+  update_memory_block: 'Update memory',
+  append_memory_block: 'Append memory',
+  list_facts: 'List facts',
+  get_memory_block: 'Read memory',
+  // Claude Code vocabulary (premium tier)
+  Bash: 'Bash',
+  Read: 'Read',
+  Write: 'Write',
+  Edit: 'Edit',
+  Glob: 'Glob',
+  Grep: 'Grep',
+}
+
+// Single-character icon for the tool family. Renders fast, no SVG.
+const TOOL_ICONS: Record<string, string> = {
+  bash: '$', Bash: '$',
+  read_file: '◈', Read: '◈',
+  write_file: '✎', Write: '✎',
+  edit_file: '✎', Edit: '✎',
+  list_files: '☰',
+  glob: '✦', Glob: '✦',
+  grep: '⌕', Grep: '⌕',
+  lint_file: '✓',
+  device_info: 'ⓘ',
+  remember: '✱',
+  recall: '⌕',
+  update_memory_block: '✎',
+  append_memory_block: '+',
+  list_facts: '☰',
+  get_memory_block: '◈',
 }
 
 function basename(p: string): string {
@@ -76,35 +115,77 @@ function getToolSummary(tc: ToolCall): string {
   return label
 }
 
+function inferStatus(tc: ToolCall): 'running' | 'done' | 'error' {
+  if (tc.status) return tc.status
+  if (!tc.output) return 'running'
+  if (typeof tc.output === 'string' && /^\s*Error[: ]|^\{.*"ok"\s*:\s*false/i.test(tc.output)) return 'error'
+  return 'done'
+}
+
+const STATUS_DOT = {
+  running: 'bg-amber-400 animate-pulse',
+  done: 'bg-emerald-500',
+  error: 'bg-red-500',
+}
+
 export function ToolCallBlock({ toolCall }: { toolCall: ToolCall }) {
   const [expanded, setExpanded] = useState(false)
   const summary = getToolSummary(toolCall)
+  const status = inferStatus(toolCall)
   const hasOutput = !!toolCall.output
+  const icon = TOOL_ICONS[toolCall.name] || '•'
 
   return (
-    <div className="my-1.5 rounded-lg border border-[#252525] bg-[#0f0f0f] overflow-hidden text-xs">
+    <div className={`my-1.5 rounded-lg border overflow-hidden text-xs ${
+      status === 'error' ? 'border-red-900/50 bg-[#1a0f0f]' :
+      status === 'running' ? 'border-amber-900/40 bg-[#161310]' :
+      'border-[#252525] bg-[#0f0f0f]'
+    }`}>
       {/* Collapsed header */}
       <button
         onClick={() => setExpanded(!expanded)}
         className="w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-[#151515] transition-colors"
       >
+        {/* Status dot — live indicator */}
+        <span className={`inline-block w-1.5 h-1.5 rounded-full shrink-0 ${STATUS_DOT[status]}`} />
+
+        {/* Tool icon */}
+        <span className="text-[#666] font-mono shrink-0 w-3 text-center">{icon}</span>
+
+        {/* Expand chevron */}
         <svg
-          width="12"
-          height="12"
+          width="10"
+          height="10"
           viewBox="0 0 24 24"
           fill="none"
-          stroke="#666"
+          stroke="#444"
           strokeWidth="2"
           className={`shrink-0 transition-transform ${expanded ? 'rotate-90' : ''}`}
         >
           <polyline points="9 18 15 12 9 6" />
         </svg>
-        <span className="text-[#888] font-mono truncate">{summary}</span>
-        {hasOutput && (
-          <span className="ml-auto text-[10px] text-[#444] shrink-0">
-            {toolCall.output!.split('\n').length} lines
-          </span>
-        )}
+
+        {/* Summary line */}
+        <span className={`font-mono truncate ${
+          status === 'error' ? 'text-red-300' :
+          status === 'running' ? 'text-amber-200' :
+          'text-[#888]'
+        }`}>{summary}</span>
+
+        {/* Right-side metadata: device, duration, output line count */}
+        <span className="ml-auto flex items-center gap-2 shrink-0">
+          {toolCall.device_id && (
+            <span className="text-[9px] text-[#555] font-mono">{toolCall.device_id.split('-')[0]}</span>
+          )}
+          {toolCall.duration_ms != null && (
+            <span className="text-[9px] text-[#555]">{Math.round(toolCall.duration_ms)}ms</span>
+          )}
+          {hasOutput && (
+            <span className="text-[10px] text-[#444]">
+              {toolCall.output!.split('\n').length} lines
+            </span>
+          )}
+        </span>
       </button>
 
       {/* Expanded content */}
