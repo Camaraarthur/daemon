@@ -776,6 +776,8 @@ export async function POST(req: NextRequest) {
               maxIterations: 10,
               onEvent: wrappedSend,
               history: threadHistory,
+              conversationId: threadKey,
+              projectId: resolvedProjectId || undefined,
             })
           } else {
             // Plain OpenAI-compatible streaming with fallback
@@ -882,6 +884,7 @@ export async function POST(req: NextRequest) {
       threadId: threadKey,
       needsTools,
       userId,
+      projectId: resolvedProjectId || undefined,
     })
 
     // Update personality interaction count

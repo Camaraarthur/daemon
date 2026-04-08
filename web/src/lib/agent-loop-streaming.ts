@@ -6,11 +6,17 @@
 
 import type { SSEEvent } from './streaming'
 import { fetchDeviceTools, invokeDeviceTool } from './agent-loop'
+import {
+  MEMORY_TOOLS,
+  MEMORY_TOOL_NAMES,
+  IDEMPOTENT_MEMORY_TOOLS,
+  executeMemoryTool,
+} from './memory-tools'
 
-// Idempotent tools can run in parallel within a single turn. Stateful
-// tools (bash with shared pty session, write_file, edit_file) must run
-// serially.
-const IDEMPOTENT_TOOLS = new Set([
+// Idempotent device tools can run in parallel within a single turn.
+// Stateful device tools (bash with shared pty session, write_file,
+// edit_file) must run serially.
+const IDEMPOTENT_DEVICE_TOOLS = new Set([
   'read_file',
   'list_files',
   'glob',
@@ -18,6 +24,10 @@ const IDEMPOTENT_TOOLS = new Set([
   'lint_file',
   'device_info',
 ])
+
+function isIdempotent(toolName: string): boolean {
+  return IDEMPOTENT_DEVICE_TOOLS.has(toolName) || IDEMPOTENT_MEMORY_TOOLS.has(toolName)
+}
 
 interface ToolCallMessage {
   role: 'assistant'
@@ -109,8 +119,10 @@ export async function runAgentLoopStreaming(opts: {
   history?: Array<{ role: string; content: string }>
   /** Conversation id for persistent shell sessions on the device side. */
   conversationId?: string
+  /** Project id — required to enable memory tools. */
+  projectId?: number
 }): Promise<{ response: string; model: string; toolCalls: Array<{ tool: string; args: Record<string, string>; result: string }> }> {
-  const { provider, systemPrompt, userMessage, userId, maxIterations = 10, onEvent, history, conversationId } = opts
+  const { provider, systemPrompt, userMessage, userId, maxIterations = 10, onEvent, history, conversationId, projectId } = opts
 
   // Discover the user's device tools. NO local sandbox.
   // Dedupe by short tool name so the model sees clean names like "bash"
@@ -123,10 +135,14 @@ export async function runAgentLoopStreaming(opts: {
     deviceToolMap.set(dt.tool_name, { device_id: dt.device_id, tool_name: dt.tool_name })
     dedupedByShortName.set(dt.tool_name, dt)
   }
-  const tools = Array.from(dedupedByShortName.values()).map(t => ({
+  // Tool surface = device tools + memory tools (when project context exists)
+  const deviceToolDefs = Array.from(dedupedByShortName.values()).map(t => ({
     type: 'function' as const,
     function: { name: t.tool_name, description: t.description, parameters: t.inputSchema },
   }))
+  const tools = projectId
+    ? [...deviceToolDefs, ...MEMORY_TOOLS]
+    : deviceToolDefs
 
   // Inject device context into the system prompt
   let enrichedSystemPrompt = systemPrompt
@@ -165,6 +181,18 @@ export async function runAgentLoopStreaming(opts: {
     } catch {
       return { tc, args: {}, result: `Error: failed to parse arguments: ${tc.function.arguments}` }
     }
+
+    // Memory tool? Run in-process (relay-side, accessing the chat DB directly).
+    if (MEMORY_TOOL_NAMES.has(tc.function.name)) {
+      onEvent({ type: 'tool_call', data: { id: tc.id, name: tc.function.name, args } })
+      const result = projectId
+        ? await executeMemoryTool(tc.function.name, args, { projectId, userId: parseInt(userId, 10) || 0 })
+        : 'Error: memory tools require a project context.'
+      onEvent({ type: 'tool_result', data: { id: tc.id, name: tc.function.name, output: result } })
+      return { tc, args, result }
+    }
+
+    // Otherwise it's a device tool — dispatch to the user's device via WS.
     const route = deviceToolMap.get(tc.function.name)
     if (!route) {
       return {
@@ -217,8 +245,7 @@ export async function runAgentLoopStreaming(opts: {
     const idempotentBatch: typeof message.tool_calls = []
     const statefulBatch: typeof message.tool_calls = []
     for (const tc of message.tool_calls) {
-      const route = deviceToolMap.get(tc.function.name)
-      if (route && IDEMPOTENT_TOOLS.has(route.tool_name)) {
+      if (isIdempotent(tc.function.name)) {
         idempotentBatch.push(tc)
       } else {
         statefulBatch.push(tc)

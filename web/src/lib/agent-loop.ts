@@ -10,11 +10,18 @@
  * append result → repeat. Idempotent tools run in parallel via Promise.all.
  */
 
+import {
+  MEMORY_TOOLS,
+  MEMORY_TOOL_NAMES,
+  IDEMPOTENT_MEMORY_TOOLS,
+  executeMemoryTool,
+} from './memory-tools'
+
 // Idempotent tools can be dispatched in parallel within a single turn.
 // Stateful tools (anything that touches a persistent shell session, mutates
 // the filesystem, or has side effects) MUST run serially because they
 // share the device's pty session and could race.
-const IDEMPOTENT_TOOLS = new Set([
+const IDEMPOTENT_DEVICE_TOOLS = new Set([
   'read_file',
   'list_files',
   'glob',
@@ -22,6 +29,10 @@ const IDEMPOTENT_TOOLS = new Set([
   'lint_file',
   'device_info',
 ])
+
+function isIdempotent(toolName: string): boolean {
+  return IDEMPOTENT_DEVICE_TOOLS.has(toolName) || IDEMPOTENT_MEMORY_TOOLS.has(toolName)
+}
 
 // --- Device MCP tool discovery and execution ---
 
@@ -180,8 +191,10 @@ export async function runAgentLoop(opts: {
   maxIterations?: number
   /** Conversation id for persistent shell sessions on the device side. */
   conversationId?: string
+  /** Project id — required to enable memory tools. */
+  projectId?: number
 }): Promise<AgentResult> {
-  const { provider, systemPrompt, userMessage, userId, maxIterations = 10, conversationId } = opts
+  const { provider, systemPrompt, userMessage, userId, maxIterations = 10, conversationId, projectId } = opts
 
   // Discover the user's device tools. The relay holds NO local sandbox —
   // every tool runs on the user's own device via the WS hub.
@@ -204,7 +217,8 @@ export async function runAgentLoop(opts: {
   }
 
   // Convert to OpenAI tool defs with the SHORT names the model expects.
-  const allTools = Array.from(dedupedTools.values()).map(t => ({
+  // Tool surface = device tools + memory tools (when project context exists).
+  const deviceToolDefs = Array.from(dedupedTools.values()).map(t => ({
     type: 'function' as const,
     function: {
       name: t.tool_name,
@@ -212,6 +226,9 @@ export async function runAgentLoop(opts: {
       parameters: t.inputSchema,
     },
   }))
+  const allTools = projectId
+    ? [...deviceToolDefs, ...MEMORY_TOOLS]
+    : deviceToolDefs
 
   // Plan/Act separation: first iteration plans, subsequent iterations execute
   const planPrefix = `## Instructions
@@ -288,6 +305,14 @@ If a lint error is reported after writing a file, fix it before moving on.
           result: `Error: failed to parse arguments: ${tc.function.arguments}`,
         }
       }
+      // Memory tool? Run in-process against the chat DB.
+      if (MEMORY_TOOL_NAMES.has(tc.function.name)) {
+        const result = projectId
+          ? await executeMemoryTool(tc.function.name, args, { projectId, userId: parseInt(userId, 10) || 0 })
+          : 'Error: memory tools require a project context.'
+        return { tc, args, result }
+      }
+      // Device tool — dispatch via WS.
       const deviceRoute = deviceToolMap.get(tc.function.name)
       if (!deviceRoute) {
         return {
@@ -312,8 +337,7 @@ If a lint error is reported after writing a file, fix it before moving on.
     const idempotentBatch: typeof message.tool_calls = []
     const statefulBatch: typeof message.tool_calls = []
     for (const tc of message.tool_calls) {
-      const route = deviceToolMap.get(tc.function.name)
-      if (route && IDEMPOTENT_TOOLS.has(route.tool_name)) {
+      if (isIdempotent(tc.function.name)) {
         idempotentBatch.push(tc)
       } else {
         statefulBatch.push(tc)

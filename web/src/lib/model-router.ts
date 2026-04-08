@@ -225,6 +225,8 @@ export async function routeChat(opts: {
   threadId: string
   needsTools: boolean
   userId?: string
+  /** Project id — passed through to the agent loop so memory tools work. */
+  projectId?: number
 }): Promise<RouterResult> {
   const { message, tier, systemPrompt, threadId, needsTools, userId } = opts
 
@@ -233,7 +235,9 @@ export async function routeChat(opts: {
     return callClaude(message, systemPrompt, threadId, needsTools)
   }
 
-  // Free/mid with tool use: run the agent loop in a Docker sandbox
+  // Free/mid with tool use: run the agent loop, dispatching tools to the
+  // user's connected daemon devices via the WS hub. The relay process holds
+  // no local sandbox.
   if (needsTools && userId) {
     const providerConfig = getProviderConfig(tier)
     try {
@@ -243,6 +247,8 @@ export async function routeChat(opts: {
         userMessage: message,
         userId,
         maxIterations: 10,
+        conversationId: threadId,
+        projectId: opts.projectId,
       })
       return {
         response: agentResult.response,
