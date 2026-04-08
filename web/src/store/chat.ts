@@ -25,6 +25,21 @@ export interface ChatThread {
   createdAt: string
 }
 
+/** Live thread update event delivered via WebSocket from the server. */
+export interface ThreadEvent {
+  type: 'message.created' | 'message.updated' | 'message.completed' | 'message.error'
+  message_id: string
+  thread_id: string
+  role?: string
+  content?: string | null
+  tool_calls?: any[]
+  model?: string | null
+  created_at?: string
+  source_session_id?: string | null
+  complete?: boolean
+  error?: string
+}
+
 interface ChatState {
   threads: ChatThread[]
   activeThreadId: string | null
@@ -45,6 +60,8 @@ interface ChatState {
   getActiveThread: () => ChatThread | null
   loadThreadFromDB: (threadId: string, messages: Message[]) => void
   loadProjectThread: (projectId: number) => Promise<string | null>
+  /** Apply a live thread event from the WebSocket subscription. */
+  applyThreadEvent: (event: ThreadEvent) => void
 }
 
 const generateId = () => Math.random().toString(36).substring(2, 10)
@@ -104,8 +121,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
   loadProjectThread: async (projectId: number): Promise<string | null> => {
     set({ loadingHistory: true })
     try {
-      // Get most recent thread for this project
-      const threadsRes = await fetch(`/api/threads?projectId=${projectId}`)
+      // Get most recent thread for this project. cache:'no-store' is critical
+      // here — Next/browsers will happily serve a stale list and we'd miss
+      // any thread the user opened in another tab.
+      const threadsRes = await fetch(`/api/threads?projectId=${projectId}`, { cache: 'no-store' })
       const threadsData = await threadsRes.json()
       const dbThreads = threadsData.threads || []
 
@@ -118,12 +137,20 @@ export const useChatStore = create<ChatState>((set, get) => ({
       // Most recent thread (already sorted by last_message_at DESC from the API)
       const latestThread = dbThreads[0]
 
-      // Fetch the LAST 200 messages (most recent — what /resume shows)
-      const msgsRes = await fetch(`/api/threads/${latestThread.id}/messages?limit=200&mode=recent`)
+      // Fetch the LAST 200 messages (most recent — what /resume shows).
+      // The server triggers Claude Code JSONL sync on this GET, so the
+      // response includes anything the user just typed in `claude` CLI.
+      // Bypass HTTP cache so refreshes always pull the live JSONL.
+      const msgsRes = await fetch(
+        `/api/threads/${latestThread.id}/messages?limit=200&mode=recent&t=${Date.now()}`,
+        { cache: 'no-store' },
+      )
       const msgsData = await msgsRes.json()
       const dbMessages = msgsData.messages || []
 
-      // Convert DB messages to chat store Message format
+      // Convert DB messages to chat store Message format. The `complete`
+      // column drives the isStreaming flag — if a row is in flight when the
+      // page loads, render it as streaming and let the WS push update it.
       const messages: Message[] = dbMessages.map((m: any) => ({
         id: m.id,
         role: m.role === 'assistant' ? 'daemon' : m.role,
@@ -131,6 +158,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         timestamp: m.created_at,
         model: m.model || undefined,
         toolCalls: m.tool_calls ? JSON.parse(m.tool_calls) : undefined,
+        isStreaming: m.complete === 0,
       }))
 
       // Load into store
@@ -239,5 +267,132 @@ export const useChatStore = create<ChatState>((set, get) => ({
   getActiveThread: () => {
     const { threads, activeThreadId } = get()
     return threads.find((t) => t.id === activeThreadId) || null
+  },
+
+  // Apply a live WebSocket event for a thread. Single source of truth: the
+  // server-side DB row drives the state, the WS push relays each change.
+  // Polling and refreshActiveThread are gone; this function replaces them.
+  applyThreadEvent: (event: ThreadEvent): void => {
+    const { activeThreadId, threads } = get()
+    // Only apply events for whatever thread the user is currently looking at.
+    // Background threads stay un-mutated until the user opens them (initial
+    // load via loadProjectThread will pull the current state from DB).
+    if (event.thread_id !== activeThreadId) return
+
+    const thread = threads.find(t => t.id === event.thread_id)
+    if (!thread) return
+
+    if (event.type === 'message.created') {
+      // Idempotent: if a row with this id already exists, treat as update.
+      const exists = thread.messages.some(m => m.id === event.message_id)
+      const newMsg: Message = {
+        id: event.message_id,
+        role: event.role === 'assistant' ? 'daemon' : (event.role as Message['role']) || 'daemon',
+        content: event.content || '',
+        timestamp: event.created_at || new Date().toISOString(),
+        model: event.model || undefined,
+        toolCalls: event.tool_calls,
+        isStreaming: event.complete === false,
+      }
+      set({
+        threads: threads.map(t => t.id === event.thread_id
+          ? { ...t, messages: exists
+              ? t.messages.map(m => m.id === event.message_id ? { ...m, ...newMsg } : m)
+              : [...t.messages, newMsg] }
+          : t),
+      })
+      return
+    }
+
+    if (event.type === 'message.updated' || event.type === 'message.completed' || event.type === 'message.error') {
+      // Update existing row in place. If we don't know about it yet (e.g. an
+      // older message that scrolled out of the limit window), insert it.
+      const exists = thread.messages.some(m => m.id === event.message_id)
+      const isComplete = event.type !== 'message.updated'
+      const isError = event.type === 'message.error'
+      if (exists) {
+        set({
+          threads: threads.map(t => t.id === event.thread_id
+            ? { ...t, messages: t.messages.map(m =>
+                m.id === event.message_id
+                  ? {
+                      ...m,
+                      content: event.content ?? m.content,
+                      toolCalls: event.tool_calls ?? m.toolCalls,
+                      model: event.model ?? m.model,
+                      isStreaming: !isComplete,
+                      isError: isError || m.isError,
+                    }
+                  : m
+              ) }
+            : t),
+        })
+      } else {
+        // Synthesize a row for an unknown message_id (rare — out-of-window edits)
+        const newMsg: Message = {
+          id: event.message_id,
+          role: event.role === 'assistant' ? 'daemon' : (event.role as Message['role']) || 'daemon',
+          content: event.content || '',
+          timestamp: event.created_at || new Date().toISOString(),
+          model: event.model || undefined,
+          toolCalls: event.tool_calls,
+          isStreaming: !isComplete,
+          isError,
+        }
+        set({
+          threads: threads.map(t => t.id === event.thread_id
+            ? { ...t, messages: [...t.messages, newMsg] }
+            : t),
+        })
+      }
+    }
+  },
+
+  // (legacy — kept for backwards-compat with anything still calling it)
+  refreshActiveThread: async (): Promise<void> => {
+    const { activeThreadId } = get()
+    if (!activeThreadId) return
+    try {
+      const res = await fetch(
+        `/api/threads/${activeThreadId}/messages?limit=200&mode=recent&t=${Date.now()}`,
+        { cache: 'no-store' },
+      )
+      if (!res.ok) return
+      const data = await res.json()
+      const dbMessages: any[] = data.messages || []
+      const messages: Message[] = dbMessages.map((m: any) => ({
+        id: m.id,
+        role: m.role === 'assistant' ? 'daemon' : m.role,
+        content: m.content || '',
+        timestamp: m.created_at,
+        model: m.model || undefined,
+        toolCalls: m.tool_calls ? JSON.parse(m.tool_calls) : undefined,
+      }))
+      // Only replace if the message tail actually changed — avoids needless
+      // re-renders when nothing has been added.
+      const current = get().threads.find(t => t.id === activeThreadId)
+      const lastCur = current?.messages[current.messages.length - 1]
+      const lastNew = messages[messages.length - 1]
+
+      // Never overwrite while a message is actively streaming or showing an
+      // error that only lives in state (not yet persisted to DB).
+      if (lastCur?.isStreaming || lastCur?.isError) return
+
+      // Race guard: if the server returned FEWER messages than we already
+      // have in memory, the assistant response just finished streaming but
+      // hasn't been persisted to SQLite yet. Skipping the replace prevents
+      // the just-streamed message from disappearing on the next poll tick.
+      if (current && messages.length < current.messages.length) return
+
+      const changed =
+        !current ||
+        current.messages.length !== messages.length ||
+        lastCur?.id !== lastNew?.id
+      if (changed) {
+        get().loadThreadFromDB(activeThreadId, messages)
+      }
+    } catch {
+      // Network blip — leave the current view in place.
+    }
   },
 }))

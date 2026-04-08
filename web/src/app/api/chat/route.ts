@@ -328,7 +328,7 @@ async function streamClaudeCLI(
   threadId: string,
   needsTools: boolean,
   send: (event: SSEEvent) => void,
-): Promise<{ response: string; model: string; sessionId?: string }> {
+): Promise<{ response: string; model: string; sessionId?: string; toolCalls: Array<{ id?: string; tool: string; args: any; result?: string }> }> {
   const promptFile = join(PROMPT_DIR, `${randomUUID()}.md`)
   writeFileSync(promptFile, systemPrompt)
 
@@ -376,6 +376,32 @@ async function streamClaudeCLI(
     let sessionId: string | undefined
     let model = 'claude-opus'
     let buffer = ''
+    // Accumulate tool calls so they can be persisted on the assistant message —
+    // otherwise the bash/edit/read blocks vanish on page refresh.
+    const collectedToolCalls: Array<{ id?: string; tool: string; args: any; result?: string }> = []
+    const toolCallById = new Map<string, { id?: string; tool: string; args: any; result?: string }>()
+
+    const handleEvent = (event: SSEEvent) => {
+      if (event.type === 'text') {
+        fullText += event.data.text
+        send(event)
+      } else if (event.type === 'tool_call') {
+        const tc = { id: event.data.id, tool: event.data.name, args: event.data.args || {} }
+        collectedToolCalls.push(tc)
+        if (event.data.id) toolCallById.set(event.data.id, tc)
+        send(event)
+      } else if (event.type === 'tool_result') {
+        const tc = event.data.id ? toolCallById.get(event.data.id) : undefined
+        if (tc) tc.result = event.data.output
+        send(event)
+      } else if (event.type === 'done') {
+        if (event.data.response) fullText = event.data.response
+        if (event.data.sessionId) sessionId = event.data.sessionId
+        if (event.data.model) model = event.data.model
+      } else {
+        send(event)
+      }
+    }
 
     child.stdout.on('data', (chunk) => {
       buffer += chunk.toString()
@@ -384,18 +410,8 @@ async function streamClaudeCLI(
       buffer = lines.pop() || ''
 
       for (const line of lines) {
-        const event = parseClaudeStreamLine(line)
-        if (!event) continue
-
-        if (event.type === 'text') {
-          fullText += event.data.text
-          send(event)
-        } else if (event.type === 'done') {
-          if (event.data.response) fullText = event.data.response
-          if (event.data.sessionId) sessionId = event.data.sessionId
-          if (event.data.model) model = event.data.model
-        } else {
-          send(event)
+        for (const event of parseClaudeStreamLine(line)) {
+          handleEvent(event)
         }
       }
     })
@@ -415,19 +431,13 @@ async function streamClaudeCLI(
       try { unlinkSync(promptFile) } catch {}
       // Process remaining buffer
       if (buffer.trim()) {
-        const event = parseClaudeStreamLine(buffer)
-        if (event) {
-          if (event.type === 'text') fullText += event.data.text
-          if (event.type === 'done') {
-            if (event.data.response) fullText = event.data.response
-            if (event.data.sessionId) sessionId = event.data.sessionId
-            if (event.data.model) model = event.data.model
-          }
+        for (const event of parseClaudeStreamLine(buffer)) {
+          handleEvent(event)
         }
       }
       if (sessionId) claudeSessions[threadId] = sessionId
       if (fullText || code === 0) {
-        resolve({ response: fullText, model, sessionId })
+        resolve({ response: fullText, model, sessionId, toolCalls: collectedToolCalls })
       } else {
         reject(new Error(`Claude exited with code ${code}`))
       }
@@ -440,12 +450,24 @@ async function streamOpenAICompatible(
   systemPrompt: string,
   message: string,
   send: (event: SSEEvent) => void,
+  history?: Array<{ role: string; content: string }>,
 ): Promise<{ response: string; model: string; usage?: any }> {
   const provider = PROVIDERS[tier]
   const apiKey = provider.getApiKey()
   if (!apiKey) {
     throw new Error(`No API key configured for ${provider.name}`)
   }
+
+  // Build messages: system + history + current message
+  const chatMessages: Array<{ role: string; content: string }> = [
+    { role: 'system', content: systemPrompt },
+  ]
+  if (history?.length) {
+    // Include last N turns to stay within context limits
+    const recentHistory = history.slice(-20)
+    chatMessages.push(...recentHistory)
+  }
+  chatMessages.push({ role: 'user', content: message })
 
   const res = await fetch(provider.baseUrl, {
     method: 'POST',
@@ -456,10 +478,7 @@ async function streamOpenAICompatible(
     },
     body: JSON.stringify({
       model: provider.model,
-      messages: [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: message },
-      ],
+      messages: chatMessages,
       max_tokens: provider.maxTokens,
       temperature: 0.7,
       stream: true,
@@ -617,24 +636,35 @@ export async function POST(req: NextRequest) {
     // We sync into the project's CANONICAL thread (one-thread-per-project model),
     // not the request's threadKey which may be a transient default.
     let claudeUserUuid: string | null = null
+    // The Claude Code session this project is bound to. Used as the
+    // source_session_id tag on web-typed messages so they show up in the
+    // same conversation view as terminal-typed messages.
+    let boundSessionId: string | null = null
     if (resolvedProjectId) {
       try {
-        const { syncFromJsonl, appendUserMessage } = await import('@/lib/claude-sync')
-        const link = db.getClaudeCodeLink(resolvedProjectId)
-        if (link?.enabled) {
-          // Find the project's canonical thread
-          const dbInner = (await import('@/lib/db')).default
-          const canonical = dbInner().prepare(
-            'SELECT id FROM chat_threads WHERE project_id = ? ORDER BY created_at ASC LIMIT 1'
-          ).get(resolvedProjectId) as { id: string } | undefined
-          const syncTargetThread = canonical?.id || threadKey
+        const { syncBoundProject, appendUserMessage } = await import('@/lib/claude-sync')
+        // Find the project's canonical thread
+        const dbInner = (await import('@/lib/db')).default
+        const canonical = dbInner().prepare(
+          'SELECT id FROM chat_threads WHERE project_id = ? ORDER BY created_at ASC LIMIT 1'
+        ).get(resolvedProjectId) as { id: string } | undefined
+        const syncTargetThread = canonical?.id || threadKey
 
-          const imported = syncFromJsonl(resolvedProjectId, syncTargetThread)
-          if (imported > 0) {
-            console.log(`[claude-sync] Pulled ${imported} messages from JSONL into thread ${syncTargetThread} for project ${resolvedProjectId}`)
-          }
-          // Write the user message to JSONL too — daemon and CLI share one history
-          const proj = db.getProject(parseInt(userId) || 0, resolvedProjectId)
+        const proj = db.getProject(parseInt(userId) || 0, resolvedProjectId)
+        // Pull only from the project's bound Claude Code session. Auto-binds
+        // if no binding exists yet (picks the most recent matching session).
+        const { sessionId, imported } = syncBoundProject(
+          resolvedProjectId,
+          syncTargetThread,
+          proj?.local_path || null,
+        )
+        boundSessionId = sessionId
+        if (imported > 0) {
+          console.log(`[claude-sync] Pulled ${imported} messages from bound session ${sessionId} into thread ${syncTargetThread}`)
+        }
+        // Write the user message to JSONL too — daemon and CLI share one history.
+        const link = db.getClaudeCodeLink(resolvedProjectId)
+        if (link?.enabled && sessionId) {
           const cwd = proj?.local_path || process.cwd()
           claudeUserUuid = appendUserMessage(resolvedProjectId, message, cwd)
         }
@@ -658,10 +688,52 @@ export async function POST(req: NextRequest) {
           ).run(threadKey, parseInt(userId) || 0, message.slice(0, 40))
         } catch {}
       }
-      db.addMessage(threadKey, { role: 'user', content: message })
+      const persistedUser = db.addMessage(threadKey, {
+        role: 'user',
+        content: message,
+        // Tag with the bound Claude Code session so this web-typed message
+        // joins the same conversation view as terminal messages.
+        source_session_id: boundSessionId || undefined,
+      })
+      // Broadcast so any other open tabs/devices on this thread see the
+      // user message appear immediately.
+      try {
+        const { broadcastThreadEvent } = await import('@/lib/ws-broadcast')
+        broadcastThreadEvent(threadKey, {
+          type: 'message.created',
+          message_id: persistedUser.id,
+          thread_id: threadKey,
+          role: 'user',
+          content: message,
+          model: null,
+          created_at: persistedUser.created_at,
+          source_session_id: boundSessionId || null,
+          complete: true,
+        })
+      } catch {}
     } catch (e) {
       // Non-critical — don't fail the request
       console.warn('[chat] Failed to persist user message:', e)
+    }
+
+    // ── Load thread history for non-premium tiers ──────────
+    // Premium uses Claude CLI --resume for continuity; other tiers need
+    // explicit history in the messages array.
+    let threadHistory: Array<{ role: string; content: string }> = []
+    if (effectiveTier !== 'premium') {
+      try {
+        const histMsgs = db.listMessages(threadKey, 40)
+        // Convert to OpenAI-style roles, skip the just-added user message (last one)
+        threadHistory = histMsgs
+          .slice(0, -1) // exclude the message we just persisted above
+          .filter(m => m.role === 'user' || m.role === 'assistant')
+          .map(m => ({
+            role: m.role === 'assistant' ? 'assistant' : 'user',
+            content: (m.content || '').slice(0, 2000), // truncate long messages
+          }))
+      } catch (e) {
+        console.warn('[chat] Failed to load thread history:', e)
+      }
     }
 
     // ── Streaming path ──────────────────────────────────────
@@ -670,15 +742,29 @@ export async function POST(req: NextRequest) {
 
       // Run the streaming logic asynchronously
       ;(async () => {
+        // Production-grade streaming: a StreamingWriter creates the assistant
+        // row in DB up front (complete=0), persists content as it arrives, and
+        // marks complete=1 at the end. Refreshes mid-stream see the partial
+        // row; subscribed clients receive WS push events.
+        const { StreamingWriter } = await import('@/lib/streaming-writer')
+        const writer = new StreamingWriter({
+          threadId: threadKey,
+          role: 'assistant',
+          model: undefined, // updated on finalize once we know which model answered
+          sourceSessionId: boundSessionId,
+          sseSend: send,
+        })
+        const wrappedSend = writer.handleEvent
+
         try {
-          send({ type: 'thinking', data: { text: 'Starting...' } })
+          wrappedSend({ type: 'thinking', data: { text: 'Starting...' } })
 
           let result: { response: string; model: string; sessionId?: string; toolCalls?: any[] }
 
           if (effectiveTier === 'premium') {
-            // Claude CLI streaming
-            const r = await streamClaudeCLI(effectiveMessage, systemPrompt, threadKey, needsTools, send)
-            result = { ...r, toolCalls: [] }
+            // Claude CLI streaming — toolCalls accumulated inside streamClaudeCLI
+            const r = await streamClaudeCLI(effectiveMessage, systemPrompt, threadKey, needsTools, wrappedSend)
+            result = r
           } else if (needsTools && userId) {
             // Agent loop with streaming events
             const providerConfig = getProviderConfig(effectiveTier)
@@ -688,18 +774,19 @@ export async function POST(req: NextRequest) {
               userMessage: effectiveMessage,
               userId,
               maxIterations: 10,
-              onEvent: send,
+              onEvent: wrappedSend,
+              history: threadHistory,
             })
           } else {
             // Plain OpenAI-compatible streaming with fallback
             try {
-              const r = await streamOpenAICompatible(effectiveTier, systemPrompt, effectiveMessage, send)
+              const r = await streamOpenAICompatible(effectiveTier, systemPrompt, effectiveMessage, wrappedSend, threadHistory)
               result = { ...r, toolCalls: [] }
             } catch (streamErr: any) {
               if (effectiveTier === 'free') {
                 console.warn(`[stream] Free tier failed (${streamErr.message}), falling back to mid`)
-                send({ type: 'thinking', data: { text: 'Retrying with backup model...' } })
-                const r = await streamOpenAICompatible('mid', systemPrompt, effectiveMessage, send)
+                wrappedSend({ type: 'thinking', data: { text: 'Retrying with backup model...' } })
+                const r = await streamOpenAICompatible('mid', systemPrompt, effectiveMessage, wrappedSend, threadHistory)
                 result = { ...r, toolCalls: [] }
               } else {
                 throw streamErr
@@ -707,15 +794,13 @@ export async function POST(req: NextRequest) {
             }
           }
 
-          // Persist assistant response
-          try {
-            db.addMessage(threadKey, {
-              role: 'assistant',
-              content: result.response,
-              model: result.model,
-              tool_calls: result.toolCalls?.length ? JSON.stringify(result.toolCalls) : undefined,
-            })
-          } catch {}
+          // Finalize the streaming row: UPDATE complete=1, broadcast message.completed.
+          // This replaces the old "addMessage at the end" pattern.
+          writer.finalize({
+            content: result.response,
+            model: result.model,
+            toolCalls: result.toolCalls,
+          })
 
           // ── Claude Code sync OUT: write assistant message to JSONL ──
           if (resolvedProjectId && claudeUserUuid) {
@@ -762,6 +847,10 @@ export async function POST(req: NextRequest) {
             appendSessionSummary(resolvedProjectId, threadKey).catch(() => {})
           }
 
+          // Note: do NOT call writer.handleEvent for the 'done' event — the
+          // streaming row was already finalized via writer.finalize() above.
+          // We send 'done' straight to the SSE client to satisfy the legacy
+          // protocol; once the WS push migration is complete, this can go.
           send({
             type: 'done',
             data: {
@@ -770,10 +859,13 @@ export async function POST(req: NextRequest) {
               tier: effectiveTier,
               sessionId: result.sessionId,
               toolCalls: result.toolCalls,
+              messageId: writer.id,
             },
           })
         } catch (err: any) {
-          send({ type: 'error', data: { message: err?.message || 'Stream failed' } })
+          // Mark the in-flight DB row complete with error suffix and broadcast.
+          writer.finalizeError(err?.message || 'Stream failed')
+          send({ type: 'error', data: { message: err?.message || 'Stream failed', messageId: writer.id } })
         } finally {
           close()
         }
@@ -799,13 +891,32 @@ export async function POST(req: NextRequest) {
     }
 
     // Persist assistant response
+    let nonStreamMessageId: string | null = null
     try {
-      db.addMessage(threadKey, {
+      const persisted = db.addMessage(threadKey, {
         role: 'assistant',
         content: result.response,
         model: result.model,
         tool_calls: result.toolCalls?.length ? JSON.stringify(result.toolCalls) : undefined,
+        source_session_id: boundSessionId || undefined,
       })
+      nonStreamMessageId = persisted.id
+      // Broadcast to subscribed tabs/devices.
+      try {
+        const { broadcastThreadEvent } = await import('@/lib/ws-broadcast')
+        broadcastThreadEvent(threadKey, {
+          type: 'message.completed',
+          message_id: persisted.id,
+          thread_id: threadKey,
+          role: 'assistant',
+          content: result.response,
+          tool_calls: result.toolCalls,
+          model: result.model,
+          created_at: persisted.created_at,
+          source_session_id: boundSessionId || null,
+          complete: true,
+        })
+      } catch {}
     } catch {}
 
     // ── Claude Code sync OUT: write assistant message to JSONL ──

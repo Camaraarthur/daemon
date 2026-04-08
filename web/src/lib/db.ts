@@ -202,6 +202,71 @@ function runMigrations(db: Database.Database) {
       );
       CREATE INDEX IF NOT EXISTS idx_claude_links_session ON claude_code_links(active_session_id);
     `],
+    ['017_letta_memory', `
+      -- Structured memory blocks (Letta's "core memory" — always-loaded sections)
+      CREATE TABLE IF NOT EXISTS memory_blocks (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        project_id INTEGER NOT NULL,
+        label TEXT NOT NULL,        -- 'persona', 'project', 'recent', 'open_threads', 'stack', 'gotchas'
+        content TEXT NOT NULL,
+        max_chars INTEGER DEFAULT 4000,
+        updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+        FOREIGN KEY (project_id) REFERENCES projects(id),
+        UNIQUE(project_id, label)
+      );
+
+      -- Archival memory (Letta's archival — structured facts the agent remembers)
+      CREATE TABLE IF NOT EXISTS project_facts (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        project_id INTEGER NOT NULL,
+        category TEXT NOT NULL,     -- 'decision', 'fact', 'gotcha', 'todo', 'reference', 'preference'
+        content TEXT NOT NULL,
+        source TEXT,                -- where this came from: 'chat', 'manual', 'file:path', 'commit:hash'
+        embedded INTEGER DEFAULT 0, -- whether this fact has been embedded to Qdrant
+        importance INTEGER DEFAULT 5, -- 1-10
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        last_accessed_at TEXT,
+        access_count INTEGER DEFAULT 0,
+        FOREIGN KEY (project_id) REFERENCES projects(id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_facts_project ON project_facts(project_id, category);
+      CREATE INDEX IF NOT EXISTS idx_facts_importance ON project_facts(project_id, importance DESC);
+    `],
+    ['018_claude_session_cursors', `
+      -- Per-(project, session) sync cursor. A single Claude Code JSONL session
+      -- can carry messages for multiple projects (different cwds), and a project
+      -- can pull from many sessions. Replaces the single-session cursor on
+      -- claude_code_links for cross-project sync.
+      CREATE TABLE IF NOT EXISTS claude_session_cursors (
+        project_id INTEGER NOT NULL,
+        session_id TEXT NOT NULL,
+        jsonl_path TEXT NOT NULL,
+        last_uuid TEXT,
+        last_synced_at TEXT NOT NULL DEFAULT (datetime('now')),
+        PRIMARY KEY (project_id, session_id),
+        FOREIGN KEY (project_id) REFERENCES projects(id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_session_cursors_project ON claude_session_cursors(project_id);
+    `],
+    ['019_message_source_session', `
+      -- Tag each imported chat_message with the JSONL session it came from.
+      -- The conversation view filters to the MOST RECENT session by default,
+      -- so users see "their current conversation" instead of every message
+      -- ever typed from inside the project directory across 70+ sessions.
+      ALTER TABLE chat_messages ADD COLUMN source_session_id TEXT;
+      CREATE INDEX IF NOT EXISTS idx_messages_session ON chat_messages(thread_id, source_session_id, created_at);
+    `],
+    ['020_message_complete_flag', `
+      -- Streaming-into-DB. Every chat_message has a 'complete' flag:
+      --   complete=1: message is final, content/tool_calls are settled
+      --   complete=0: message is in flight (streaming, content grows)
+      -- This is the SOURCE OF TRUTH for streaming state. The client never
+      -- holds inflight state the DB doesn't already have, so a refresh
+      -- mid-stream just shows the current row and keeps receiving WS push
+      -- updates until complete=1.
+      ALTER TABLE chat_messages ADD COLUMN complete INTEGER NOT NULL DEFAULT 1;
+      CREATE INDEX IF NOT EXISTS idx_messages_inflight ON chat_messages(thread_id, complete);
+    `],
   ]
 
   const insertMigration = db.prepare('INSERT INTO migrations (name, applied_at) VALUES (?, datetime(\'now\'))')
@@ -448,6 +513,9 @@ export interface ChatMessage {
   tool_call_id: string | null
   model: string | null
   created_at: string
+  source_session_id?: string | null
+  /** 1 = final, 0 = in-flight (currently streaming). */
+  complete?: number
 }
 
 export function listMessages(threadId: string, limit = 100, offset = 0): ChatMessage[] {
@@ -479,14 +547,176 @@ export function addMessage(threadId: string, msg: {
   tool_calls?: string
   tool_call_id?: string
   model?: string
+  /** JSONL session id this message originated from (for sessioned views). */
+  source_session_id?: string
+  /** Override the default created_at — used by sync to preserve original timestamps. */
+  created_at?: string
+  /** false = in-flight (streaming), 1 = final. Default 1. */
+  complete?: boolean
 }): ChatMessage {
   const id = crypto.randomUUID()
-  getDb().prepare(`
-    INSERT INTO chat_messages (id, thread_id, role, content, tool_calls, tool_call_id, model)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
-  `).run(id, threadId, msg.role, msg.content || null, msg.tool_calls || null, msg.tool_call_id || null, msg.model || null)
+  const completeInt = msg.complete === false ? 0 : 1
+  if (msg.created_at) {
+    getDb().prepare(`
+      INSERT INTO chat_messages (id, thread_id, role, content, tool_calls, tool_call_id, model, source_session_id, created_at, complete)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      id,
+      threadId,
+      msg.role,
+      msg.content || null,
+      msg.tool_calls || null,
+      msg.tool_call_id || null,
+      msg.model || null,
+      msg.source_session_id || null,
+      msg.created_at,
+      completeInt,
+    )
+  } else {
+    getDb().prepare(`
+      INSERT INTO chat_messages (id, thread_id, role, content, tool_calls, tool_call_id, model, source_session_id, complete)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      id,
+      threadId,
+      msg.role,
+      msg.content || null,
+      msg.tool_calls || null,
+      msg.tool_call_id || null,
+      msg.model || null,
+      msg.source_session_id || null,
+      completeInt,
+    )
+  }
   touchThread(threadId)
   return getDb().prepare('SELECT * FROM chat_messages WHERE id = ?').get(id) as ChatMessage
+}
+
+// ── Streaming-into-DB helpers ───────────────────────────────────
+//
+// The DB is the source of truth for assistant message state. When the chat
+// route starts a stream, it creates a placeholder row with complete=0,
+// progressively UPDATEs the content as tokens arrive, and marks complete=1
+// when done. The client renders whatever's in the row at any moment — so
+// refreshing mid-stream just shows the partial content and the WS push keeps
+// updating it.
+
+/**
+ * Create a placeholder assistant (or any role) message for in-flight streaming.
+ * Returns the new ChatMessage row. content starts empty, complete=0.
+ */
+export function createStreamingMessage(args: {
+  thread_id: string
+  role: string
+  model?: string
+  source_session_id?: string
+}): ChatMessage {
+  return addMessage(args.thread_id, {
+    role: args.role,
+    content: '',
+    model: args.model,
+    source_session_id: args.source_session_id,
+    complete: false,
+  })
+}
+
+/**
+ * Update the content (and optionally tool_calls JSON) of an in-flight message.
+ * Use during streaming. Does not touch the complete flag.
+ */
+export function updateMessageContent(messageId: string, content: string, toolCallsJson?: string | null): void {
+  if (toolCallsJson !== undefined) {
+    getDb().prepare(
+      'UPDATE chat_messages SET content = ?, tool_calls = ? WHERE id = ?'
+    ).run(content, toolCallsJson, messageId)
+  } else {
+    getDb().prepare(
+      'UPDATE chat_messages SET content = ? WHERE id = ?'
+    ).run(content, messageId)
+  }
+}
+
+/**
+ * Mark a streaming message as final. Optionally update model/content/tool_calls
+ * one last time in the same statement. Touches the parent thread.
+ */
+export function markMessageComplete(messageId: string, finalize?: {
+  content?: string
+  tool_calls?: string | null
+  model?: string
+}): void {
+  const fields: string[] = ['complete = 1']
+  const values: any[] = []
+  if (finalize?.content !== undefined) { fields.push('content = ?'); values.push(finalize.content) }
+  if (finalize?.tool_calls !== undefined) { fields.push('tool_calls = ?'); values.push(finalize.tool_calls) }
+  if (finalize?.model !== undefined) { fields.push('model = ?'); values.push(finalize.model) }
+  values.push(messageId)
+  getDb().prepare(`UPDATE chat_messages SET ${fields.join(', ')} WHERE id = ?`).run(...values)
+
+  // Touch the parent thread so list_threads sorts it correctly.
+  const row = getDb().prepare('SELECT thread_id FROM chat_messages WHERE id = ?').get(messageId) as { thread_id: string } | undefined
+  if (row?.thread_id) touchThread(row.thread_id)
+}
+
+/**
+ * Get the most recent in-flight (complete=0) message for a thread, if any.
+ * Used on page load to detect "this thread has a stream in progress, render
+ * it and subscribe for updates".
+ */
+export function getInflightMessage(threadId: string): ChatMessage | undefined {
+  return getDb().prepare(
+    'SELECT * FROM chat_messages WHERE thread_id = ? AND complete = 0 ORDER BY created_at DESC LIMIT 1'
+  ).get(threadId) as ChatMessage | undefined
+}
+
+/**
+ * Sweep up dangling in-flight messages older than `maxAgeMinutes` minutes.
+ * Used at server startup so a process crash mid-stream doesn't leave a
+ * thread with a permanently-spinning placeholder.
+ */
+export function reapStaleInflightMessages(maxAgeMinutes = 5): number {
+  const result = getDb().prepare(`
+    UPDATE chat_messages
+    SET complete = 1, content = COALESCE(content, '') || '\n\n[interrupted — server restart]'
+    WHERE complete = 0
+      AND created_at < datetime('now', ?)
+  `).run(`-${maxAgeMinutes} minutes`)
+  return result.changes
+}
+
+/**
+ * Find the most recent JSONL session id that contributed messages to this
+ * thread. Returns null if no message has a source_session_id (legacy mode).
+ */
+export function getLatestSessionForThread(threadId: string): string | null {
+  const row = getDb().prepare(`
+    SELECT source_session_id FROM chat_messages
+    WHERE thread_id = ? AND source_session_id IS NOT NULL
+    ORDER BY created_at DESC
+    LIMIT 1
+  `).get(threadId) as { source_session_id: string } | undefined
+  return row?.source_session_id || null
+}
+
+/**
+ * Get the LAST N messages for a thread, restricted to a single source
+ * session id. This is what the chat UI uses to render "the current
+ * conversation" instead of every message ever typed inside the project dir.
+ */
+export function listRecentMessagesForSession(threadId: string, sessionId: string, limit = 200): ChatMessage[] {
+  const total = (getDb().prepare(
+    'SELECT COUNT(*) as c FROM chat_messages WHERE thread_id = ? AND source_session_id = ?'
+  ).get(threadId, sessionId) as any).c
+  const offset = Math.max(0, total - limit)
+  return getDb().prepare(
+    'SELECT * FROM chat_messages WHERE thread_id = ? AND source_session_id = ? ORDER BY created_at ASC LIMIT ? OFFSET ?'
+  ).all(threadId, sessionId, limit, offset) as ChatMessage[]
+}
+
+export function countMessagesForSession(threadId: string, sessionId: string): number {
+  return (getDb().prepare(
+    'SELECT COUNT(*) as c FROM chat_messages WHERE thread_id = ? AND source_session_id = ?'
+  ).get(threadId, sessionId) as any).c
 }
 
 // ── Project Messages (merged timeline) ───────────────────
@@ -916,6 +1146,173 @@ export function updateClaudeCodeLinkSync(
 
 export function disableClaudeCodeLink(projectId: number): void {
   getDb().prepare('UPDATE claude_code_links SET enabled = 0 WHERE project_id = ?').run(projectId)
+}
+
+// ── Claude session cursors (per-(project, session) sync cursor) ──
+
+export interface ClaudeSessionCursor {
+  project_id: number
+  session_id: string
+  jsonl_path: string
+  last_uuid: string | null
+  last_synced_at: string
+}
+
+export function getSessionCursor(projectId: number, sessionId: string): ClaudeSessionCursor | undefined {
+  return getDb().prepare(
+    'SELECT * FROM claude_session_cursors WHERE project_id = ? AND session_id = ?',
+  ).get(projectId, sessionId) as ClaudeSessionCursor | undefined
+}
+
+export function upsertSessionCursor(projectId: number, sessionId: string, jsonlPath: string, lastUuid: string): void {
+  getDb().prepare(`
+    INSERT INTO claude_session_cursors (project_id, session_id, jsonl_path, last_uuid, last_synced_at)
+    VALUES (?, ?, ?, ?, datetime('now'))
+    ON CONFLICT(project_id, session_id) DO UPDATE SET
+      last_uuid = excluded.last_uuid,
+      jsonl_path = excluded.jsonl_path,
+      last_synced_at = datetime('now')
+  `).run(projectId, sessionId, jsonlPath, lastUuid)
+}
+
+// ── Letta-style memory: blocks (core) + facts (archival) ─────
+
+export interface MemoryBlock {
+  id: number
+  project_id: number
+  label: string
+  content: string
+  max_chars: number
+  updated_at: string
+}
+
+export interface ProjectFact {
+  id: number
+  project_id: number
+  category: string
+  content: string
+  source: string | null
+  embedded: number
+  importance: number
+  created_at: string
+  last_accessed_at: string | null
+  access_count: number
+}
+
+// Standard core memory blocks every project should have
+export const CORE_BLOCK_LABELS = [
+  'project',       // What this project is, its purpose, stack
+  'recent',        // What was just being worked on (last session)
+  'open_threads',  // Pending TODOs, unfinished work
+  'gotchas',       // Things that bit you, common mistakes
+  'preferences',   // How the user wants this project handled
+] as const
+
+export function getMemoryBlocks(projectId: number): MemoryBlock[] {
+  return getDb().prepare(
+    'SELECT * FROM memory_blocks WHERE project_id = ? ORDER BY label'
+  ).all(projectId) as MemoryBlock[]
+}
+
+export function getMemoryBlock(projectId: number, label: string): MemoryBlock | undefined {
+  return getDb().prepare(
+    'SELECT * FROM memory_blocks WHERE project_id = ? AND label = ?'
+  ).get(projectId, label) as MemoryBlock | undefined
+}
+
+export function upsertMemoryBlock(projectId: number, label: string, content: string, maxChars = 4000): void {
+  getDb().prepare(`
+    INSERT INTO memory_blocks (project_id, label, content, max_chars, updated_at)
+    VALUES (?, ?, ?, ?, datetime('now'))
+    ON CONFLICT(project_id, label) DO UPDATE SET
+      content = excluded.content,
+      max_chars = excluded.max_chars,
+      updated_at = datetime('now')
+  `).run(projectId, label, content, maxChars)
+}
+
+export function appendMemoryBlock(projectId: number, label: string, addition: string): void {
+  const existing = getMemoryBlock(projectId, label)
+  const current = existing?.content || ''
+  const maxChars = existing?.max_chars || 4000
+  // Append, keep within max_chars (drop oldest from front)
+  let newContent = current ? `${current}\n${addition}` : addition
+  if (newContent.length > maxChars) {
+    newContent = newContent.slice(newContent.length - maxChars)
+  }
+  upsertMemoryBlock(projectId, label, newContent, maxChars)
+}
+
+// ── Facts (archival memory) ─────────────────────────────────
+
+export function addFact(args: {
+  projectId: number
+  category: string
+  content: string
+  source?: string
+  importance?: number
+}): ProjectFact {
+  const result = getDb().prepare(`
+    INSERT INTO project_facts (project_id, category, content, source, importance)
+    VALUES (?, ?, ?, ?, ?)
+  `).run(args.projectId, args.category, args.content, args.source || null, args.importance || 5)
+  return getDb().prepare('SELECT * FROM project_facts WHERE id = ?').get(result.lastInsertRowid) as ProjectFact
+}
+
+export function listFacts(projectId: number, category?: string, limit = 50): ProjectFact[] {
+  if (category) {
+    return getDb().prepare(
+      'SELECT * FROM project_facts WHERE project_id = ? AND category = ? ORDER BY importance DESC, created_at DESC LIMIT ?'
+    ).all(projectId, category, limit) as ProjectFact[]
+  }
+  return getDb().prepare(
+    'SELECT * FROM project_facts WHERE project_id = ? ORDER BY importance DESC, created_at DESC LIMIT ?'
+  ).all(projectId, limit) as ProjectFact[]
+}
+
+export function grepFacts(projectId: number, pattern: string, limit = 20): ProjectFact[] {
+  const like = `%${pattern}%`
+  return getDb().prepare(
+    'SELECT * FROM project_facts WHERE project_id = ? AND content LIKE ? ORDER BY importance DESC LIMIT ?'
+  ).all(projectId, like, limit) as ProjectFact[]
+}
+
+export function touchFact(factId: number): void {
+  getDb().prepare(`
+    UPDATE project_facts SET last_accessed_at = datetime('now'), access_count = access_count + 1
+    WHERE id = ?
+  `).run(factId)
+}
+
+export function deleteFact(factId: number, projectId: number): boolean {
+  const result = getDb().prepare(
+    'DELETE FROM project_facts WHERE id = ? AND project_id = ?'
+  ).run(factId, projectId)
+  return result.changes > 0
+}
+
+export function updateFact(factId: number, projectId: number, updates: Partial<Pick<ProjectFact, 'content' | 'category' | 'importance'>>): boolean {
+  const fields: string[] = []
+  const values: any[] = []
+  if (updates.content !== undefined) { fields.push('content = ?'); values.push(updates.content) }
+  if (updates.category !== undefined) { fields.push('category = ?'); values.push(updates.category) }
+  if (updates.importance !== undefined) { fields.push('importance = ?'); values.push(updates.importance) }
+  if (fields.length === 0) return false
+  values.push(factId, projectId)
+  const result = getDb().prepare(
+    `UPDATE project_facts SET ${fields.join(', ')} WHERE id = ? AND project_id = ?`
+  ).run(...values)
+  return result.changes > 0
+}
+
+export function countFacts(projectId: number): { total: number; by_category: Record<string, number> } {
+  const total = (getDb().prepare('SELECT COUNT(*) as c FROM project_facts WHERE project_id = ?').get(projectId) as any).c
+  const byCat = getDb().prepare(
+    'SELECT category, COUNT(*) as c FROM project_facts WHERE project_id = ? GROUP BY category'
+  ).all(projectId) as { category: string; c: number }[]
+  const by_category: Record<string, number> = {}
+  for (const row of byCat) by_category[row.category] = row.c
+  return { total, by_category }
 }
 
 export default getDb

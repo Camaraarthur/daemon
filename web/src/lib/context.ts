@@ -23,7 +23,9 @@ import {
   listRecentMessages,
   countMessages,
   appendProjectMemory,
+  getMemoryBlocks,
 } from './db'
+import { assembleCoreMemory, migrateLegacyProjectMemory } from './memory'
 
 const execFileAsync = promisify(execFile)
 
@@ -206,6 +208,20 @@ export async function buildProjectContext(
 
   let userRules: string | null = null
   try { userRules = getUserRules(userId) } catch {}
+
+  // Letta-style core memory (blocks). If the project has no blocks yet but
+  // has legacy unstructured project_memory, auto-migrate on first read so
+  // existing context isn't lost.
+  let coreMemory = ''
+  try {
+    const blocks = getMemoryBlocks(projectId)
+    if (blocks.length === 0) {
+      try { migrateLegacyProjectMemory(projectId) } catch {}
+    }
+    coreMemory = assembleCoreMemory(projectId)
+  } catch {}
+
+  // Legacy fallback — only used if the structured memory is empty.
   let projectMemoryRaw: string | null = null
   try { projectMemoryRaw = getProjectMemory(projectId) } catch {}
 
@@ -245,9 +261,14 @@ export async function buildProjectContext(
     sections.push(`## User's Global Rules\n(no custom rules saved — defaults apply: be terse, ship code, never invent data)`)
   }
 
-  // 4. Project memory.
-  if (projectMemory) {
-    sections.push(`## Project Memory\n${projectMemory}`)
+  // 4. Project memory — Letta-style core blocks (preferred), with legacy
+  // unstructured memory as a fallback only when the new system is empty.
+  if (coreMemory && !/_\(empty/.test(coreMemory.split('\n').slice(2, 6).join(''))) {
+    sections.push(coreMemory)
+  } else if (projectMemory) {
+    sections.push(`## Project Memory (legacy)\n${projectMemory}`)
+  } else if (coreMemory) {
+    sections.push(coreMemory)
   } else {
     sections.push(`## Project Memory\n(none yet — will be generated as the conversation progresses)`)
   }

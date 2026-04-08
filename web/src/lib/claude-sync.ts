@@ -36,6 +36,10 @@ import {
   addMessage,
   getThread,
   listThreads,
+  listRecentMessages,
+  getSessionCursor,
+  upsertSessionCursor,
+  getProject,
   type ChatMessage,
 } from './db'
 
@@ -99,6 +103,7 @@ interface JsonlAssistantMessage {
     usage?: { input_tokens?: number; output_tokens?: number }
   }
   sessionId: string
+  cwd?: string
 }
 
 type JsonlMessage = JsonlUserMessage | JsonlAssistantMessage
@@ -200,6 +205,379 @@ export function syncFromJsonl(projectId: number, threadId: string): number {
     updateClaudeCodeLinkSync(projectId, latestSession, lastUuid)
   }
   return imported
+}
+
+// ── Cross-directory sync (project-aware, cwd-based) ──────────
+//
+// A single Claude Code session can touch many cwds. The sync model that
+// actually matches reality: scan ALL ~/.claude/projects/* JSONLs, find
+// every session whose messages have cwd inside (or equal to) the project's
+// local_path, and sync just those messages into the project's canonical
+// thread. Per-(project, session) cursor so each project tracks its own
+// progress through a shared session.
+
+interface JsonlEntry {
+  type: string
+  uuid: string
+  cwd?: string
+  message?: any
+  sessionId?: string
+  timestamp?: string
+}
+
+function readJsonlEntries(filePath: string): JsonlEntry[] {
+  if (!fs.existsSync(filePath)) return []
+  let text: string
+  try { text = fs.readFileSync(filePath, 'utf-8') } catch { return [] }
+  const out: JsonlEntry[] = []
+  for (const line of text.split('\n')) {
+    if (!line.trim()) continue
+    try {
+      const obj = JSON.parse(line)
+      if (obj && (obj.type === 'user' || obj.type === 'assistant')) out.push(obj)
+    } catch {}
+  }
+  return out
+}
+
+function isCwdInside(cwd: string | undefined, root: string): boolean {
+  if (!cwd) return false
+  // Normalize trailing slash
+  const r = root.endsWith('/') ? root.slice(0, -1) : root
+  return cwd === r || cwd.startsWith(r + '/')
+}
+
+/**
+ * Convert an ISO-8601 timestamp from a JSONL entry to SQLite's
+ * "YYYY-MM-DD HH:MM:SS" format. Drops timezone — SQLite stores naive UTC,
+ * which matches the rest of the schema's `datetime('now')` defaults.
+ */
+function jsonlTimestampToSqlite(iso: string): string {
+  // "2026-04-07T16:11:23.456Z" → "2026-04-07 16:11:23"
+  const t = iso.replace('T', ' ').replace(/\.\d+Z?$/, '').replace(/Z$/, '')
+  return t
+}
+
+function entryText(e: JsonlEntry): string {
+  const content = e.message?.content
+  if (typeof content === 'string') return content
+  if (Array.isArray(content)) {
+    return content
+      .filter((p: any) => p && (p.type === 'text' || p.type === 'output_text') && p.text)
+      .map((p: any) => p.text)
+      .join('\n')
+      .trim()
+  }
+  return ''
+}
+
+// Tiny cache so a burst of API calls doesn't re-scan the same JSONLs.
+// Keyed by localPath. TTL is short — we want freshness, not perf.
+const SESSION_SCAN_CACHE = new Map<string, { at: number; result: Array<{ jsonlPath: string; sessionId: string; mtime: number }> }>()
+const SESSION_SCAN_TTL_MS = 4_000
+
+/**
+ * Find every Claude Code session JSONL containing at least one message
+ * whose cwd is inside `localPath`. Returns descriptors sorted by mtime
+ * (newest first).
+ *
+ * Implementation: a session can start in one cwd and `cd` somewhere else
+ * later (a single 12 MB session may touch 7+ different directories), so
+ * the prefilter has to look at the WHOLE file, not just the head. We
+ * use a substring match on the raw bytes — that's cheap (~tens of ms per
+ * 12 MB file) and avoids JSON-parsing files that don't mention the path.
+ */
+export function findSessionsForLocalPath(localPath: string): Array<{
+  jsonlPath: string
+  sessionId: string
+  mtime: number
+}> {
+  if (!fs.existsSync(CLAUDE_PROJECTS_ROOT)) return []
+
+  const cached = SESSION_SCAN_CACHE.get(localPath)
+  if (cached && Date.now() - cached.at < SESSION_SCAN_TTL_MS) return cached.result
+
+  const results: Array<{ jsonlPath: string; sessionId: string; mtime: number }> = []
+  let dirs: string[] = []
+  try { dirs = fs.readdirSync(CLAUDE_PROJECTS_ROOT) } catch { return [] }
+
+  // The cwd field in JSONL is JSON-encoded as `"cwd":"<path>"` — substring
+  // match on that exact form catches both the project root and any subdir
+  // (cwd values like `/home/arthur/daemon/web` will contain `/home/arthur/daemon`).
+  const needle = `"cwd":"${localPath}`
+
+  for (const dir of dirs) {
+    const dirPath = path.join(CLAUDE_PROJECTS_ROOT, dir)
+    let files: string[] = []
+    try { files = fs.readdirSync(dirPath).filter(f => f.endsWith('.jsonl')) } catch { continue }
+    for (const f of files) {
+      const full = path.join(dirPath, f)
+      try {
+        const stat = fs.statSync(full)
+        // Skip enormous files we definitely couldn't have touched (>200MB).
+        if (stat.size > 200 * 1024 * 1024) continue
+        // Read whole file as a buffer and substring-search. Faster than
+        // parsing per-line and good enough as a prefilter.
+        const buf = fs.readFileSync(full)
+        if (buf.indexOf(needle) === -1) continue
+        results.push({
+          jsonlPath: full,
+          sessionId: f.replace('.jsonl', ''),
+          mtime: stat.mtimeMs,
+        })
+      } catch {
+        continue
+      }
+    }
+  }
+
+  results.sort((a, b) => b.mtime - a.mtime)
+  SESSION_SCAN_CACHE.set(localPath, { at: Date.now(), result: results })
+  return results
+}
+
+/**
+ * Pull every new message into the project's canonical thread from EVERY
+ * Claude Code session that has messages with cwd inside the project's
+ * local_path. Returns the number of messages imported across all sessions.
+ *
+ * This is the function that should run on:
+ *  - chat send (immediately before adding the user message)
+ *  - chat history GET (so opening a project in the web shows live JSONL)
+ *  - project link
+ */
+export function syncProjectFromAllSessions(
+  projectId: number,
+  threadId: string,
+  localPath: string,
+): number {
+  if (!localPath) return 0
+  const sessions = findSessionsForLocalPath(localPath)
+  if (sessions.length === 0) return 0
+
+  // Cross-session dedup: the same message can appear in multiple JSONLs
+  // when a Claude session is resumed in a different cwd, or when our own
+  // appendUserMessage / appendAssistantMessage echoes to JSONL. Build a
+  // Set of recent (role, content-prefix) hashes from the thread once,
+  // and skip any incoming message that matches.
+  const dedupKey = (role: string, content: string) =>
+    `${role}|${content.slice(0, 500)}`
+  const seen = new Set<string>()
+  try {
+    for (const m of listRecentMessages(threadId, 4000)) {
+      if (m.content) seen.add(dedupKey(m.role, m.content))
+    }
+  } catch {}
+
+  let totalImported = 0
+  for (const sess of sessions) {
+    const cursor = getSessionCursor(projectId, sess.sessionId)
+    const entries = readJsonlEntries(sess.jsonlPath)
+    if (entries.length === 0) continue
+
+    // Find the start index (after the cursor's last_uuid).
+    let startIdx = 0
+    if (cursor?.last_uuid) {
+      const idx = entries.findIndex(e => e.uuid === cursor.last_uuid)
+      if (idx >= 0) startIdx = idx + 1
+    }
+
+    let lastUuid = cursor?.last_uuid || ''
+    for (let i = startIdx; i < entries.length; i++) {
+      const e = entries[i]
+      // Only sync messages whose cwd is inside this project's local_path
+      if (!isCwdInside(e.cwd, localPath)) continue
+      const text = entryText(e)
+      if (!text) continue
+
+      const role = e.type === 'assistant' ? 'assistant' : 'user'
+      const key = dedupKey(role, text)
+      if (seen.has(key)) {
+        // Already in the thread (from another session or a previous run) —
+        // advance the cursor but don't insert.
+        lastUuid = e.uuid
+        continue
+      }
+
+      const model = e.type === 'assistant' ? (e.message?.model as string | undefined) : undefined
+      try {
+        addMessage(threadId, {
+          role,
+          content: text,
+          model: model || undefined,
+          // Tag with the JSONL session id so the UI can show ONE conversation
+          // per session instead of dumping 70+ sessions worth of messages.
+          source_session_id: e.sessionId || sess.sessionId,
+          // Preserve the original JSONL timestamp so chronological ordering
+          // across sessions is correct (otherwise batch imports collapse to
+          // a single 'now' and the latest-session view picks the wrong one).
+          created_at: e.timestamp ? jsonlTimestampToSqlite(e.timestamp) : undefined,
+        })
+        seen.add(key)
+        totalImported++
+      } catch {}
+      lastUuid = e.uuid
+    }
+
+    if (lastUuid) {
+      upsertSessionCursor(projectId, sess.sessionId, sess.jsonlPath, lastUuid)
+    }
+  }
+  return totalImported
+}
+
+/**
+ * Convenience: sync using the project's stored local_path.
+ */
+export function syncProjectById(projectId: number, threadId: string, userId: number): number {
+  const proj = getProject(userId, projectId)
+  if (!proj || !proj.local_path) return 0
+  return syncProjectFromAllSessions(projectId, threadId, proj.local_path)
+}
+
+// ── Bound-session sync (the model the user actually wants) ───
+//
+// Cwd-matching is the wrong signal when many conversations happen in the
+// same directory. The right model is an EXPLICIT one-to-one binding:
+//
+//   project ↔ exactly one Claude Code session id
+//
+// Sync pulls only from that session, writes go to that session, and
+// switching projects in the terminal means the user (or daemon) re-binds.
+// This function reflects that.
+
+/**
+ * Locate a Claude Code JSONL anywhere under ~/.claude/projects by its
+ * session id. The file is named `{sessionId}.jsonl` regardless of which
+ * project directory it lives in, so we can find it with a single readdir
+ * across the project root.
+ */
+export function findJsonlForSessionId(sessionId: string): string | null {
+  if (!fs.existsSync(CLAUDE_PROJECTS_ROOT)) return null
+  let dirs: string[] = []
+  try { dirs = fs.readdirSync(CLAUDE_PROJECTS_ROOT) } catch { return null }
+  for (const dir of dirs) {
+    const candidate = path.join(CLAUDE_PROJECTS_ROOT, dir, `${sessionId}.jsonl`)
+    if (fs.existsSync(candidate)) return candidate
+  }
+  return null
+}
+
+/**
+ * Sync messages from a single bound JSONL session into a project's
+ * canonical thread. Tags every imported row with `source_session_id` and
+ * preserves the original JSONL timestamps so chronological ordering is
+ * accurate.
+ *
+ * Returns the number of new messages imported.
+ */
+export function syncProjectFromBoundSession(
+  projectId: number,
+  threadId: string,
+  sessionId: string,
+): number {
+  const jsonlPath = findJsonlForSessionId(sessionId)
+  if (!jsonlPath) return 0
+
+  const entries = readJsonlEntries(jsonlPath)
+  if (entries.length === 0) return 0
+
+  const cursor = getSessionCursor(projectId, sessionId)
+  let startIdx = 0
+  if (cursor?.last_uuid) {
+    const idx = entries.findIndex(e => e.uuid === cursor.last_uuid)
+    if (idx >= 0) startIdx = idx + 1
+  }
+
+  // Cross-source dedup. We may have legacy rows from earlier cwd-based sync;
+  // don't re-add identical (role, content) tuples.
+  const dedupKey = (role: string, content: string) =>
+    `${role}|${content.slice(0, 500)}`
+  const seen = new Set<string>()
+  try {
+    for (const m of listRecentMessages(threadId, 4000)) {
+      if (m.content) seen.add(dedupKey(m.role, m.content))
+    }
+  } catch {}
+
+  let imported = 0
+  let lastUuid = cursor?.last_uuid || ''
+  for (let i = startIdx; i < entries.length; i++) {
+    const e = entries[i]
+    const text = entryText(e)
+    if (!text) continue
+    const role = e.type === 'assistant' ? 'assistant' : 'user'
+    const key = dedupKey(role, text)
+    if (seen.has(key)) {
+      lastUuid = e.uuid
+      continue
+    }
+    const model = e.type === 'assistant' ? (e.message?.model as string | undefined) : undefined
+    try {
+      addMessage(threadId, {
+        role,
+        content: text,
+        model: model || undefined,
+        source_session_id: sessionId,
+        created_at: e.timestamp ? jsonlTimestampToSqlite(e.timestamp) : undefined,
+      })
+      seen.add(key)
+      imported++
+    } catch {}
+    lastUuid = e.uuid
+  }
+
+  if (lastUuid) {
+    upsertSessionCursor(projectId, sessionId, jsonlPath, lastUuid)
+  }
+  // Keep claude_code_links.last_synced_uuid in step too — `getResumeSessionId`
+  // and the link UI both read it.
+  try { updateClaudeCodeLinkSync(projectId, sessionId, lastUuid) } catch {}
+  return imported
+}
+
+/**
+ * Auto-pick the best Claude Code session to bind to a project that has no
+ * binding yet. Heuristic: the most recently modified JSONL whose cwd has
+ * ever been inside the project's local_path. This is the bootstrap case
+ * — once a binding exists, we never override it.
+ */
+export function autoBindProjectSession(projectId: number, localPath: string): string | null {
+  const sessions = findSessionsForLocalPath(localPath)
+  if (sessions.length === 0) return null
+  const best = sessions[0]
+  const link = getClaudeCodeLink(projectId)
+  upsertClaudeCodeLink(
+    projectId,
+    link?.claude_project_dir || path.dirname(best.jsonlPath),
+    best.sessionId,
+  )
+  return best.sessionId
+}
+
+/**
+ * Top-level entrypoint for the messages route and chat send. Ensures a
+ * binding exists, then pulls only from that bound session. Returns the
+ * bound session id (or null if nothing could be bound).
+ */
+export function syncBoundProject(
+  projectId: number,
+  threadId: string,
+  localPath: string | null,
+): { sessionId: string | null; imported: number } {
+  let link = getClaudeCodeLink(projectId)
+  let sessionId = link?.enabled ? link.active_session_id : null
+
+  // Auto-bind on first use if we have a local_path to scan from.
+  if (!sessionId && localPath) {
+    sessionId = autoBindProjectSession(projectId, localPath)
+    link = getClaudeCodeLink(projectId)
+  }
+
+  if (!sessionId) return { sessionId: null, imported: 0 }
+
+  const imported = syncProjectFromBoundSession(projectId, threadId, sessionId)
+  return { sessionId, imported }
 }
 
 // ── Writing from daemon back to JSONL ────────────────────────

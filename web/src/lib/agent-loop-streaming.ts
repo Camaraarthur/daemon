@@ -149,12 +149,15 @@ export async function runAgentLoopStreaming(opts: {
   userId: string
   maxIterations?: number
   onEvent: (event: SSEEvent) => void
+  history?: Array<{ role: string; content: string }>
 }): Promise<{ response: string; model: string; toolCalls: Array<{ tool: string; args: Record<string, string>; result: string }> }> {
-  const { provider, systemPrompt, userMessage, userId, maxIterations = 10, onEvent } = opts
+  const { provider, systemPrompt, userMessage, userId, maxIterations = 10, onEvent, history } = opts
   const containerId = await getOrCreateSandbox(userId)
 
   const messages: Message[] = [
     { role: 'system', content: systemPrompt },
+    // Include conversation history for continuity
+    ...(history || []).slice(-20).map(m => ({ role: m.role as 'user' | 'assistant', content: m.content })),
     { role: 'user', content: userMessage },
   ]
 

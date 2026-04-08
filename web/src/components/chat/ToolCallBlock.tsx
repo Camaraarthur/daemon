@@ -23,24 +23,50 @@ const TOOL_LABELS: Record<string, string> = {
   Grep: 'Search',
 }
 
+function basename(p: string): string {
+  if (!p) return ''
+  const parts = p.split('/')
+  return parts[parts.length - 1] || p
+}
+
+function countLines(s: string | undefined): number {
+  if (!s) return 0
+  // Don't count a trailing empty line.
+  const trimmed = s.endsWith('\n') ? s.slice(0, -1) : s
+  return trimmed.split('\n').length
+}
+
 function getToolSummary(tc: ToolCall): string {
   const label = TOOL_LABELS[tc.name] || tc.name
   if (tc.name === 'bash' || tc.name === 'Bash') {
     const cmd = tc.args?.command || ''
-    const short = cmd.length > 60 ? cmd.slice(0, 57) + '...' : cmd
-    return `${label}: ${short}`
+    const short = cmd.length > 80 ? cmd.slice(0, 77) + '...' : cmd
+    return `${label}  $ ${short}`
   }
   if (tc.name === 'read_file' || tc.name === 'Read') {
-    return `${label}: ${tc.args?.path || tc.args?.file_path || ''}`
+    const path = tc.args?.path || tc.args?.file_path || ''
+    const lines = countLines(tc.output)
+    return `${label}  ${basename(path)}${lines ? `  (${lines} lines)` : ''}`
   }
   if (tc.name === 'write_file' || tc.name === 'Write') {
-    return `${label}: ${tc.args?.path || tc.args?.file_path || ''}`
-  }
-  if (tc.name === 'search' || tc.name === 'Grep') {
-    return `${label}: ${tc.args?.pattern || ''}`
+    const path = tc.args?.path || tc.args?.file_path || ''
+    const lines = countLines(tc.args?.content)
+    return `${label}  ${basename(path)}${lines ? `  +${lines} lines` : ''}`
   }
   if (tc.name === 'Edit') {
-    return `${label}: ${tc.args?.file_path || ''}`
+    const path = tc.args?.file_path || ''
+    const newLines = countLines(tc.args?.new_string)
+    const oldLines = countLines(tc.args?.old_string)
+    const delta = newLines - oldLines
+    const sign = delta >= 0 ? '+' : ''
+    return `${label}  ${basename(path)}  ${sign}${delta} lines`
+  }
+  if (tc.name === 'search' || tc.name === 'Grep') {
+    const lines = countLines(tc.output)
+    return `${label}  /${tc.args?.pattern || ''}/${lines ? `  (${lines} matches)` : ''}`
+  }
+  if (tc.name === 'list_files' || tc.name === 'Glob') {
+    return `${label}  ${tc.args?.path || tc.args?.pattern || '.'}`
   }
   // MCP tools
   if (tc.name.startsWith('mcp__')) {

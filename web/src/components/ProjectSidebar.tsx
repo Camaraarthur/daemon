@@ -511,8 +511,11 @@ export default function ProjectSidebar({
             </svg>
           </button>
           {onClose && (
-            <button onClick={onClose} className="sm:hidden text-[#555] hover:text-white text-sm">
-              &times;
+            <button onClick={onClose} className="text-[#555] hover:text-white transition-colors" title="Collapse sidebar">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M11 19l-7-7 7-7" />
+                <line x1="18" y1="4" x2="18" y2="20" />
+              </svg>
             </button>
           )}
         </div>

@@ -172,7 +172,7 @@ function AuthedChat({ user }: { user: any }) {
     setInputDraft, inputDraft,
     isProcessing, setProcessing, createThread: createChatThread, activeThreadId: chatActiveThreadId,
     setActiveThread: setChatActiveThread,
-    loadProjectThread, loadingHistory,
+    loadProjectThread, loadingHistory, applyThreadEvent,
   } = useChatStore()
 
   const {
@@ -190,6 +190,22 @@ function AuthedChat({ user }: { user: any }) {
   const [initialScrollDone, setInitialScrollDone] = useState(false)
   const [showModelPicker, setShowModelPicker] = useState(false)
   const [currentModel, setCurrentModel] = useState('qwen3-coder')
+  // Show tool call details (bash commands, file edits, line counts, output).
+  // Persisted in localStorage. Default ON — devs need to see what the agent is doing.
+  const [showToolDetails, setShowToolDetails] = useState(true)
+  useEffect(() => {
+    try {
+      const v = localStorage.getItem('daemon_show_tool_details')
+      if (v !== null) setShowToolDetails(v === '1')
+    } catch {}
+  }, [])
+  const toggleToolDetails = useCallback(() => {
+    setShowToolDetails(prev => {
+      const next = !prev
+      try { localStorage.setItem('daemon_show_tool_details', next ? '1' : '0') } catch {}
+      return next
+    })
+  }, [])
 
   // Load model preference
   useEffect(() => {
@@ -284,6 +300,35 @@ function AuthedChat({ user }: { user: any }) {
     }
   }, [activeProjectId, loadProjectThread, setChatActiveThread])
 
+  // Live thread updates over WebSocket. The server's chat route writes
+  // streaming assistant messages directly to the DB and broadcasts
+  // message.created/updated/completed events as they happen — we just apply
+  // them to the store. No polling, no race guards, no stale reads.
+  useEffect(() => {
+    if (!chatActiveThreadId) return
+    let cancelled = false
+    let unsub: (() => void) | null = null
+    import('@/lib/thread-ws').then(({ getThreadWS }) => {
+      if (cancelled) return
+      const ws = getThreadWS()
+      ws.subscribe(chatActiveThreadId)
+      unsub = ws.on(applyThreadEvent)
+    })
+    return () => {
+      cancelled = true
+      if (unsub) unsub()
+    }
+  }, [chatActiveThreadId, applyThreadEvent])
+
+  // When the active project changes, kick the JSONL sync once via the
+  // messages GET. This is a one-time pull-on-open; live updates after that
+  // arrive via the WS subscription above.
+  useEffect(() => {
+    if (!chatActiveThreadId) return
+    fetch(`/api/threads/${chatActiveThreadId}/messages?limit=1&t=${Date.now()}`, { cache: 'no-store' })
+      .catch(() => {})
+  }, [chatActiveThreadId])
+
   // Load project context when switching projects
   const [projectContext, setProjectContext] = useState<string | null>(null)
   useEffect(() => {
@@ -303,24 +348,50 @@ function AuthedChat({ user }: { user: any }) {
     return projects.find(p => p.id === activeProjectId)?.display_name || null
   }, [activeProjectId, projects])
 
-  // Scroll to bottom on new messages
+  // Track whether user has scrolled up from the bottom
+  const userScrolledUp = useRef(false)
+
+  // Build a stable "tail key" that only changes when the actual last message
+  // changes (new id, or content grew during streaming). The polling refresh
+  // creates new array references on every tick — depending on the array
+  // itself would re-fire this effect (and re-scroll) every 6s for no reason.
+  const tail = displayMessages[displayMessages.length - 1]
+  const tailKey = `${displayMessages.length}|${tail?.id || ''}|${tail?.content?.length || 0}`
+
+  // Scroll to bottom on new messages — but only if user hasn't scrolled up
   useEffect(() => {
-    endRef.current?.scrollIntoView({ behavior: initialScrollDone ? 'smooth' : 'instant' })
-    if (!initialScrollDone && displayMessages.length > 0) {
-      setInitialScrollDone(true)
+    if (!initialScrollDone) {
+      // First load: always jump to bottom instantly
+      endRef.current?.scrollIntoView({ behavior: 'instant' })
+      if (displayMessages.length > 0) {
+        setInitialScrollDone(true)
+      }
+    } else if (!userScrolledUp.current) {
+      endRef.current?.scrollIntoView({ behavior: 'smooth' })
     }
-  }, [displayMessages, initialScrollDone])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tailKey, initialScrollDone])
 
   // Reset scroll on project switch
   useEffect(() => {
     setInitialScrollDone(false)
+    userScrolledUp.current = false
   }, [activeProjectId])
 
-  const handleScroll = useCallback(() => {}, [])
+  const handleScroll = useCallback(() => {
+    const el = scrollContainerRef.current
+    if (!el) return
+    // "Near bottom" = within 150px of the bottom edge
+    const distFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight
+    userScrolledUp.current = distFromBottom > 150
+  }, [])
 
   const send = useCallback(async () => {
     const text = inputDraft.trim()
-    if (!text || isProcessing) return
+    if (!text) return
+
+    // User just sent a message — they want to see the response
+    userScrolledUp.current = false
 
     // Handle slash commands
     const slashMatch = matchSlashCommand(text)
@@ -516,7 +587,7 @@ function AuthedChat({ user }: { user: any }) {
   }, [inputDraft, isProcessing, chatActiveThreadId, createChatThread, addMessage, appendToLastDaemon, addToolCallToLastDaemon, updateToolCallResult, updateLastDaemon, setInputDraft, setProcessing])
 
   return (
-    <div className="flex bg-[#0a0a0a] text-[#bfbfbf] chat-container" style={{ height: '100dvh', minHeight: '-webkit-fill-available' }}>
+    <div className="flex bg-[#0a0a0a] text-[#bfbfbf] chat-container overflow-hidden" style={{ height: '100dvh', minHeight: '-webkit-fill-available', maxWidth: '100vw' }}>
       {/* Left sidebar — toggleable on ALL screen sizes */}
       {showSidebar && (
         <>
@@ -601,6 +672,17 @@ function AuthedChat({ user }: { user: any }) {
                 </>
               )}
             </div>
+            {/* Show/hide tool details (bash, edits, line counts) */}
+            <button
+              onClick={toggleToolDetails}
+              className={`tap-target transition-colors ${showToolDetails ? 'text-[#ff0505]' : 'text-[#555] hover:text-[#888]'}`}
+              title={showToolDetails ? 'Hide tool details' : 'Show tool details'}
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <polyline points="4 17 10 11 4 5" />
+                <line x1="12" y1="19" x2="20" y2="19" />
+              </svg>
+            </button>
             {/* Settings gear */}
             <a href="/settings" className="tap-target text-[#555] hover:text-[#888] transition-colors">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -615,7 +697,7 @@ function AuthedChat({ user }: { user: any }) {
         <div
           ref={scrollContainerRef}
           onScroll={handleScroll}
-          className="flex-1 overflow-y-auto px-4 py-4 min-h-0"
+          className="flex-1 overflow-y-auto overflow-x-hidden px-4 py-4 min-h-0"
         >
           {loadingHistory ? (
             <div className="flex items-center justify-center h-full">
@@ -650,7 +732,7 @@ function AuthedChat({ user }: { user: any }) {
                     <div className="flex-1 h-px bg-[#222]" />
                   </div>
                 ) : (
-                  <MessageBubble key={m.id} message={m} />
+                  <MessageBubble key={m.id} message={m} showToolDetails={showToolDetails} />
                 )
               ))}
               {isProcessing && (
@@ -699,16 +781,23 @@ function AuthedChat({ user }: { user: any }) {
               <textarea
                 ref={inputRef}
                 value={inputDraft}
-                onChange={(e) => setInputDraft(e.target.value)}
+                onChange={(e) => {
+                  setInputDraft(e.target.value)
+                  // Auto-grow up to ~25 lines (500px)
+                  const ta = e.target
+                  ta.style.height = 'auto'
+                  ta.style.height = Math.min(Math.max(ta.scrollHeight, 110), 500) + 'px'
+                }}
                 onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send() } }}
                 placeholder="Message your daemon... (type / for commands)"
-                rows={1}
+                rows={5}
                 className="flex-1 resize-none rounded-2xl border border-[#282828] bg-[#161616] px-4 py-2.5 text-sm text-white placeholder-[#666] focus:outline-none focus:border-[#ff0505]/40"
+                style={{ minHeight: 110, maxHeight: 500, overflowY: 'auto', lineHeight: '1.5' }}
               />
               <MicButton onTranscript={(text) => setInputDraft(inputDraft + (inputDraft ? ' ' : '') + text)} />
               <button
                 onClick={send}
-                disabled={isProcessing || !inputDraft.trim()}
+                disabled={!inputDraft.trim()}
                 className="p-2.5 min-w-[44px] min-h-[44px] flex items-center justify-center rounded-full bg-[#ff0505] text-white disabled:opacity-40 hover:bg-[#dd0404] transition-colors shrink-0"
               >
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="m5 12 7-7 7 7"/><path d="M12 19V5"/></svg>

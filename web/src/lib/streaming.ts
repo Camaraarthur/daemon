@@ -67,78 +67,106 @@ export function createSSEStream() {
 /**
  * Parse a line from Claude CLI streaming JSON output.
  * Claude --output-format stream-json emits one JSON object per line.
+ *
+ * IMPORTANT: a single JSON line can carry MULTIPLE blocks (text + tool_use,
+ * or several tool_use blocks at once). We always return an array so the
+ * caller can fan them out to the SSE stream — early-returning the first
+ * block was the source of "tool calls show up but bash output never does".
+ *
+ * Also handles Claude CLI's tool result format, which is wrapped in a
+ * `user` message:
+ *   { type: "user", message: { content: [{ type: "tool_result",
+ *       tool_use_id, content }] } }
  */
-export function parseClaudeStreamLine(line: string): SSEEvent | null {
-  if (!line.trim()) return null
-  try {
-    const obj = JSON.parse(line)
+export function parseClaudeStreamLine(line: string): SSEEvent[] {
+  if (!line.trim()) return []
+  let obj: any
+  try { obj = JSON.parse(line) } catch { return [] }
 
-    // Claude Code CLI stream-json format (v2.1+):
-    // { type: "assistant", message: { content: [{ type: "text", text: "..." }] }, session_id }
-    // { type: "assistant", message: { content: [{ type: "tool_use", id, name, input }] } }
-    // { type: "result", subtype: "success", result: "...", session_id, modelUsage: {...} }
-    // Legacy formats also supported below.
+  const events: SSEEvent[] = []
 
-    // New format: assistant with message.content array
-    if (obj.type === 'assistant' && obj.message?.content) {
-      const content = obj.message.content
-      if (Array.isArray(content)) {
-        for (const block of content) {
-          if (block.type === 'text' && block.text) {
-            return { type: 'text', data: { text: block.text } }
-          }
-          if (block.type === 'tool_use') {
-            return {
-              type: 'tool_call',
-              data: { id: block.id, name: block.name, args: block.input },
-            }
-          }
-        }
-      }
-      return null
-    }
-
-    // Legacy: assistant with subtype text
-    if (obj.type === 'assistant' && obj.subtype === 'text') {
-      return { type: 'text', data: { text: obj.text } }
-    }
-
-    if (obj.type === 'tool_use') {
-      return {
-        type: 'tool_call',
-        data: { id: obj.tool_use_id || obj.id, name: obj.name, args: obj.input },
+  // ── Assistant message: text and tool_use blocks ────────────
+  if (obj.type === 'assistant' && obj.message?.content && Array.isArray(obj.message.content)) {
+    for (const block of obj.message.content) {
+      if (block?.type === 'text' && block.text) {
+        events.push({ type: 'text', data: { text: block.text } })
+      } else if (block?.type === 'tool_use') {
+        events.push({
+          type: 'tool_call',
+          data: { id: block.id, name: block.name, args: block.input || {} },
+        })
+      } else if (block?.type === 'thinking' && (block.thinking || block.text)) {
+        events.push({ type: 'thinking', data: { text: block.thinking || block.text } })
       }
     }
-
-    if (obj.type === 'tool_result') {
-      return {
-        type: 'tool_result',
-        data: {
-          id: obj.tool_use_id,
-          output: typeof obj.content === 'string' ? obj.content : JSON.stringify(obj.content),
-        },
-      }
-    }
-
-    if (obj.type === 'result') {
-      return {
-        type: 'done',
-        data: {
-          response: obj.result,
-          sessionId: obj.session_id,
-          model: Object.keys(obj.model_usage || obj.modelUsage || {})[0] || 'claude-opus',
-        },
-      }
-    }
-
-    // Content block delta (streaming text)
-    if (obj.type === 'content_block_delta' || obj.type === 'content_block_start') {
-      const text = obj.delta?.text || obj.content_block?.text || ''
-      if (text) return { type: 'text', data: { text } }
-    }
-
-    return null
-  } catch {
-    return null
+    return events
   }
+
+  // ── User message: tool_result blocks (Claude CLI format) ───
+  if (obj.type === 'user' && obj.message?.content && Array.isArray(obj.message.content)) {
+    for (const block of obj.message.content) {
+      if (block?.type === 'tool_result') {
+        // content can be a string or an array of {type:"text",text} blocks
+        let output = ''
+        if (typeof block.content === 'string') {
+          output = block.content
+        } else if (Array.isArray(block.content)) {
+          output = block.content
+            .map((c: any) => (typeof c === 'string' ? c : c?.text || ''))
+            .filter(Boolean)
+            .join('\n')
+        } else if (block.content != null) {
+          output = JSON.stringify(block.content)
+        }
+        events.push({
+          type: 'tool_result',
+          data: { id: block.tool_use_id, output, is_error: !!block.is_error },
+        })
+      }
+    }
+    return events
+  }
+
+  // ── Final result line ──────────────────────────────────────
+  if (obj.type === 'result') {
+    events.push({
+      type: 'done',
+      data: {
+        response: obj.result,
+        sessionId: obj.session_id,
+        model: Object.keys(obj.model_usage || obj.modelUsage || {})[0] || 'claude-opus',
+      },
+    })
+    return events
+  }
+
+  // ── Legacy / fallback shapes ───────────────────────────────
+  if (obj.type === 'assistant' && obj.subtype === 'text') {
+    events.push({ type: 'text', data: { text: obj.text } })
+    return events
+  }
+  if (obj.type === 'tool_use') {
+    events.push({
+      type: 'tool_call',
+      data: { id: obj.tool_use_id || obj.id, name: obj.name, args: obj.input || {} },
+    })
+    return events
+  }
+  if (obj.type === 'tool_result') {
+    events.push({
+      type: 'tool_result',
+      data: {
+        id: obj.tool_use_id,
+        output: typeof obj.content === 'string' ? obj.content : JSON.stringify(obj.content),
+      },
+    })
+    return events
+  }
+  if (obj.type === 'content_block_delta' || obj.type === 'content_block_start') {
+    const text = obj.delta?.text || obj.content_block?.text || ''
+    if (text) events.push({ type: 'text', data: { text } })
+    return events
+  }
+
+  return events
 }

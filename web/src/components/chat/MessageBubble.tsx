@@ -168,9 +168,11 @@ interface MessageBubbleProps {
   message: Message
   /** Inline tool calls received via streaming (not yet in message.toolCalls) */
   streamingToolCalls?: ToolCall[]
+  /** When false, hide bash/edit/read blocks behind a compact pill. Default true. */
+  showToolDetails?: boolean
 }
 
-export function MessageBubble({ message, streamingToolCalls }: MessageBubbleProps) {
+export function MessageBubble({ message, streamingToolCalls, showToolDetails = true }: MessageBubbleProps) {
   const isUser = message.role === 'user'
   const isSystem = message.role === 'system'
   const toolCalls = useMemo(() => {
@@ -191,8 +193,8 @@ export function MessageBubble({ message, streamingToolCalls }: MessageBubbleProp
   if (isUser) {
     return (
       <div className="flex justify-end mb-2.5">
-        <div className="max-w-[85%] sm:max-w-[70%] rounded-2xl px-4 py-2.5 text-[13px] leading-relaxed bg-[#ff0505] text-white">
-          <p className="whitespace-pre-wrap">{message.content}</p>
+        <div className="max-w-[85%] sm:max-w-[70%] rounded-2xl px-4 py-2.5 text-[13px] leading-relaxed bg-[#ff0505] text-white overflow-hidden">
+          <p className="whitespace-pre-wrap break-all">{message.content}</p>
         </div>
       </div>
     )
@@ -202,7 +204,7 @@ export function MessageBubble({ message, streamingToolCalls }: MessageBubbleProp
   const isErrorMessage = !!(message as any).isError
   return (
     <div className="flex justify-start mb-2.5">
-      <div className={`max-w-[85%] sm:max-w-[70%] rounded-2xl px-4 py-2.5 text-[13px] leading-relaxed border ${
+      <div className={`max-w-[85%] sm:max-w-[70%] rounded-2xl px-4 py-2.5 text-[13px] leading-relaxed border overflow-hidden ${
         isErrorMessage
           ? 'bg-[#2a1010] text-[#ff8888] border-[#4a2020]'
           : 'bg-[#181818] text-[#ddd] border-[#252525]'
@@ -220,16 +222,27 @@ export function MessageBubble({ message, streamingToolCalls }: MessageBubbleProp
         )}
 
         {/* Tool calls rendered inline before the text response */}
-        {toolCalls.length > 0 && (
+        {toolCalls.length > 0 && showToolDetails && (
           <div className="mb-2">
             {toolCalls.map((tc, i) => (
               <ToolCallBlock key={tc.id || `tc-${i}`} toolCall={tc} />
             ))}
           </div>
         )}
+        {toolCalls.length > 0 && !showToolDetails && (
+          <div className="mb-2 text-[10px] text-[#555] italic">
+            {toolCalls.length} tool call{toolCalls.length === 1 ? '' : 's'} hidden
+            {' · '}
+            {toolCalls
+              .slice(0, 4)
+              .map(tc => tc.name)
+              .join(', ')}
+            {toolCalls.length > 4 ? '...' : ''}
+          </div>
+        )}
 
         {/* Message content with markdown rendering */}
-        <div className="whitespace-pre-wrap">
+        <div className="whitespace-pre-wrap break-all overflow-hidden">
           {renderMarkdown(message.content)}
         </div>
       </div>
