@@ -953,6 +953,62 @@ async function handleCommand(msg) {
       }
       break
     }
+
+    // Read chat messages from the local store. The relay calls this when
+    // a user opens a thread — instead of reading its own (deprecated)
+    // chat_messages table, it asks the user's device for the history.
+    case 'chat.fetch_messages': {
+      try {
+        const threadId = String(msg.thread_id || '')
+        if (!threadId) {
+          result = { ok: false, error: 'thread_id required' }
+          break
+        }
+        const limit = Number(msg.limit || 200)
+        const sessionId = msg.source_session_id ? String(msg.source_session_id) : null
+        const db = getStore()
+        let rows
+        if (sessionId) {
+          rows = db.prepare(
+            `SELECT * FROM chat_messages WHERE thread_id = ? AND source_session_id = ?
+             ORDER BY created_at DESC LIMIT ?`,
+          ).all(threadId, sessionId, limit)
+        } else {
+          rows = db.prepare(
+            `SELECT * FROM chat_messages WHERE thread_id = ?
+             ORDER BY created_at DESC LIMIT ?`,
+          ).all(threadId, limit)
+        }
+        // Reverse to chronological order
+        rows.reverse()
+        const total = db.prepare(
+          'SELECT COUNT(*) as c FROM chat_messages WHERE thread_id = ?',
+        ).get(threadId).c
+        result = { ok: true, messages: rows, total }
+      } catch (e) {
+        result = { ok: false, error: e.message }
+      }
+      break
+    }
+
+    // Get the latest source_session_id used in a thread (replaces the
+    // relay-side getLatestSessionForThread query).
+    case 'chat.get_latest_session': {
+      try {
+        const threadId = String(msg.thread_id || '')
+        if (!threadId) { result = { ok: false, error: 'thread_id required' }; break }
+        const db = getStore()
+        const row = db.prepare(
+          `SELECT source_session_id FROM chat_messages
+           WHERE thread_id = ? AND source_session_id IS NOT NULL
+           ORDER BY created_at DESC LIMIT 1`,
+        ).get(threadId)
+        result = { ok: true, source_session_id: row?.source_session_id || null }
+      } catch (e) {
+        result = { ok: false, error: e.message }
+      }
+      break
+    }
     default:
       result = { error: `Unknown command: ${type}` }
   }

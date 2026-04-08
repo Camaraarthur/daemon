@@ -132,6 +132,8 @@ const ALLOWED_COMMAND_TYPES = new Set([
   'skill.list', 'skill.invoke',
   // Step 7: chat message gossip and local store inspection
   'chat.message_imported', 'store.stats',
+  // Step 8: relay reads thread history from device, not its own DB
+  'chat.fetch_messages', 'chat.get_latest_session',
 ])
 const MAX_COMMAND_LENGTH = 10_000  // 10K chars
 const MAX_FILE_SIZE = 10 * 1024 * 1024  // 10MB
@@ -261,7 +263,7 @@ const server = http.createServer((req, res) => {
     req.on('data', chunk => { body += chunk })
     req.on('end', () => {
       try {
-        const { device_id, command, user_id: requestUserId } = JSON.parse(body)
+        const { device_id, command, user_id: rawUserId } = JSON.parse(body)
 
         // Validate command before forwarding to device
         const validationError = validateCommand(command)
@@ -274,9 +276,19 @@ const server = http.createServer((req, res) => {
         // SECURITY: user_id is REQUIRED. The previous "fall back to scanning
         // all users' devices if user_id is missing" was a cross-tenant blast
         // radius hole. Reject hard.
-        if (!requestUserId) {
+        if (rawUserId == null) {
           res.writeHead(400, { 'Content-Type': 'application/json' })
           res.end(JSON.stringify({ error: 'user_id required' }))
+          return
+        }
+
+        // Coerce to number — userDevices Map uses numeric keys (the
+        // device_register handler stores from device_tokens.user_id which
+        // is INTEGER), and JSON-parsed user_id may arrive as a string.
+        const requestUserId = typeof rawUserId === 'string' ? parseInt(rawUserId, 10) : rawUserId
+        if (isNaN(requestUserId)) {
+          res.writeHead(400, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify({ error: 'user_id must be an integer' }))
           return
         }
 

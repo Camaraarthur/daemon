@@ -11,6 +11,13 @@ import {
   countMessagesForSession,
 } from '@/lib/db'
 import { syncBoundProject } from '@/lib/claude-sync'
+import { fetchMessagesFromDevice } from '@/lib/device-store'
+
+// Step 8: when set to 'true', read from the user's daemon device's local
+// SQLite via WS instead of the relay's chat_messages table. The relay
+// still dual-writes during the transition, so we can fall back if the
+// device is offline.
+const READ_FROM_DEVICE = process.env.DAEMON_READ_FROM_DEVICE !== '0'
 
 export async function GET(
   req: NextRequest,
@@ -31,9 +38,8 @@ export async function GET(
   }
 
   // Pull-on-read: if this thread belongs to a project, sync the project's
-  // BOUND Claude Code session before reading from SQLite. The binding is
-  // explicit (claude_code_links.active_session_id) so we never confuse
-  // unrelated conversations that happen to share a working directory.
+  // BOUND Claude Code session before reading. Sync writes to the relay's
+  // DB (legacy) and gossips to the device — both copies stay current.
   let boundSessionId: string | null = null
   if (thread.project_id) {
     try {
@@ -50,18 +56,44 @@ export async function GET(
   const offset = parseInt(req.nextUrl.searchParams.get('offset') || '0', 10)
   const explicitSession = req.nextUrl.searchParams.get('session')
 
-  // Default: show ONLY the bound session's messages. The binding is the
-  // single source of truth for "which conversation is this project right now".
+  // Resolve the session id (bound Claude Code session). The relay's
+  // claude_code_links table is metadata, not content — keeps living here.
+  const sessionId = explicitSession || boundSessionId ||
+    (thread.project_id ? getClaudeCodeLink(thread.project_id)?.active_session_id || null : null)
+
+  // ── Step 8 path: read from the user's daemon device ──────
+  // The device's local SQLite has the canonical conversation (mirrored
+  // by gossip from the relay). When the device is online, we use it.
+  // When it's not, we fall back to the relay's legacy chat_messages
+  // table during the transition.
+  if (READ_FROM_DEVICE && mode !== 'oldest' && mode !== 'all') {
+    const deviceResult = await fetchMessagesFromDevice({
+      userId,
+      threadId: id,
+      limit,
+      sourceSessionId: sessionId,
+    })
+    if (deviceResult.ok) {
+      return NextResponse.json({
+        messages: deviceResult.messages,
+        total: deviceResult.total,
+        source_session_id: sessionId || undefined,
+        from_device: deviceResult.device_id,
+      })
+    }
+    // Device unreachable — fall through to legacy path
+    console.warn('[messages] device fetch failed, falling back to relay DB:', deviceResult.error)
+  }
+
+  // ── Legacy path: read from relay's chat_messages ─────────
+  // Used when no device is online OR when the caller explicitly asks
+  // for an older mode (oldest / all) that the device doesn't support yet.
   if (mode !== 'all' && mode !== 'oldest') {
-    const sessionId = explicitSession || boundSessionId ||
-      (thread.project_id ? getClaudeCodeLink(thread.project_id)?.active_session_id || null : null)
     if (sessionId) {
       const total = countMessagesForSession(id, sessionId)
       const messages = listRecentMessagesForSession(id, sessionId, limit)
       return NextResponse.json({ messages, total, source_session_id: sessionId })
     }
-    // No binding — fall through to the unfiltered view so the user still
-    // sees something on un-bound projects.
   }
 
   const total = countMessages(id)

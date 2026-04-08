@@ -89,6 +89,21 @@ export class StreamingWriter {
       source_session_id: this.message.source_session_id || null,
       complete: false,
     })
+    // Also gossip the placeholder to the user's daemon devices so the
+    // empty (complete=0) row exists locally before content streams in.
+    if (opts.userId) {
+      gossipChatMessage(opts.userId, {
+        id: this.message.id,
+        thread_id: opts.threadId,
+        role: this.message.role,
+        content: '',
+        model: this.message.model || null,
+        created_at: this.message.created_at,
+        source_session_id: this.message.source_session_id || null,
+        complete: false,
+        project_id: opts.projectId || null,
+      })
+    }
   }
 
   /** SSE event handler — pass this as the `onEvent` callback. */
@@ -145,6 +160,25 @@ export class StreamingWriter {
         tool_calls: this.toolCalls,
         complete: false,
       })
+      // Incremental gossip: push the in-flight state to the user's
+      // daemon devices so a refresh-during-stream can reload from the
+      // device with the partial content. Same upsert path as the
+      // final message — the device's chat_messages.complete=0 row
+      // grows over time.
+      if (this.opts.userId) {
+        gossipChatMessage(this.opts.userId, {
+          id: this.message.id,
+          thread_id: this.opts.threadId,
+          role: this.message.role,
+          content: this.contentBuffer,
+          tool_calls: tcJson,
+          model: this.message.model || null,
+          created_at: this.message.created_at,
+          source_session_id: this.message.source_session_id || null,
+          complete: false,
+          project_id: this.opts.projectId || null,
+        })
+      }
     } catch (e) {
       console.warn('[streaming-writer] flush failed:', e)
     }
