@@ -1374,6 +1374,47 @@ async function handleCommand(msg) {
   }
 }
 
+// ── Reverse-direction gossip (Step 7d) ───────────────────
+//
+// When something on this device modifies its local chat_messages
+// (e.g. an offline buffer flush, an MCP-triggered insert from a
+// Claude Code session, a future device-resident agent loop), call
+// publishMessageToPeers() to replicate the row to the user's other
+// devices via the relay's /api/gossip/from-device endpoint.
+//
+// The relay validates our device_token, then forwards to the
+// ws-server's existing /gossip/chat-message internal endpoint with
+// source_device_id=this device, so the message does NOT echo back.
+
+async function publishMessageToPeers(message) {
+  const cfg = loadConfig()
+  const token = cfg.device_token
+  if (!token) {
+    return { ok: false, error: 'device not paired' }
+  }
+  if (!message || !message.id || !message.thread_id) {
+    return { ok: false, error: 'message{id, thread_id} required' }
+  }
+  const url = `${RELAY_HTTP_BASE}/api/gossip/from-device`
+  try {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`,
+      },
+      body: JSON.stringify({ message }),
+    })
+    if (!res.ok) {
+      const text = await res.text().catch(() => '')
+      return { ok: false, error: `relay ${res.status}: ${text.slice(0, 200)}` }
+    }
+    return await res.json()
+  } catch (e) {
+    return { ok: false, error: e?.message || String(e) }
+  }
+}
+
 // ── Scheduler fire callback ──────────────────────────────
 //
 // Vision §3.3: when a schedule is due, the device wakes the relay's

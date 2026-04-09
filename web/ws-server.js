@@ -519,7 +519,7 @@ const server = http.createServer((req, res) => {
     req.on('data', chunk => { body += chunk })
     req.on('end', () => {
       try {
-        const { user_id, message } = JSON.parse(body)
+        const { user_id, message, source_device_id } = JSON.parse(body)
         if (!user_id || !message || !message.id || !message.thread_id) {
           res.writeHead(400, { 'Content-Type': 'application/json' })
           res.end(JSON.stringify({ error: 'user_id and message{id,thread_id} required' }))
@@ -531,9 +531,14 @@ const server = http.createServer((req, res) => {
           res.end(JSON.stringify({ error: 'user_id must be an integer' }))
           return
         }
+        // Step 7d: when the gossip ORIGINATES from a device (rather
+        // than the relay's agent loop), exclude the source from the
+        // fan-out so we don't echo it back. Source devices identify
+        // themselves with source_device_id.
         const userDevs = getDevicesForUser(numericUserId)
         let sent = 0
-        for (const [, dev] of userDevs) {
+        for (const [devId, dev] of userDevs) {
+          if (source_device_id && devId === source_device_id) continue
           if (dev.ws.readyState !== WebSocket.OPEN) continue
           try {
             dev.ws.send(JSON.stringify({
