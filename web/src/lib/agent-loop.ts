@@ -22,6 +22,12 @@ import {
   IDEMPOTENT_SECRETS_TOOLS,
   executeSecretsTool,
 } from './secrets-tools'
+import {
+  SCHEDULE_TOOLS,
+  SCHEDULE_TOOL_NAMES,
+  IDEMPOTENT_SCHEDULE_TOOLS,
+  executeScheduleTool,
+} from './schedule-tools'
 
 // Idempotent tools can be dispatched in parallel within a single turn.
 // Stateful tools (anything that touches a persistent shell session, mutates
@@ -40,7 +46,8 @@ function isIdempotent(toolName: string): boolean {
   return (
     IDEMPOTENT_DEVICE_TOOLS.has(toolName) ||
     IDEMPOTENT_MEMORY_TOOLS.has(toolName) ||
-    IDEMPOTENT_SECRETS_TOOLS.has(toolName)
+    IDEMPOTENT_SECRETS_TOOLS.has(toolName) ||
+    IDEMPOTENT_SCHEDULE_TOOLS.has(toolName)
   )
 }
 
@@ -236,10 +243,11 @@ export async function runAgentLoop(opts: {
       parameters: t.inputSchema,
     },
   }))
-  // Tool surface = device tools + memory tools (when project context exists) + secrets tools (always)
+  // Tool surface = device tools + memory tools (when project context exists)
+  // + secrets tools (always) + schedule tools (always)
   const allTools = projectId
-    ? [...deviceToolDefs, ...MEMORY_TOOLS, ...SECRETS_TOOLS]
-    : [...deviceToolDefs, ...SECRETS_TOOLS]
+    ? [...deviceToolDefs, ...MEMORY_TOOLS, ...SECRETS_TOOLS, ...SCHEDULE_TOOLS]
+    : [...deviceToolDefs, ...SECRETS_TOOLS, ...SCHEDULE_TOOLS]
 
   // Plan/Act separation: first iteration plans, subsequent iterations execute
   const planPrefix = `## Instructions
@@ -327,6 +335,15 @@ If a lint error is reported after writing a file, fix it before moving on.
       if (SECRETS_TOOL_NAMES.has(tc.function.name)) {
         const result = await executeSecretsTool(tc.function.name, args, {
           userId: parseInt(userId, 10) || 0,
+        })
+        return { tc, args, result }
+      }
+      // Schedule tool? Route through device-schedules.
+      if (SCHEDULE_TOOL_NAMES.has(tc.function.name)) {
+        const result = await executeScheduleTool(tc.function.name, args, {
+          userId: parseInt(userId, 10) || 0,
+          threadId: conversationId || null,
+          projectId: projectId || null,
         })
         return { tc, args, result }
       }

@@ -45,6 +45,15 @@ import {
   existsSecret,
   isVaultInitialized,
 } from './secrets.mjs'
+import {
+  createSchedule,
+  listSchedules,
+  getSchedule,
+  deleteSchedule,
+  setEnabled as setScheduleEnabled,
+  startScheduler,
+  stopScheduler,
+} from './scheduler.mjs'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
@@ -86,6 +95,14 @@ const SERVER_URL = process.argv.find(a => a.startsWith('--server='))?.split('=')
   || process.env.DAEMON_SERVER
   || savedConfig.server_url
   || 'wss://my.daemon.page/ws/device'
+
+// Derive the HTTP base for relay-bound POSTs (e.g. scheduler fires) from
+// the WS server URL: wss:// → https://, ws:// → http://, and strip the
+// /ws/device suffix.
+const RELAY_HTTP_BASE = SERVER_URL
+  .replace(/^wss:\/\//, 'https://')
+  .replace(/^ws:\/\//, 'http://')
+  .replace(/\/ws\/device\/?$/, '')
 
 const DEVICE_NAME = process.argv.find(a => a.startsWith('--name='))?.split('=')[1]
   || process.env.DAEMON_DEVICE_NAME
@@ -1206,6 +1223,69 @@ async function handleCommand(msg) {
       }
       break
     }
+
+    // ── Scheduler (vision.md §3.3) ─────────────────────────
+    // Recurring agent runs. The device's tick loop fires due rows by
+    // POSTing /api/schedule/fire on the relay; agent tools below let
+    // the model create / list / cancel schedules from chat.
+
+    case 'schedule.create': {
+      try {
+        result = createSchedule({
+          name: String(msg.name || ''),
+          cron: String(msg.cron || ''),
+          prompt: String(msg.prompt || ''),
+          thread_id: msg.thread_id || null,
+          project_id: msg.project_id == null ? null : Number(msg.project_id),
+          enabled: msg.enabled !== false,
+        })
+      } catch (e) {
+        result = { ok: false, error: e.message }
+      }
+      break
+    }
+
+    case 'schedule.list': {
+      try {
+        const list = listSchedules()
+        result = { ok: true, count: list.length, schedules: list }
+      } catch (e) {
+        result = { ok: false, error: e.message }
+      }
+      break
+    }
+
+    case 'schedule.get': {
+      try {
+        const row = getSchedule(String(msg.name || ''))
+        result = row
+          ? { ok: true, schedule: row }
+          : { ok: false, error: 'not found' }
+      } catch (e) {
+        result = { ok: false, error: e.message }
+      }
+      break
+    }
+
+    case 'schedule.delete': {
+      try {
+        const removed = deleteSchedule(String(msg.name || ''))
+        result = { ok: true, removed }
+      } catch (e) {
+        result = { ok: false, error: e.message }
+      }
+      break
+    }
+
+    case 'schedule.set_enabled': {
+      try {
+        const changed = setScheduleEnabled(String(msg.name || ''), !!msg.enabled)
+        result = { ok: true, changed }
+      } catch (e) {
+        result = { ok: false, error: e.message }
+      }
+      break
+    }
     default:
       result = { error: `Unknown command: ${type}` }
   }
@@ -1214,6 +1294,40 @@ async function handleCommand(msg) {
     type: 'command_response',
     request_id: requestId,
     result,
+  }
+}
+
+// ── Scheduler fire callback ──────────────────────────────
+//
+// Vision §3.3: when a schedule is due, the device wakes the relay's
+// agent loop with the schedule's prompt. The relay endpoint is
+// authenticated by the device_token (set during pairing) — without it
+// we can't fire, so the call is a no-op until the device is paired.
+
+async function fireScheduledRun(row) {
+  const cfg = loadConfig()
+  const token = cfg.device_token
+  if (!token) {
+    throw new Error('device not paired — no device_token; pair via web UI to enable scheduled runs')
+  }
+  const url = `${RELAY_HTTP_BASE}/api/schedule/fire`
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${token}`,
+    },
+    body: JSON.stringify({
+      device_id: DEVICE_ID,
+      schedule_name: row.name,
+      prompt: row.prompt,
+      thread_id: row.thread_id || null,
+      project_id: row.project_id || null,
+    }),
+  })
+  if (!res.ok) {
+    const text = await res.text().catch(() => '')
+    throw new Error(`relay ${res.status}: ${text.slice(0, 200)}`)
   }
 }
 
@@ -1258,6 +1372,14 @@ function connect() {
 
     // Start heartbeat
     startHeartbeat()
+
+    // Start the scheduler tick. The fire callback POSTs the relay to
+    // wake the agent loop with the schedule's prompt as a fresh user
+    // message in the tagged thread (vision.md §3.3).
+    startScheduler({
+      fire: fireScheduledRun,
+      log: (m) => log(m),
+    })
   })
 
   ws.on('message', async (data) => {
@@ -1277,6 +1399,7 @@ function connect() {
     log(`Disconnected: ${code} ${reason}`)
     isConnected = false
     stopHeartbeat()
+    stopScheduler()
     scheduleReconnect()
   })
 

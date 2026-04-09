@@ -132,6 +132,38 @@ function runMigrations(db) {
       CREATE INDEX IF NOT EXISTS idx_secrets_category ON secrets(category);
     `,
     ],
+    [
+      '004_schedules',
+      `
+      -- Vision §3.3 — scheduler primitive. Recurring agent runs.
+      --
+      -- A row here = "every <cron>, fire <prompt> in <thread_id>". The
+      -- daemon's tick loop (cli/scheduler.mjs) checks next_run_at every
+      -- 30s, picks due rows, and POSTs the relay's /api/schedule/fire
+      -- with the device_token + schedule name. The relay then runs the
+      -- agent loop with the prompt as a fresh user message in the tagged
+      -- thread; the result is gossiped back to chat_messages.
+      --
+      -- name is the user-facing handle ("morning_briefing"). It is the
+      -- primary key inside the device's vault — the agent calls
+      -- list_schedules / cancel_schedule by name.
+      CREATE TABLE IF NOT EXISTS schedules (
+        name TEXT PRIMARY KEY,
+        cron TEXT NOT NULL,
+        prompt TEXT NOT NULL,
+        thread_id TEXT,                  -- destination chat thread
+        project_id INTEGER,
+        enabled INTEGER NOT NULL DEFAULT 1,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+        last_run_at TEXT,
+        next_run_at TEXT NOT NULL,       -- pre-computed at insert/update
+        run_count INTEGER NOT NULL DEFAULT 0,
+        last_error TEXT
+      );
+      CREATE INDEX IF NOT EXISTS idx_schedules_next ON schedules(enabled, next_run_at);
+    `,
+    ],
   ]
 
   const insertMigration = db.prepare(

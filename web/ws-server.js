@@ -141,6 +141,9 @@ const ALLOWED_COMMAND_TYPES = new Set([
   // Vision §3.2: encrypted secrets vault on the device
   'secrets.set', 'secrets.get', 'secrets.delete',
   'secrets.list', 'secrets.exists', 'secrets.status',
+  // Vision §3.3: scheduler primitive (cron / schedule / loop)
+  'schedule.create', 'schedule.list', 'schedule.get',
+  'schedule.delete', 'schedule.set_enabled',
 ])
 const MAX_COMMAND_LENGTH = 10_000  // 10K chars
 const MAX_FILE_SIZE = 10 * 1024 * 1024  // 10MB

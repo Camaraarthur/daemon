@@ -18,6 +18,12 @@ import {
   IDEMPOTENT_SECRETS_TOOLS,
   executeSecretsTool,
 } from './secrets-tools'
+import {
+  SCHEDULE_TOOLS,
+  SCHEDULE_TOOL_NAMES,
+  IDEMPOTENT_SCHEDULE_TOOLS,
+  executeScheduleTool,
+} from './schedule-tools'
 
 // Idempotent device tools can run in parallel within a single turn.
 // Stateful device tools (bash with shared pty session, write_file,
@@ -35,7 +41,8 @@ function isIdempotent(toolName: string): boolean {
   return (
     IDEMPOTENT_DEVICE_TOOLS.has(toolName) ||
     IDEMPOTENT_MEMORY_TOOLS.has(toolName) ||
-    IDEMPOTENT_SECRETS_TOOLS.has(toolName)
+    IDEMPOTENT_SECRETS_TOOLS.has(toolName) ||
+    IDEMPOTENT_SCHEDULE_TOOLS.has(toolName)
   )
 }
 
@@ -150,10 +157,11 @@ export async function runAgentLoopStreaming(opts: {
     type: 'function' as const,
     function: { name: t.tool_name, description: t.description, parameters: t.inputSchema },
   }))
-  // Tool surface = device tools + memory tools (when project context exists) + secrets tools (always)
+  // Tool surface = device tools + memory tools (when project context exists)
+  // + secrets tools (always) + schedule tools (always)
   const tools = projectId
-    ? [...deviceToolDefs, ...MEMORY_TOOLS, ...SECRETS_TOOLS]
-    : [...deviceToolDefs, ...SECRETS_TOOLS]
+    ? [...deviceToolDefs, ...MEMORY_TOOLS, ...SECRETS_TOOLS, ...SCHEDULE_TOOLS]
+    : [...deviceToolDefs, ...SECRETS_TOOLS, ...SCHEDULE_TOOLS]
 
   // Inject device context into the system prompt
   let enrichedSystemPrompt = systemPrompt
@@ -208,6 +216,18 @@ export async function runAgentLoopStreaming(opts: {
       onEvent({ type: 'tool_call', data: { id: tc.id, name: tc.function.name, args } })
       const result = await executeSecretsTool(tc.function.name, args, {
         userId: parseInt(userId, 10) || 0,
+      })
+      onEvent({ type: 'tool_result', data: { id: tc.id, name: tc.function.name, output: result } })
+      return { tc, args, result }
+    }
+
+    // Schedule tool? Route through device-schedules.
+    if (SCHEDULE_TOOL_NAMES.has(tc.function.name)) {
+      onEvent({ type: 'tool_call', data: { id: tc.id, name: tc.function.name, args } })
+      const result = await executeScheduleTool(tc.function.name, args, {
+        userId: parseInt(userId, 10) || 0,
+        threadId: conversationId || null,
+        projectId: projectId || null,
       })
       onEvent({ type: 'tool_result', data: { id: tc.id, name: tc.function.name, output: result } })
       return { tc, args, result }
