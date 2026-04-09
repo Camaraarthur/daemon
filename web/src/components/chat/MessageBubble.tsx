@@ -117,18 +117,28 @@ function looksLikePath(s: string): boolean {
 
 function PathButton({ path, label }: { path: string; label?: string }): React.ReactElement {
   const display = label || (path.length > 60 ? '...' + path.slice(-57) : path)
-  const href = `${LOOPBACK_OPEN_URL}?path=${encodeURIComponent(path)}`
   return (
     <a
-      href={href}
+      href="#"
       onClick={(e) => {
         e.preventDefault()
-        // Fire-and-forget: hit the loopback, ignore CORS/network errors
-        // (they happen when the user is browsing from a different
-        // machine than where the daemon device runs).
-        fetch(href, { mode: 'cors' }).catch(() => {
+        // M-2 fix: POST + custom header so the server-side CORS
+        // preflight is the gate. fetch() picks up the page's Origin
+        // automatically, and the X-Daemon-Open header forces a
+        // preflight that the loopback only honors when the Origin
+        // matches the relay's allow-list.
+        fetch(LOOPBACK_OPEN_URL, {
+          method: 'POST',
+          mode: 'cors',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Daemon-Open': '1',
+          },
+          body: JSON.stringify({ path }),
+        }).catch(() => {
           // Fall back to copying the path to clipboard so the user
-          // can paste it into a terminal.
+          // can paste it into a terminal (e.g. when browsing from a
+          // different machine than where the daemon device runs).
           if (navigator.clipboard) navigator.clipboard.writeText(path).catch(() => {})
         })
       }}

@@ -48,11 +48,48 @@ def get_config():
     return cfg
 
 
+MAX_QUERY_CHARS = 2000
+
+
+def _validate_directories(raw):
+    """Architecture critic finding M-7: each entry must be absolute,
+    must exist, and must be under $HOME. Reject anything else so a
+    compromised relay can't pivot semantic_search into a directory
+    escape attack on the device."""
+    if not isinstance(raw, list):
+        return None
+    home = os.path.realpath(os.path.expanduser("~"))
+    out = []
+    for d in raw:
+        if not isinstance(d, str):
+            continue
+        expanded = os.path.expanduser(d)
+        if not os.path.isabs(expanded):
+            continue
+        try:
+            real = os.path.realpath(expanded)
+        except Exception:
+            continue
+        if not os.path.exists(real):
+            continue
+        if real != home and not real.startswith(home + os.sep):
+            continue
+        out.append(real)
+    return out or None
+
+
 def main():
     if len(sys.argv) < 2:
         print(json.dumps({"ok": False, "error": "query argument required"}))
         sys.exit(1)
     query = sys.argv[1]
+    # M-7: cap query length and strip newlines
+    if len(query) > MAX_QUERY_CHARS:
+        query = query[:MAX_QUERY_CHARS]
+    query = query.replace("\r", " ").replace("\n", " ").strip()
+    if not query:
+        print(json.dumps({"ok": False, "error": "empty query after sanitization"}))
+        sys.exit(0)
     top_k = 10
     file_types = None
     directories = None
@@ -64,11 +101,18 @@ def main():
     if len(sys.argv) >= 4 and sys.argv[3]:
         try:
             file_types = json.loads(sys.argv[3])
+            if isinstance(file_types, list):
+                file_types = [
+                    str(x) for x in file_types
+                    if isinstance(x, str) and x.startswith(".") and len(x) <= 16
+                ] or None
+            else:
+                file_types = None
         except Exception:
             pass
     if len(sys.argv) >= 5 and sys.argv[4]:
         try:
-            directories = json.loads(sys.argv[4])
+            directories = _validate_directories(json.loads(sys.argv[4]))
         except Exception:
             pass
 

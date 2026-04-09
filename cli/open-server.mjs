@@ -39,20 +39,36 @@ import { resolve as resolvePath, sep } from 'path'
 
 const LOOPBACK_HOST = '127.0.0.1'
 const LOOPBACK_PORT = 4810
-const ALLOWED_ORIGINS = new Set([
-  'https://my.daemon.page',
-  'https://daemon.page',
-  'http://localhost:4800',
-  'http://localhost:3000',
-  'http://127.0.0.1:4800',
-])
+
+// Architecture critic finding M-1: drop localhost:4800 from prod
+// allow-list. In dev, the relay's hosted route is reachable via
+// localhost so a malicious published page would have the same
+// origin as the relay. Gate on NODE_ENV.
+const IS_DEV = process.env.NODE_ENV !== 'production'
+const ALLOWED_ORIGINS = new Set(
+  IS_DEV
+    ? [
+        'https://my.daemon.page',
+        'https://daemon.page',
+        'http://localhost:4800',
+        'http://localhost:3000',
+        'http://127.0.0.1:4800',
+      ]
+    : ['https://my.daemon.page', 'https://daemon.page'],
+)
+
+// M-2: require a custom request header so browsers MUST send a CORS
+// preflight (which we can reject by Origin). Without this, a third-
+// party page can trigger /open via <img src> or fetch(no-cors) and
+// the browser never asks our server before launching xdg-open.
+const REQUIRED_HEADER = 'x-daemon-open'
 
 function corsHeaders(origin) {
   const ok = origin && ALLOWED_ORIGINS.has(origin)
   return {
     'Access-Control-Allow-Origin': ok ? origin : 'https://my.daemon.page',
-    'Access-Control-Allow-Methods': 'GET, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type',
+    'Access-Control-Allow-Methods': 'POST, OPTIONS',
+    'Access-Control-Allow-Headers': `Content-Type, ${REQUIRED_HEADER}`,
     'Access-Control-Max-Age': '600',
   }
 }
@@ -66,9 +82,20 @@ function safeResolve(rawPath) {
   let p = rawPath.startsWith('~/') ? home + rawPath.slice(1) : rawPath
   if (p === '~') p = home
 
-  // Must be absolute after expansion
-  if (!p.startsWith('/') && !/^[A-Za-z]:[\\/]/.test(p)) {
-    return { ok: false, error: 'path must be absolute' }
+  // Architecture critic finding M-3: platform-gate the absolute-path
+  // check. On Linux/macOS require leading slash; on Windows require
+  // a drive letter prefix. The previous "allow either form on any
+  // platform" was loose enough that "C:/foo" passed on Linux and
+  // resolved as a relative path under cwd.
+  const isWin = osPlatform() === 'win32'
+  if (isWin) {
+    if (!/^[A-Za-z]:[\\/]/.test(p)) {
+      return { ok: false, error: 'path must be a Windows absolute path (C:\\...)' }
+    }
+  } else {
+    if (!p.startsWith('/')) {
+      return { ok: false, error: 'path must be absolute' }
+    }
   }
 
   // Resolve + realpath (kills symlinks pointing outside)
@@ -126,7 +153,37 @@ function launchOpener(absPath) {
   return { ok: true, cmd, args }
 }
 
-function handleRequest(req, res, log) {
+function originIsAllowed(origin) {
+  return !!origin && ALLOWED_ORIGINS.has(origin)
+}
+
+async function readJsonBody(req, maxBytes = 8192) {
+  return new Promise((resolve, reject) => {
+    const chunks = []
+    let total = 0
+    req.on('data', (chunk) => {
+      total += chunk.length
+      if (total > maxBytes) {
+        reject(new Error('body too large'))
+        try { req.destroy() } catch {}
+        return
+      }
+      chunks.push(chunk)
+    })
+    req.on('end', () => {
+      try {
+        const text = Buffer.concat(chunks).toString('utf8')
+        if (!text) return resolve({})
+        resolve(JSON.parse(text))
+      } catch (e) {
+        reject(e)
+      }
+    })
+    req.on('error', reject)
+  })
+}
+
+async function handleRequest(req, res, log) {
   const origin = req.headers.origin
   const headers = corsHeaders(origin)
 
@@ -136,14 +193,8 @@ function handleRequest(req, res, log) {
     return
   }
 
-  if (req.method !== 'GET') {
-    res.writeHead(405, { ...headers, 'Content-Type': 'application/json' })
-    res.end(JSON.stringify({ ok: false, error: 'method not allowed' }))
-    return
-  }
-
   const url = new URL(req.url, `http://${LOOPBACK_HOST}:${LOOPBACK_PORT}`)
-  if (url.pathname === '/health') {
+  if (url.pathname === '/health' && req.method === 'GET') {
     res.writeHead(200, { ...headers, 'Content-Type': 'application/json' })
     res.end(JSON.stringify({ ok: true, service: 'daemon-open', port: LOOPBACK_PORT }))
     return
@@ -153,8 +204,37 @@ function handleRequest(req, res, log) {
     res.end(JSON.stringify({ ok: false, error: 'not found' }))
     return
   }
+  if (req.method !== 'POST') {
+    res.writeHead(405, { ...headers, 'Content-Type': 'application/json' })
+    res.end(JSON.stringify({ ok: false, error: 'method not allowed; use POST with X-Daemon-Open header' }))
+    return
+  }
 
-  const rawPath = url.searchParams.get('path')
+  // M-2: hard-reject the REQUEST (not just response headers) if the
+  // Origin is not allow-listed AND the required custom header is
+  // missing. <img src> and form POST cannot set custom headers, so
+  // they trigger a CORS preflight that we reject by Origin.
+  if (!originIsAllowed(origin)) {
+    log(`[open-server] reject origin: ${origin || '<none>'}`)
+    res.writeHead(403, { ...headers, 'Content-Type': 'application/json' })
+    res.end(JSON.stringify({ ok: false, error: 'origin not allowed' }))
+    return
+  }
+  if (!req.headers[REQUIRED_HEADER]) {
+    res.writeHead(403, { ...headers, 'Content-Type': 'application/json' })
+    res.end(JSON.stringify({ ok: false, error: `missing ${REQUIRED_HEADER} header` }))
+    return
+  }
+
+  let body
+  try {
+    body = await readJsonBody(req)
+  } catch (e) {
+    res.writeHead(400, { ...headers, 'Content-Type': 'application/json' })
+    res.end(JSON.stringify({ ok: false, error: `bad json: ${e.message}` }))
+    return
+  }
+  const rawPath = body.path
   const safe = safeResolve(rawPath)
   if (!safe.ok) {
     log(`[open-server] reject "${rawPath}": ${safe.error}`)

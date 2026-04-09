@@ -60,16 +60,42 @@ export interface NotificationPayload {
   tag?: string
 }
 
+// Architecture critic finding M-5: per-user rate limit. The agent
+// can otherwise call notify() in a loop and push the user into
+// oblivion. 10 notifications per 60s window, sliding.
+const RATE_LIMIT_MAX = 10
+const RATE_LIMIT_WINDOW_MS = 60_000
+const _notifyRate = new Map<number, number[]>()
+
+function checkRateLimit(userId: number): { ok: boolean; retryAfterMs?: number } {
+  const now = Date.now()
+  const windowStart = now - RATE_LIMIT_WINDOW_MS
+  const events = (_notifyRate.get(userId) || []).filter((t) => t > windowStart)
+  if (events.length >= RATE_LIMIT_MAX) {
+    const oldest = events[0]
+    return { ok: false, retryAfterMs: RATE_LIMIT_WINDOW_MS - (now - oldest) }
+  }
+  events.push(now)
+  _notifyRate.set(userId, events)
+  return { ok: true }
+}
+
 /**
  * Send a payload to all of a user's web push subscriptions. Failed
- * subscriptions (404 / 410 — gone) are removed from the DB so we don't
- * retry them. Returns counts.
+ * subscriptions (404 / 410 / 403 / 400-expired) are removed from the
+ * DB so we don't retry them. Per-user rate limit applied. Returns
+ * counts plus optional rate-limit metadata.
  */
 export async function sendNotificationToUser(
   userId: number,
   payload: NotificationPayload,
-): Promise<{ sent: number; failed: number; removed: number }> {
+): Promise<{ sent: number; failed: number; removed: number; rateLimited?: boolean; retryAfterMs?: number }> {
   init()
+  const rl = checkRateLimit(userId)
+  if (!rl.ok) {
+    console.warn(`[web-push] user ${userId} rate-limited (${RATE_LIMIT_MAX}/${RATE_LIMIT_WINDOW_MS / 1000}s)`)
+    return { sent: 0, failed: 0, removed: 0, rateLimited: true, retryAfterMs: rl.retryAfterMs }
+  }
   const subs = listPushSubscriptions(userId)
   if (subs.length === 0) {
     return { sent: 0, failed: 0, removed: 0 }
@@ -104,8 +130,15 @@ export async function sendNotificationToUser(
         failed++
         const status = (e as { statusCode?: number })?.statusCode
         const message = e instanceof Error ? e.message : String(e)
-        if (status === 404 || status === 410) {
-          // Subscription is dead — remove it.
+        // M-4: also clean up on 403 (FCM unregistered) and on 400
+        // when the body indicates the subscription is dead. The
+        // previous code only handled 404 / 410.
+        const isDead =
+          status === 404 ||
+          status === 410 ||
+          status === 403 ||
+          (status === 400 && /expired|notregistered|invalid/i.test(message))
+        if (isDead) {
           deletePushSubscription(sub.endpoint)
           removed++
         } else {
