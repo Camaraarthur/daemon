@@ -12,6 +12,7 @@ WorkingDirectory=/home/arthur/daemon/cli
 Environment=NODE_ENV=production
 Environment=DAEMON_NO_UPDATE=1
 Environment=PATH=/home/arthur/.local/bin:/home/arthur/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+EnvironmentFile=/home/arthur/.secrets/vault.env
 ExecStart=/usr/bin/node /home/arthur/daemon/cli/daemon.mjs --no-update --name arturito
 Restart=on-failure
 RestartSec=5

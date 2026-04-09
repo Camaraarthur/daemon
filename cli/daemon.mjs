@@ -13,7 +13,7 @@
  */
 
 import { WebSocket } from 'ws' // will be bundled or use import map
-import { exec } from 'child_process'
+import { exec, spawn } from 'child_process'
 import { readFile, writeFile, readdir, stat, mkdir } from 'fs/promises'
 import { existsSync, readFileSync } from 'fs'
 import { hostname, platform, arch, cpus, totalmem, freemem, userInfo } from 'os'
@@ -221,6 +221,20 @@ const MCP_TOOLS = [
     description: 'Get device system information (OS, CPU, memory, hostname, uptime).',
     inputSchema: { type: 'object', properties: {} },
   },
+  {
+    name: 'semantic_search',
+    description: 'Search files on this device by MEANING, not just name. Uses pre-built Gemini Embedding 2 + LanceDB index over the user\'s home directory. Use this BEFORE glob/grep when looking for files by purpose or concept (e.g. "the contract templates", "where do we configure cloudflare", "the script that backs up the database"). Returns ranked file paths with snippets.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        query: { type: 'string', description: 'Natural language description of what you\'re looking for' },
+        top_k: { type: 'integer', description: 'Number of results (default 10, max 30)' },
+        file_types: { type: 'array', items: { type: 'string' }, description: 'Filter by extensions, e.g. [".py",".ts"]' },
+        directories: { type: 'array', items: { type: 'string' }, description: 'Filter to specific dirs, e.g. ["~/daemon"]' },
+      },
+      required: ['query'],
+    },
+  },
 ]
 
 // Back-compat: old names map to new implementations for one release.
@@ -254,9 +268,71 @@ async function executeMcpTool(name, args) {
       return await lintFile(args.path || '')
     case 'device_info':
       return await getDeviceInfo()
+    case 'semantic_search':
+      return await semanticSearch(
+        String(args.query || ''),
+        Number(args.top_k || 10),
+        Array.isArray(args.file_types) ? args.file_types : null,
+        Array.isArray(args.directories) ? args.directories : null,
+      )
     default:
       return { error: `Unknown tool: ${name}` }
   }
+}
+
+// ── Semantic search (vision §4.3) ────────────────────────
+//
+// Reuses /home/arthur/file-search (Gemini Embedding 2 + LanceDB)
+// via cli/semantic-search-helper.py. The helper is process-spawned
+// per call. ~150ms warm, dominated by the Gemini embed of the query.
+//
+// We don't own the index. The user runs file-search's indexer
+// separately to keep ~/.file-search hot.
+
+async function semanticSearch(query, topK, fileTypes, directories) {
+  if (!query) return { ok: false, error: 'query required' }
+  const helperPath = join(__dirname, 'semantic-search-helper.py')
+  if (!existsSync(helperPath)) {
+    return { ok: false, error: `helper missing: ${helperPath}` }
+  }
+  const argv = [
+    helperPath,
+    query,
+    String(topK || 10),
+    fileTypes ? JSON.stringify(fileTypes) : '',
+    directories ? JSON.stringify(directories) : '',
+  ]
+  return new Promise((resolve) => {
+    const child = spawn('python3', argv, {
+      env: { ...process.env },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    })
+    let stdout = ''
+    let stderr = ''
+    child.stdout.on('data', (b) => { stdout += b.toString('utf8') })
+    child.stderr.on('data', (b) => { stderr += b.toString('utf8') })
+    const timer = setTimeout(() => {
+      try { child.kill('SIGKILL') } catch {}
+      resolve({ ok: false, error: 'semantic_search timed out (30s)' })
+    }, 30000)
+    child.on('close', () => {
+      clearTimeout(timer)
+      if (!stdout.trim()) {
+        resolve({ ok: false, error: 'no output', stderr: stderr.slice(0, 500) })
+        return
+      }
+      try {
+        const parsed = JSON.parse(stdout.trim())
+        resolve(parsed)
+      } catch (e) {
+        resolve({ ok: false, error: `parse failed: ${e.message}`, raw: stdout.slice(0, 300) })
+      }
+    })
+    child.on('error', (e) => {
+      clearTimeout(timer)
+      resolve({ ok: false, error: `spawn failed: ${e.message}` })
+    })
+  })
 }
 
 // ── Claude CLI Detection ─────────────────────────────────
