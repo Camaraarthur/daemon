@@ -24,29 +24,31 @@ I locked in two short documents (`docs/vision.md` and `docs/positioning.md`) tha
 
 ## What I'm building right now
 
-### 3. The scheduler (half done)
+### 4. Notifications (just starting)
 
-This is the "agent that runs while you sleep" piece. You tell it: "every morning at 8, summarize my unread emails." It writes that down in a little list, and then a tiny clock inside daemon ticks every 30 seconds checking if anything is due. When 8am hits, it pokes the agent and says "go do this now," and the result lands in your chat.
+Right now if the agent finishes something while you're not looking, you don't know. We need a way for the daemon to tap you on the shoulder. Starting with browser notifications (the kind that pop up in the corner of your screen even when the tab is closed), then phone push notifications later.
 
-**What's done:**
-- The list of schedules (saved in the local database). ✅
-- A tiny clock parser — I can give it "every weekday at 9am" or "every 30 minutes" and it knows when to fire next. Tested, works. ✅
-- The tick loop that wakes up every 30 seconds and looks for due items. ✅
-- Phone-home function: when something is due, the device calls back to the daemon website to wake the agent. ✅
+## What I just finished
+
+### 3. The scheduler (done, shipped)
+
+The "agent that runs while you sleep" piece. You tell it: "every morning at 8, summarize my unread emails." It writes that down in a little list, and a tiny clock inside daemon ticks every 30 seconds checking if anything is due. When 8am hits, it pokes the agent and the result lands in your chat — even if no browser is open.
+
+All pieces shipped:
+- The list of schedules (local database). ✅
+- The clock parser ("every weekday at 9am", "every 30 mins", etc.). Tested with 6 different patterns. ✅
+- The tick loop. ✅
+- Phone-home from the device to wake the agent. ✅
 - Buttons for the agent to add / list / delete / pause schedules. ✅
+- The other end of the phone call — the daemon website endpoint that receives the wake-up call and actually runs the agent in the right chat thread. ✅
+- Tested end to end: create → forced-due → fire → agent ran → next time advanced → cleanup. ✅
+- Committed.
 
-**What's left:**
-- The other end of the phone call — the daemon website needs an endpoint that *receives* the "wake up" call and actually runs the agent. ⏳
-- Hand the agent the right shape of buttons so it knows these tools exist. ⏳
-- Make sure the website knows these new commands are allowed. ⏳
-- Test the whole thing end to end (create a schedule for 1 minute from now, watch it fire, watch the agent reply land in chat). ⏳
-- Commit. ⏳
-
-## What's next after the scheduler
+## What's next after notifications
 
 In rough order:
 
-### 4. Notifications
+### 5. (was 4) ~~Notifications~~ — building now
 Right now if the agent finishes something while you're not looking, you don't know. We need the daemon to be able to tap you on the shoulder — first via a web browser notification, eventually via the phone app.
 
 ### 5. Sub-page hosting

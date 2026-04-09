@@ -28,6 +28,11 @@ import {
   IDEMPOTENT_SCHEDULE_TOOLS,
   executeScheduleTool,
 } from './schedule-tools'
+import {
+  NOTIFY_TOOLS,
+  NOTIFY_TOOL_NAMES,
+  executeNotifyTool,
+} from './notify-tools'
 
 // Idempotent tools can be dispatched in parallel within a single turn.
 // Stateful tools (anything that touches a persistent shell session, mutates
@@ -244,10 +249,10 @@ export async function runAgentLoop(opts: {
     },
   }))
   // Tool surface = device tools + memory tools (when project context exists)
-  // + secrets tools (always) + schedule tools (always)
+  // + secrets tools (always) + schedule tools (always) + notify tool (always)
   const allTools = projectId
-    ? [...deviceToolDefs, ...MEMORY_TOOLS, ...SECRETS_TOOLS, ...SCHEDULE_TOOLS]
-    : [...deviceToolDefs, ...SECRETS_TOOLS, ...SCHEDULE_TOOLS]
+    ? [...deviceToolDefs, ...MEMORY_TOOLS, ...SECRETS_TOOLS, ...SCHEDULE_TOOLS, ...NOTIFY_TOOLS]
+    : [...deviceToolDefs, ...SECRETS_TOOLS, ...SCHEDULE_TOOLS, ...NOTIFY_TOOLS]
 
   // Plan/Act separation: first iteration plans, subsequent iterations execute
   const planPrefix = `## Instructions
@@ -344,6 +349,13 @@ If a lint error is reported after writing a file, fix it before moving on.
           userId: parseInt(userId, 10) || 0,
           threadId: conversationId || null,
           projectId: projectId || null,
+        })
+        return { tc, args, result }
+      }
+      // Notify tool? Send via web push (no device hop).
+      if (NOTIFY_TOOL_NAMES.has(tc.function.name)) {
+        const result = await executeNotifyTool(tc.function.name, args, {
+          userId: parseInt(userId, 10) || 0,
         })
         return { tc, args, result }
       }

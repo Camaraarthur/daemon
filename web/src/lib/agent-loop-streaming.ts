@@ -24,6 +24,11 @@ import {
   IDEMPOTENT_SCHEDULE_TOOLS,
   executeScheduleTool,
 } from './schedule-tools'
+import {
+  NOTIFY_TOOLS,
+  NOTIFY_TOOL_NAMES,
+  executeNotifyTool,
+} from './notify-tools'
 
 // Idempotent device tools can run in parallel within a single turn.
 // Stateful device tools (bash with shared pty session, write_file,
@@ -158,10 +163,10 @@ export async function runAgentLoopStreaming(opts: {
     function: { name: t.tool_name, description: t.description, parameters: t.inputSchema },
   }))
   // Tool surface = device tools + memory tools (when project context exists)
-  // + secrets tools (always) + schedule tools (always)
+  // + secrets tools (always) + schedule tools (always) + notify tool (always)
   const tools = projectId
-    ? [...deviceToolDefs, ...MEMORY_TOOLS, ...SECRETS_TOOLS, ...SCHEDULE_TOOLS]
-    : [...deviceToolDefs, ...SECRETS_TOOLS, ...SCHEDULE_TOOLS]
+    ? [...deviceToolDefs, ...MEMORY_TOOLS, ...SECRETS_TOOLS, ...SCHEDULE_TOOLS, ...NOTIFY_TOOLS]
+    : [...deviceToolDefs, ...SECRETS_TOOLS, ...SCHEDULE_TOOLS, ...NOTIFY_TOOLS]
 
   // Inject device context into the system prompt
   let enrichedSystemPrompt = systemPrompt
@@ -228,6 +233,16 @@ export async function runAgentLoopStreaming(opts: {
         userId: parseInt(userId, 10) || 0,
         threadId: conversationId || null,
         projectId: projectId || null,
+      })
+      onEvent({ type: 'tool_result', data: { id: tc.id, name: tc.function.name, output: result } })
+      return { tc, args, result }
+    }
+
+    // Notify tool? Send via web push (no device hop).
+    if (NOTIFY_TOOL_NAMES.has(tc.function.name)) {
+      onEvent({ type: 'tool_call', data: { id: tc.id, name: tc.function.name, args } })
+      const result = await executeNotifyTool(tc.function.name, args, {
+        userId: parseInt(userId, 10) || 0,
       })
       onEvent({ type: 'tool_result', data: { id: tc.id, name: tc.function.name, output: result } })
       return { tc, args, result }

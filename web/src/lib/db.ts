@@ -275,6 +275,29 @@ function runMigrations(db: Database.Database) {
       DROP TABLE IF EXISTS project_facts;
       DROP TABLE IF EXISTS memory_blocks;
     `],
+    ['022_push_subscriptions', `
+      -- Vision §3.4 — native notification protocol (web push first).
+      -- Each row is one browser+device subscribing to web push via the
+      -- Push API. Stored on the relay because notifications need to be
+      -- sent even when the user's daemon device is offline. The endpoint
+      -- + p256dh + auth keys are NOT secret content — they're delivery
+      -- addresses, like a phone number. The agent never sees them.
+      CREATE TABLE IF NOT EXISTS push_subscriptions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL,
+        endpoint TEXT NOT NULL UNIQUE,
+        p256dh TEXT NOT NULL,
+        auth TEXT NOT NULL,
+        user_agent TEXT,
+        platform TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        last_used_at TEXT,
+        send_count INTEGER NOT NULL DEFAULT 0,
+        last_error TEXT,
+        FOREIGN KEY (user_id) REFERENCES users(id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_push_user ON push_subscriptions(user_id);
+    `],
   ]
 
   const insertMigration = db.prepare('INSERT INTO migrations (name, applied_at) VALUES (?, datetime(\'now\'))')
@@ -1202,5 +1225,74 @@ export const CORE_BLOCK_LABELS = [
   'gotchas',       // Things that bit you, common mistakes
   'preferences',   // How the user wants this project handled
 ] as const
+
+// ── Push subscriptions (vision §3.4) ───────────────────────
+
+export interface PushSubscription {
+  id: number
+  user_id: number
+  endpoint: string
+  p256dh: string
+  auth: string
+  user_agent: string | null
+  platform: string | null
+  created_at: string
+  last_used_at: string | null
+  send_count: number
+  last_error: string | null
+}
+
+export function upsertPushSubscription(opts: {
+  userId: number
+  endpoint: string
+  p256dh: string
+  auth: string
+  userAgent?: string
+  platform?: string
+}): PushSubscription {
+  getDb().prepare(`
+    INSERT INTO push_subscriptions (user_id, endpoint, p256dh, auth, user_agent, platform)
+    VALUES (?, ?, ?, ?, ?, ?)
+    ON CONFLICT(endpoint) DO UPDATE SET
+      user_id = excluded.user_id,
+      p256dh = excluded.p256dh,
+      auth = excluded.auth,
+      user_agent = excluded.user_agent,
+      platform = excluded.platform
+  `).run(
+    opts.userId,
+    opts.endpoint,
+    opts.p256dh,
+    opts.auth,
+    opts.userAgent || null,
+    opts.platform || null,
+  )
+  return getDb().prepare(
+    'SELECT * FROM push_subscriptions WHERE endpoint = ?'
+  ).get(opts.endpoint) as PushSubscription
+}
+
+export function listPushSubscriptions(userId: number): PushSubscription[] {
+  return getDb().prepare(
+    'SELECT * FROM push_subscriptions WHERE user_id = ? ORDER BY created_at DESC'
+  ).all(userId) as PushSubscription[]
+}
+
+export function deletePushSubscription(endpoint: string): boolean {
+  const r = getDb().prepare(
+    'DELETE FROM push_subscriptions WHERE endpoint = ?'
+  ).run(endpoint)
+  return r.changes > 0
+}
+
+export function recordPushSent(endpoint: string, error: string | null = null) {
+  getDb().prepare(`
+    UPDATE push_subscriptions
+    SET last_used_at = datetime('now'),
+        send_count = send_count + 1,
+        last_error = ?
+    WHERE endpoint = ?
+  `).run(error, endpoint)
+}
 
 export default getDb
