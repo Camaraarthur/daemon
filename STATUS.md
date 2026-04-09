@@ -8,79 +8,93 @@ Daemon is the thing every "AI on your stuff" gets built on top of. Instead of ev
 
 We're building those basics one by one.
 
-## What I just finished
+## What's done (shipped + committed)
 
-### 1. The secrets vault (done, shipped)
+### 1. Vision documents
+Two short locked docs (`docs/vision.md`, `docs/positioning.md`) that say what daemon is, who it's for, and what it will never become. Future-me stops drifting.
 
-Think of it like a tiny safe that lives on your computer. The agent can stash things in it ("here's my OpenAI key, remember it") and pull them back later. Nothing leaves your machine. Even if someone steals the file, they can't read what's inside without a second key file that only your computer has.
+### 2. The secrets vault + free-keys cabinet
+A tiny encrypted safe on your computer. The agent can stash API keys ("here's my OpenAI key, remember it") and pull them back later. Nothing leaves your machine — even if someone copies the file, they can't read it without a second key file that lives only on your computer.
 
-I also built a second layer on top of it: a shared free-keys cabinet. You ask for "brave_search_api_key" and if you don't have your own, daemon hands you ours, free. So every agent on daemon can search the web with zero setup. Later we can charge for the fancy ones, but for now everything is free.
+On top of that, a shared free-keys cabinet: ask for "brave_search_api_key" and if you don't have your own, daemon hands you ours, free. Every agent gets web search out of the box. Same call works for both layers — the agent never knows the difference.
 
-Both layers look identical to the agent — it just calls "give me the key named X" and the right one comes back. Done, tested end-to-end, committed.
+### 3. The scheduler
+The "agent that runs while you sleep" piece. You tell it: "every morning at 8, summarize my unread emails." It writes that down in a list and a tiny clock inside daemon ticks every 30 seconds checking if anything is due. When 8am hits, it pokes the agent and the result lands in your chat — even if no browser is open. Tested end to end with 6 different cron patterns.
 
-### 2. The vision document
-
-I locked in two short documents (`docs/vision.md` and `docs/positioning.md`) that say what daemon is, who it's for, and what it will never become. So future-me and future-agents stop drifting.
+### 4. Notifications (web push)
+Daemon can now actually tap you on the shoulder. The agent calls a `notify(title, body)` button and you get a real native browser notification — even with the daemon tab closed. You click it and a daemon tab opens to whatever URL the agent set. Generated the cryptographic keys that prove notifications are coming from us, wired the whole pipeline, restarted the live website, tested the public-key endpoint. The "let users actually turn it on" UI button is small and lives v1.5 — the plumbing is done.
 
 ## What I'm building right now
 
-### 4. Notifications (just starting)
+### 5. The system prompt scaffolding (the meta-primitive)
 
-Right now if the agent finishes something while you're not looking, you don't know. We need a way for the daemon to tap you on the shoulder. Starting with browser notifications (the kind that pop up in the corner of your screen even when the tab is closed), then phone push notifications later.
+This is the glue. Every time the agent wakes up to answer something, it should already know what its toolkit looks like — what secrets exist, what schedules are running, what's in memory, whether notifications are on. Without this, the agent has to *guess* that "schedule" or "get_secret" exist and *guess* what you've already told it. Wasteful and bad.
 
-## What I just finished
+What I just wired up: a small builder that, on every chat turn, fetches the current state from the device + relay and prepends a tidy block to the system prompt:
 
-### 3. The scheduler (done, shipped)
+```
+## Daemon environment
 
-The "agent that runs while you sleep" piece. You tell it: "every morning at 8, summarize my unread emails." It writes that down in a little list, and a tiny clock inside daemon ticks every 30 seconds checking if anything is due. When 8am hits, it pokes the agent and the result lands in your chat — even if no browser is open.
+### Hard rules
+1. Use the primitives. Don't write a script when there's a tool.
+2. Auto-remember important paths the user mentions.
+3. Secrets never get printed/logged/committed.
+4. The user's data lives on their devices.
 
-All pieces shipped:
-- The list of schedules (local database). ✅
-- The clock parser ("every weekday at 9am", "every 30 mins", etc.). Tested with 6 different patterns. ✅
-- The tick loop. ✅
-- Phone-home from the device to wake the agent. ✅
-- Buttons for the agent to add / list / delete / pause schedules. ✅
-- The other end of the phone call — the daemon website endpoint that receives the wake-up call and actually runs the agent in the right chat thread. ✅
-- Tested end to end: create → forced-due → fire → agent ran → next time advanced → cleanup. ✅
-- Committed.
+### Primitives you can call directly
+- notify, schedule, get_secret/set_secret, remember/recall, ...
 
-## What's next after notifications
+### Memory blocks (already loaded)
+- project (382/4000 chars): "Daemon - personal AI agent platform..."
+- paths (1897/4000 chars): ...
+
+### Secrets (names only)
+- User vault: openai_api_key, github_pat
+- Platform broker: brave_search_api_key
+
+### Schedules (active)
+- morning_briefing: cron "0 8 * * *" → "Summarize emails"
+
+### Notifications: ACTIVE
+```
+
+Strict 2000-character budget so it doesn't bloat the model's context. Empty sections drop. Long sections get truncated with "(N more — call list_* to see all)". Wired into both flavors of the agent loop. Build is green.
+
+**What's left for #5:** end-to-end test against a real chat (curl /api/chat with a token, watch the system prompt arrive populated) → commit.
+
+## What's next after the scaffolding
 
 In rough order:
 
-### 5. (was 4) ~~Notifications~~ — building now
-Right now if the agent finishes something while you're not looking, you don't know. We need the daemon to be able to tap you on the shoulder — first via a web browser notification, eventually via the phone app.
+### 6. Sub-page hosting
+Let the agent build you a tiny webpage at *yourname*.daemon.page without you setting up a server. "Make me a dashboard." "Host this thing you just generated."
 
-### 5. Sub-page hosting
-Let the agent build you a tiny webpage at *yourname*.daemon.page without you setting up a server. Useful for "make me a dashboard" / "host this thing you just generated."
+### 7. File-in-chat clickable links
+When the agent finds a file on your computer, the chat should show a real button you click to open it. Right now it just prints the path.
 
-### 6. File-in-chat clickable links
-When the agent finds a file on your computer, the chat should show a real button you can click to open it. Right now it just prints the path.
-
-### 7. Semantic file search as a built-in tool
-Wire up the file-search thing (already exists separately on this machine) so any daemon agent can find your files by meaning, not just by name.
-
-### 8. The system prompt scaffolding
-The thing that tells the agent, every single time it wakes up, "here's your devices, here's your secrets, here's your schedules, here's your important paths." So the agent never starts from zero. This is the meta-primitive that ties all the others together.
+### 8. Semantic file search as a built-in tool
+Wire up the file-search service (already exists separately on this machine) so any daemon agent can find your files by meaning, not just by name. The "way better Finder" demo.
 
 ### 9. The pendant firmware
-The wearable mic necklace I found on the SSD ("Honest Puck v3.2"). Needs the actual code that runs on the chip. Hardware is real, schematic is read, just need to write the firmware.
+The wearable mic necklace on the SSD ("Honest Puck v3.2"). ESP32-S3 + PDM mic + 4 privacy LEDs. Hardware is real, schematic is read, the firmware is what's missing.
 
 ## Things I'm explicitly NOT doing
 
 - No telegram bandaid. Notifications go through real native channels.
-- No copying what other agents do. We're picking the small set of basics nobody else has bothered to build properly.
-- No paywall or visible API broker UI yet — just the plumbing.
+- No copying what other agents do. We pick the small set of basics nobody else has built properly.
+- No paywall or visible API broker UI yet — plumbing only.
 - No cloud lock-in. Your data stays on your devices.
 
 ## Weird stuff I had to figure out
 
 - The pendant was on the SSD, not the server's main drive. Took a few wrong turns to find it.
-- The cron parser broke at first because I had `*/N` in a comment, and the `*/` accidentally ended the comment. Fixed.
-- The secrets file needed a master key generated lazily on first use, not on startup.
+- The cron parser broke at first because `*/N` inside a `/* ... */` comment ended the comment early. Renamed to "slash-N" in the docstring.
+- VAPID notification keys had to land in the relay's env file (`vault.env`) so the systemd service auto-loads them on restart.
+- TypeScript made me cast the WebPush key to `Uint8Array<ArrayBuffer>` because Next 16 ships stricter buffer types than upstream `lib.dom.d.ts`.
 
 ## Where to read the actual stuff
 
 - Source of truth for the product: `docs/vision.md`
 - Pitch / target audience: `docs/positioning.md`
 - This file: `STATUS.md`
+- Recent commits: `git log --oneline -8` from `~/daemon`

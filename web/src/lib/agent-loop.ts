@@ -33,6 +33,8 @@ import {
   NOTIFY_TOOL_NAMES,
   executeNotifyTool,
 } from './notify-tools'
+import { buildScaffold } from './system-prompt-scaffold'
+import { listPushSubscriptions } from './db'
 
 // Idempotent tools can be dispatched in parallel within a single turn.
 // Stateful tools (anything that touches a persistent shell session, mutates
@@ -281,8 +283,26 @@ If a lint error is reported after writing a file, fix it before moving on.
     enrichedSystemPrompt += `\n\n⚠️ No devices online for this user. Tool calls will fail. Tell the user to pair a device at /settings/devices.`
   }
 
+  // Vision §5: prepend the daemon environment scaffold so the model
+  // sees its memory blocks, secrets, schedules, and primitives without
+  // having to discover them. Best-effort — failures are silent.
+  const numericUserId = parseInt(userId, 10) || 0
+  let scaffold = ''
+  if (numericUserId > 0) {
+    try {
+      scaffold = await buildScaffold({
+        userId: numericUserId,
+        projectId: projectId || null,
+        deviceCount: deviceTools.length,
+        notificationsActive: listPushSubscriptions(numericUserId).length > 0,
+      })
+    } catch (e) {
+      console.warn('[scaffold] build failed:', e instanceof Error ? e.message : e)
+    }
+  }
+
   const messages: Message[] = [
-    { role: 'system', content: enrichedSystemPrompt },
+    { role: 'system', content: scaffold ? `${scaffold}\n\n${enrichedSystemPrompt}` : enrichedSystemPrompt },
     { role: 'user', content: userMessage },
   ]
 
