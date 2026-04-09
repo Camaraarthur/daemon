@@ -29,10 +29,19 @@ interface PlatformSecretSpec {
   name: string
   envVar: string
   description: string
-  category: 'search' | 'embedding' | 'llm' | 'comms' | 'data'
+  category: 'search' | 'embedding' | 'llm' | 'comms' | 'data' | 'infra' | 'social' | 'payments'
   freeForAll: boolean
-  // Future: quotaPerUserPerDay, costPerCallUsd, requiresOptIn
+  /**
+   * Operator-only: only returned when the requester is the operator
+   * of this daemon instance (DAEMON_OPERATOR_USER_ID env var, defaults
+   * to user_id=3 for arturito). Used for Arthur's personal vault.env
+   * keys that he WANTS exposed to his own daemon agent but should NOT
+   * leak to other users on the same instance.
+   */
+  operatorOnly?: boolean
 }
+
+const OPERATOR_USER_ID = parseInt(process.env.DAEMON_OPERATOR_USER_ID || '3', 10)
 
 // The catalogue of platform secrets daemon provides. Add to this list
 // when daemon-the-company signs up for a new service. The agent's
@@ -45,21 +54,59 @@ const CATALOGUE: PlatformSecretSpec[] = [
     category: 'search',
     freeForAll: true,
   },
-  // Add when ready:
-  // {
-  //   name: 'gemini_embedding_key',
-  //   envVar: 'GOOGLE_API_KEY',
-  //   description: 'Gemini Embedding 002 — semantic file search.',
-  //   category: 'embedding',
-  //   freeForAll: true,
-  // },
-  // {
-  //   name: 'resend_api_key',
-  //   envVar: 'RESEND_API_KEY',
-  //   description: 'Resend transactional email. Free up to 100/day per user.',
-  //   category: 'comms',
-  //   freeForAll: true,
-  // },
+  // ── Operator-only secrets (Arthur's personal vault.env) ──
+  // Loaded automatically because daemon-web.service has
+  // EnvironmentFile=/home/arthur/.secrets/vault.env. These are
+  // available ONLY when the requester is the operator user (his
+  // own daemon instance). They never leak to other tenants.
+  //
+  // Adding a new key Arthur uses: append a row here, restart
+  // daemon-web — the vault.env value is already in process.env.
+  { name: 'anthropic_api_key', envVar: 'ANTHROPIC_API_KEY',
+    description: "Claude API key (insights-main workspace)",
+    category: 'llm', freeForAll: false, operatorOnly: true },
+  { name: 'openai_api_key', envVar: 'OPENAI_API_KEY',
+    description: "OpenAI API key", category: 'llm', freeForAll: false, operatorOnly: true },
+  { name: 'deepgram_api_key', envVar: 'DEEPGRAM_API_KEY',
+    description: "Deepgram speech-to-text API", category: 'comms', freeForAll: false, operatorOnly: true },
+  { name: 'google_api_key', envVar: 'GOOGLE_API_KEY',
+    description: "Google API key (CRA AI main project) — Gemini, Embedding 2",
+    category: 'llm', freeForAll: false, operatorOnly: true },
+  { name: 'gemini_embedding_key', envVar: 'GOOGLE_API_KEY',
+    description: "Gemini Embedding 2 (alias of google_api_key for clarity)",
+    category: 'embedding', freeForAll: false, operatorOnly: true },
+  { name: 'github_pat', envVar: 'GITHUB_PAT',
+    description: "GitHub personal access token", category: 'infra', freeForAll: false, operatorOnly: true },
+  { name: 'qdrant_api_key', envVar: 'QDRANT_API_KEY',
+    description: "Qdrant vector DB API key", category: 'data', freeForAll: false, operatorOnly: true },
+  { name: 'hubspot_api_key', envVar: 'HUBSPOT_API_KEY',
+    description: "HubSpot CRM", category: 'data', freeForAll: false, operatorOnly: true },
+  { name: 'serpapi_key', envVar: 'SERPAPI_KEY',
+    description: "SerpAPI Google Search results", category: 'search', freeForAll: false, operatorOnly: true },
+  { name: 'apollo_api_key', envVar: 'APOLLO_API_KEY',
+    description: "Apollo.io B2B contact enrichment", category: 'data', freeForAll: false, operatorOnly: true },
+  { name: 'telegram_bot_token', envVar: 'TELEGRAM_BOT_TOKEN',
+    description: "Telegram bot token", category: 'social', freeForAll: false, operatorOnly: true },
+  { name: 'twilio_account_sid', envVar: 'TWILIO_ACCOUNT_SID',
+    description: "Twilio account SID", category: 'comms', freeForAll: false, operatorOnly: true },
+  { name: 'twilio_auth_token', envVar: 'TWILIO_AUTH_TOKEN',
+    description: "Twilio auth token", category: 'comms', freeForAll: false, operatorOnly: true },
+  { name: 'stripe_secret_key', envVar: 'STRIPE_SECRET_KEY',
+    description: "Stripe secret key", category: 'payments', freeForAll: false, operatorOnly: true },
+  { name: 'cloudflare_api_token', envVar: 'CLOUDFLARE_API_TOKEN',
+    description: "Cloudflare API token (DNS, Tunnels, Access)", category: 'infra', freeForAll: false, operatorOnly: true },
+  { name: 'railway_token', envVar: 'RAILWAY_TOKEN',
+    description: "Railway deployment token", category: 'infra', freeForAll: false, operatorOnly: true },
+  { name: 'composio_api_key', envVar: 'COMPOSIO_API_KEY',
+    description: "Composio MCP integration platform", category: 'infra', freeForAll: false, operatorOnly: true },
+  { name: 'duffel_api_key', envVar: 'DUFFEL_API_KEY',
+    description: "Duffel flights API", category: 'data', freeForAll: false, operatorOnly: true },
+  { name: 'retell_api_key', envVar: 'RETELL_API_KEY',
+    description: "Retell AI voice", category: 'comms', freeForAll: false, operatorOnly: true },
+  { name: 'openrouter_api_key', envVar: 'OPENROUTER_API_KEY',
+    description: "OpenRouter (multi-provider LLM proxy)", category: 'llm', freeForAll: false, operatorOnly: true },
+  { name: 'deepseek_api_key', envVar: 'DEEPSEEK_API_KEY',
+    description: "DeepSeek API", category: 'llm', freeForAll: false, operatorOnly: true },
 ]
 
 const _byName = new Map(CATALOGUE.map((s) => [s.name, s]))
@@ -74,14 +121,20 @@ const _byName = new Map(CATALOGUE.map((s) => [s.name, s]))
 export function getPlatformSecret(userId: number, name: string): string | null {
   const spec = _byName.get(name)
   if (!spec) return null
-  if (!spec.freeForAll) {
-    // v2: check user opt-in here. For v1, all platform secrets are free.
+  // Operator-only secrets: only the operator user gets them. Used for
+  // Arthur's personal vault.env keys exposed to his own daemon agent
+  // without leaking to other tenants on the same instance.
+  if (spec.operatorOnly && userId !== OPERATOR_USER_ID) {
+    return null
+  }
+  if (!spec.freeForAll && !spec.operatorOnly) {
+    // v2: check user opt-in here.
     return null
   }
   const value = process.env[spec.envVar]
   if (!value) return null
   // Audit log (v1: stderr line; v2: platform_secret_usage table row)
-  console.log(`[platform-secrets] user=${userId} used ${name}`)
+  console.log(`[platform-secrets] user=${userId} used ${name}${spec.operatorOnly ? ' (operator)' : ''}`)
   return value
 }
 
@@ -91,18 +144,24 @@ export function getPlatformSecret(userId: number, name: string): string | null {
  * these so the model knows what's available without having to call
  * list_secrets manually.
  */
-export function listPlatformSecrets(_userId: number): Array<{
+export function listPlatformSecrets(userId: number): Array<{
   name: string
   description: string
   category: string
   available: boolean
 }> {
-  return CATALOGUE.filter((s) => s.freeForAll).map((s) => ({
-    name: s.name,
-    description: s.description,
-    category: s.category,
-    available: !!process.env[s.envVar],
-  }))
+  return CATALOGUE
+    .filter((s) => {
+      if (s.freeForAll) return true
+      if (s.operatorOnly && userId === OPERATOR_USER_ID) return true
+      return false
+    })
+    .map((s) => ({
+      name: s.name,
+      description: s.description,
+      category: s.category,
+      available: !!process.env[s.envVar],
+    }))
 }
 
 /** Used by the system-prompt scaffolding to know if a name is platform-provided. */
