@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+    LaunchAgent template — installed by the shell at first launch
+    via src/macos.rs::install_launch_agent(). Tokens like __NODE__
+    and __DAEMON_MJS__ are substituted at install time with the
+    user's actual paths (Homebrew vs system Node, .app bundle path).
+
+    Why LaunchAgent (not LaunchDaemon):
+      - Runs as the user, has GUI / Keychain / Network access
+      - Survives logout/login automatically
+      - Matches the Linux systemd-user model and Windows HKCU Run
+        key model exactly
+      - LaunchDaemon would run as root and fight every TCC prompt
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>page.daemon.worker</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>__NODE__</string>
+        <string>__DAEMON_MJS__</string>
+        <string>--no-update</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <dict>
+        <key>SuccessfulExit</key>
+        <false/>
+        <key>NetworkState</key>
+        <true/>
+    </dict>
+    <key>StandardOutPath</key>
+    <string>/tmp/daemon-worker.log</string>
+    <key>StandardErrorPath</key>
+    <string>/tmp/daemon-worker.log</string>
+    <key>ProcessType</key>
+    <string>Background</string>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin</string>
+    </dict>
+</dict>
+</plist>

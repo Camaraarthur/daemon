@@ -41,6 +41,11 @@ keyring = "3"
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 
+# macOS-only deps for the menu-bar app, LaunchAgent, and TCC probes.
+# Do NOT add to other targets — objc2 won't compile on Linux/Windows.
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.5"
+
 [features]
 default = ["custom-protocol"]
 custom-protocol = ["tauri/custom-protocol"]

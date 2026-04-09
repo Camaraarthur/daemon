@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!--
+        Hardened Runtime entitlements for Developer ID distribution
+        (NOT App Store / Mac App Store — sandbox forbidden the daemon
+        model). Per the macOS OS-research synthesis: ship Developer
+        ID + .dmg, never MAS.
+
+        Notarization: with Developer ID + Hardened Runtime + these
+        three entitlements, notarytool stapling succeeds. We've
+        confirmed the spec; the actual notarize step needs a Mac.
+    -->
+
+    <!-- WebView (WKWebView) needs JIT for the V8 engine. -->
+    <key>com.apple.security.cs.allow-jit</key>
+    <true/>
+
+    <!--
+        WebView allocates JIT pages and the bundled Node sidecar
+        loads native modules (better-sqlite3) at runtime. Both need
+        unsigned executable memory permission.
+    -->
+    <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+    <true/>
+
+    <!--
+        Node loads native .node modules dynamically. Without this
+        the dyld code-signing check fails and the modules can't load.
+    -->
+    <key>com.apple.security.cs.disable-library-validation</key>
+    <true/>
+
+    <!-- Network access (we talk to my.daemon.page over WSS). -->
+    <key>com.apple.security.network.client</key>
+    <true/>
+
+    <!--
+        The loopback /open server (vision §4.2) listens on 127.0.0.1
+        for the file-link primitive. NSWorkspace.open() also works
+        in-process; we keep both paths for parity with Linux/Windows.
+    -->
+    <key>com.apple.security.network.server</key>
+    <true/>
+
+    <!--
+        User-selected file read/write — the agent's read_file /
+        write_file tools need this. Note: the daemon is not
+        sandboxed, so this is mostly a notarization signal rather
+        than an actual restriction.
+    -->
+    <key>com.apple.security.files.user-selected.read-write</key>
+    <true/>
+</dict>
+</plist>

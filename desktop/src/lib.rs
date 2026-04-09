@@ -18,6 +18,8 @@
 
 mod commands;
 mod hotkey;
+#[cfg(target_os = "macos")]
+mod macos;
 mod token_store;
 mod tray;
 mod ws_client;
@@ -97,6 +99,14 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init())
         .setup(move |app| {
             let handle = app.handle().clone();
+
+            // macOS: hide Dock icon (menu-bar resident), probe TCC
+            // for Notification authorization at a sensible moment.
+            #[cfg(target_os = "macos")]
+            {
+                macos::set_accessory_activation_policy();
+                macos::probe_notification_authorization();
+            }
 
             if let Err(e) = tray::setup_tray(&handle) {
                 error!("Failed to setup tray: {}", e);
