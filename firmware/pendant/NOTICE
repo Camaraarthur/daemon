@@ -1,0 +1,43 @@
+Honest Puck v3.2 firmware
+=========================
+
+This firmware is a fork / derivative work of:
+
+    BasedHardware/omi  (https://github.com/BasedHardware/omi)
+    Copyright (c) 2024 Based Hardware Contributors
+    Licensed under the MIT License.
+
+Specifically, the following pieces were lifted from omiGlass/firmware/ and
+then rewritten for the ESP-IDF v5.2 toolchain (the upstream was Arduino / PlatformIO):
+
+    - PDM microphone capture pattern (src/mic.cpp)
+        -> ported to components/honest_mic/mic.c using the new
+           driver/i2s_pdm.h API.
+
+    - Opus encoder ring-buffer pattern (src/opus_encoder.cpp)
+        -> scaffolded in components/honest_mic/opus_stub.c.
+           Real Opus encoding is gated behind CONFIG_HONEST_PUCK_USE_OPUS
+           and currently emits raw 16-bit PCM frames so the project builds
+           without pulling a non-MIT/Apache dependency.
+
+    - BLE GATT layout and UUIDs (src/app.cpp, src/config.h)
+        -> ported to components/honest_ble/ble_audio.c using NimBLE.
+           The 128-bit service UUID 19B10000-E8F2-537E-4F6C-D104768A1214 and
+           the AUDIO_DATA / AUDIO_CODEC characteristics are preserved byte-
+           for-byte so existing Omi-compatible clients (including the
+           daemon Android app) pair with no protocol changes.
+
+    - Audio packet framing (2 bytes index + 1 byte sub-index + payload)
+        -> preserved in components/honest_ble/ble_audio.c.
+
+What is ORIGINAL to Honest Puck (not from omi):
+
+    - components/honest_ui/ (button debouncing + WS2812 privacy LED driver)
+    - components/honest_mic/honest_gate.c (Si2301BDS PMOS load-switch interlock)
+    - All pin mappings in main/honest_puck_pins.h
+    - Project build system (CMakeLists.txt, sdkconfig.defaults)
+
+License
+-------
+This derivative work is also released under the MIT License. The upstream
+omi LICENSE file is reproduced in LICENSE alongside our own copyright line.
