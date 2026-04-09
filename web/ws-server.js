@@ -135,7 +135,7 @@ const ALLOWED_COMMAND_TYPES = new Set([
   // Step 8: relay reads thread history from device, not its own DB
   'chat.fetch_messages', 'chat.get_latest_session',
   // Step 8c: memory tools dispatched to device
-  'memory.remember', 'memory.recall', 'memory.list_facts',
+  'memory.remember', 'memory.recall', 'memory.recall_semantic', 'memory.list_facts',
   'memory.get_block', 'memory.list_blocks',
   'memory.update_block', 'memory.append_block',
   // Vision §3.2: encrypted secrets vault on the device

@@ -55,6 +55,8 @@ import {
   stopScheduler,
 } from './scheduler.mjs'
 import { startOpenServer, stopOpenServer } from './open-server.mjs'
+import { embedFactNow, embedQuery, EMBED_MODEL } from './fact-embedder.mjs'
+import { loadProjectEmbeddings } from './store.mjs'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
@@ -1137,6 +1139,13 @@ async function handleCommand(msg) {
           source: msg.source,
           importance: msg.importance,
         })
+        // Step 16: fire-and-forget embed so the new fact is findable
+        // by semantic recall on the next call. Errors logged but not
+        // bubbled — addFact must never fail because of an embed
+        // hiccup.
+        embedFactNow(id, msg.content || '').catch((e) => {
+          log(`[fact-embed] background embed failed for ${id}: ${e?.message || e}`)
+        })
         result = { ok: true, fact_id: id }
       } catch (e) {
         result = { ok: false, error: e.message }
@@ -1152,6 +1161,53 @@ async function handleCommand(msg) {
           msg.limit || 20,
         )
         result = { ok: true, count: hits.length, hits }
+      } catch (e) {
+        result = { ok: false, error: e.message }
+      }
+      break
+    }
+
+    case 'memory.recall_semantic': {
+      // Step 16: cosine similarity over Gemini embeddings. Falls back
+      // to keyword recall if the embedder fails (no GOOGLE_API_KEY,
+      // network blip, etc.) so the agent always gets SOMETHING back.
+      try {
+        const projectId = msg.project_id || 1
+        const query = String(msg.query || '')
+        const limit = Math.max(1, Math.min(50, Number(msg.limit) || 20))
+        if (!query) {
+          result = { ok: false, error: 'query required' }
+          break
+        }
+        let queryVec
+        try {
+          queryVec = await embedQuery(query)
+        } catch (e) {
+          // Fall back to keyword
+          const fallback = recallMemory(projectId, query, limit)
+          result = {
+            ok: true,
+            mode: 'keyword-fallback',
+            error: e.message,
+            count: fallback.length,
+            hits: fallback,
+          }
+          break
+        }
+        const { cosineSimilarity } = await import('./fact-embedder.mjs')
+        const candidates = loadProjectEmbeddings(projectId, EMBED_MODEL)
+        const scored = candidates
+          .map((c) => ({
+            source: 'fact',
+            id: c.fact_id,
+            label_or_category: c.category,
+            content: c.content,
+            score: cosineSimilarity(queryVec, c.vector) * (0.5 + (c.importance || 5) / 10),
+          }))
+          .filter((s) => s.score > 0.05)
+          .sort((a, b) => b.score - a.score)
+          .slice(0, limit)
+        result = { ok: true, mode: 'semantic', count: scored.length, hits: scored }
       } catch (e) {
         result = { ok: false, error: e.message }
       }

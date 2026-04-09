@@ -164,6 +164,33 @@ function runMigrations(db) {
       CREATE INDEX IF NOT EXISTS idx_schedules_next ON schedules(enabled, next_run_at);
     `,
     ],
+    [
+      '005_fact_embeddings',
+      `
+      -- Step 16 — Gemini Embedding 2 vectors for project_facts.
+      --
+      -- Each row corresponds to a project_facts row by id. We store
+      -- the raw embedding as a binary BLOB (768 floats = 3072 bytes
+      -- for embedding-2-preview at default dim). model + dim are
+      -- stored alongside so we can re-embed if we ever swap models.
+      --
+      -- recallMemory() does cosine sim against this table in
+      -- addition to its existing keyword grep, then merges scores
+      -- by max(grep_score, cos_score * importance/10).
+      --
+      -- New facts get embedded fire-and-forget after addFact().
+      -- A backfill helper re-embeds all rows where embedded=0.
+      CREATE TABLE IF NOT EXISTS fact_embeddings (
+        fact_id INTEGER PRIMARY KEY,
+        model TEXT NOT NULL,
+        dim INTEGER NOT NULL,
+        vector BLOB NOT NULL,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        FOREIGN KEY (fact_id) REFERENCES project_facts(id) ON DELETE CASCADE
+      );
+      CREATE INDEX IF NOT EXISTS idx_fact_emb_model ON fact_embeddings(model);
+    `,
+    ],
   ]
 
   const insertMigration = db.prepare(
@@ -365,6 +392,97 @@ export function touchFact(id) {
        access_count = access_count + 1 WHERE id = ?`,
     )
     .run(Number(id))
+}
+
+// ── Fact embeddings (Step 16, vision recall) ─────────────
+//
+// Stored as Float32Array BLOB. Encoded with Buffer.from(view.buffer).
+// Decoded with new Float32Array(buf.buffer, buf.byteOffset,
+// buf.byteLength/4).
+
+function ensureFactEmbeddingsTable() {
+  const db = getStore()
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS fact_embeddings (
+      fact_id INTEGER PRIMARY KEY,
+      model TEXT NOT NULL,
+      dim INTEGER NOT NULL,
+      vector BLOB NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      FOREIGN KEY (fact_id) REFERENCES project_facts(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_fact_emb_model ON fact_embeddings(model);
+  `)
+}
+
+export function upsertFactEmbedding(factId, model, vector) {
+  ensureFactEmbeddingsTable()
+  const f32 = vector instanceof Float32Array ? vector : new Float32Array(vector)
+  const blob = Buffer.from(f32.buffer, f32.byteOffset, f32.byteLength)
+  getStore()
+    .prepare(
+      `INSERT INTO fact_embeddings (fact_id, model, dim, vector)
+       VALUES (?, ?, ?, ?)
+       ON CONFLICT(fact_id) DO UPDATE SET
+         model = excluded.model,
+         dim = excluded.dim,
+         vector = excluded.vector,
+         created_at = datetime('now')`,
+    )
+    .run(Number(factId), String(model), f32.length, blob)
+  // Mark the fact as embedded so the backfill helper skips it.
+  getStore()
+    .prepare('UPDATE project_facts SET embedded = 1 WHERE id = ?')
+    .run(Number(factId))
+}
+
+export function getFactEmbedding(factId) {
+  ensureFactEmbeddingsTable()
+  const row = getStore()
+    .prepare('SELECT model, dim, vector FROM fact_embeddings WHERE fact_id = ?')
+    .get(Number(factId))
+  if (!row) return null
+  const buf = row.vector
+  const vec = new Float32Array(buf.buffer, buf.byteOffset, buf.byteLength / 4)
+  return { model: row.model, dim: row.dim, vector: vec }
+}
+
+/**
+ * Return all (factId, vector) pairs for facts in a project that have
+ * been embedded with `model`. Used by the cosine-search loop in
+ * recallMemoryWithEmbeddings.
+ */
+export function loadProjectEmbeddings(project_id, model) {
+  ensureFactEmbeddingsTable()
+  const rows = getStore()
+    .prepare(
+      `SELECT e.fact_id, e.dim, e.vector, f.content, f.category, f.importance
+       FROM fact_embeddings e
+       JOIN project_facts f ON f.id = e.fact_id
+       WHERE f.project_id = ? AND e.model = ?`,
+    )
+    .all(Number(project_id), String(model))
+  return rows.map((r) => ({
+    fact_id: r.fact_id,
+    content: r.content,
+    category: r.category,
+    importance: r.importance,
+    vector: new Float32Array(r.vector.buffer, r.vector.byteOffset, r.vector.byteLength / 4),
+  }))
+}
+
+/**
+ * Mark a fact as not yet embedded — used by tests / backfill scripts.
+ */
+export function listUnembeddedFacts(project_id, limit = 100) {
+  ensureFactEmbeddingsTable()
+  return getStore()
+    .prepare(
+      `SELECT id, content, category, importance FROM project_facts
+       WHERE project_id = ? AND embedded = 0
+       ORDER BY id ASC LIMIT ?`,
+    )
+    .all(Number(project_id), Number(limit))
 }
 
 export function countFacts(project_id) {
