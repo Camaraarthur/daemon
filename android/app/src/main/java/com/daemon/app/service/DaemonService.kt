@@ -310,7 +310,10 @@ class DaemonService : Service() {
                 renewWakeLock()
                 updateNotification("Connected ✓")
 
-                // Send device registration
+                // Phase 3: Send device registration with device_token
+                // (preferred — relay validates and extracts user_id)
+                // and legacy user_id field (for bespoke pre-token routes).
+                val storedToken = TokenStore.loadDeviceToken(this@DaemonService)
                 val registration = JSONObject().apply {
                     put("type", "device_register")
                     put("device_id", Build.MODEL)
@@ -318,7 +321,14 @@ class DaemonService : Service() {
                     put("platform", "android")
                     put("android_version", Build.VERSION.SDK_INT)
                     put("capabilities", JSONObject(capabilities as Map<*, *>))
-                    put("user_id", userId)
+                    if (storedToken != null) put("device_token", storedToken)
+                    if (userId.isNotEmpty()) put("user_id", userId)
+                    // Phase 3: also publish the canonical tool list so the
+                    // relay knows what skill.invoke names this device honors
+                    // without having to probe with skill.list.
+                    put("tools", org.json.JSONArray().apply {
+                        WsDispatcher.toolList().forEach { put(it) }
+                    })
                 }
                 webSocket.send(registration.toString())
 
@@ -452,6 +462,36 @@ class DaemonService : Service() {
                 val cmd = JSONObject(message)
                 val type = cmd.optString("type", "")
                 val requestId = cmd.optString("request_id", "")
+
+                // Phase 3: skill.invoke is the canonical dispatch path
+                // — same shape cli/daemon.mjs handles. Bespoke command
+                // types below are kept for backward compat.
+                if (type == "skill.invoke") {
+                    val toolName = cmd.optString("name", "")
+                    val toolArgs = cmd.optJSONObject("arguments") ?: JSONObject()
+                    val skillResult = WsDispatcher.handleSkillInvoke(
+                        this@DaemonService, toolName, toolArgs,
+                    )
+                    val response = JSONObject().apply {
+                        put("type", "skill.result")
+                        put("request_id", requestId)
+                        put("name", toolName)
+                        put("result", skillResult)
+                    }
+                    webSocket?.send(response.toString())
+                    return@launch
+                }
+                if (type == "skill.list") {
+                    val response = JSONObject().apply {
+                        put("type", "skill.list_result")
+                        put("request_id", requestId)
+                        put("tools", org.json.JSONArray().apply {
+                            WsDispatcher.toolList().forEach { put(it) }
+                        })
+                    }
+                    webSocket?.send(response.toString())
+                    return@launch
+                }
 
                 val result = when (type) {
                     "take_photo" -> CommandExecutor.takePhoto(this@DaemonService, cmd)

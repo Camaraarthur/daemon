@@ -124,9 +124,17 @@ class MainActivity : ComponentActivity() {
 
     private fun startDaemonService() {
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
+            // Phase 3: read user_id from TokenStore (set by the
+            // pairing flow). Falls back to "arthur" only if the user
+            // hasn't paired yet — that's the operator-only path for
+            // Arthur's own pixel which was paired before the token
+            // store existed. v1.5 forces the pairing flow on first
+            // launch and removes this fallback.
+            val relayUrl = com.daemon.app.service.TokenStore.loadRelayUrl(this)
+                .replace("/ws/device", "/ws/device") // identity, future-proof
             startForegroundService(Intent(this, DaemonService::class.java).apply {
                 action = DaemonService.ACTION_START
-                putExtra(DaemonService.EXTRA_SERVER_URL, "wss://my.daemon.page/ws/device")
+                putExtra(DaemonService.EXTRA_SERVER_URL, relayUrl)
                 putExtra(DaemonService.EXTRA_USER_ID, "arthur")
             })
         }
