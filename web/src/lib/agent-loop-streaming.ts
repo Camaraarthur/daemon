@@ -35,6 +35,11 @@ import {
   IDEMPOTENT_HOST_TOOLS,
   executeHostTool,
 } from './host-tools'
+import {
+  TRANSFER_TOOLS,
+  TRANSFER_TOOL_NAMES,
+  executeTransferTool,
+} from './transfer-tools'
 import { buildScaffold } from './system-prompt-scaffold'
 import { listPushSubscriptions } from './db'
 
@@ -172,10 +177,10 @@ export async function runAgentLoopStreaming(opts: {
     function: { name: t.tool_name, description: t.description, parameters: t.inputSchema },
   }))
   // Tool surface = device tools + memory tools (when project context exists)
-  // + secrets / schedule / notify / host tools (always)
+  // + secrets / schedule / notify / host / transfer tools (always)
   const tools = projectId
-    ? [...deviceToolDefs, ...MEMORY_TOOLS, ...SECRETS_TOOLS, ...SCHEDULE_TOOLS, ...NOTIFY_TOOLS, ...HOST_TOOLS]
-    : [...deviceToolDefs, ...SECRETS_TOOLS, ...SCHEDULE_TOOLS, ...NOTIFY_TOOLS, ...HOST_TOOLS]
+    ? [...deviceToolDefs, ...MEMORY_TOOLS, ...SECRETS_TOOLS, ...SCHEDULE_TOOLS, ...NOTIFY_TOOLS, ...HOST_TOOLS, ...TRANSFER_TOOLS]
+    : [...deviceToolDefs, ...SECRETS_TOOLS, ...SCHEDULE_TOOLS, ...NOTIFY_TOOLS, ...HOST_TOOLS, ...TRANSFER_TOOLS]
 
   // Inject device context into the system prompt
   let enrichedSystemPrompt = systemPrompt
@@ -280,6 +285,21 @@ export async function runAgentLoopStreaming(opts: {
       onEvent({ type: 'tool_call', data: { id: tc.id, name: tc.function.name, args } })
       const result = await executeHostTool(tc.function.name, args, {
         userId: parseInt(userId, 10) || 0,
+      })
+      onEvent({ type: 'tool_result', data: { id: tc.id, name: tc.function.name, output: result } })
+      return { tc, args, result }
+    }
+
+    // Phase 6 — device_send_file: orchestrate read on src + write on dst.
+    if (TRANSFER_TOOL_NAMES.has(tc.function.name)) {
+      onEvent({ type: 'tool_call', data: { id: tc.id, name: tc.function.name, args } })
+      const result = await executeTransferTool(tc.function.name, args, {
+        userId,
+        invokeDeviceTool,
+        pickFromDevice: () => {
+          const route = deviceToolMap.get('read_file')
+          return route?.device_id || null
+        },
       })
       onEvent({ type: 'tool_result', data: { id: tc.id, name: tc.function.name, output: result } })
       return { tc, args, result }

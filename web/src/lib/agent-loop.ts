@@ -39,6 +39,11 @@ import {
   IDEMPOTENT_HOST_TOOLS,
   executeHostTool,
 } from './host-tools'
+import {
+  TRANSFER_TOOLS,
+  TRANSFER_TOOL_NAMES,
+  executeTransferTool,
+} from './transfer-tools'
 import { buildScaffold } from './system-prompt-scaffold'
 import { listPushSubscriptions } from './db'
 
@@ -258,10 +263,10 @@ export async function runAgentLoop(opts: {
     },
   }))
   // Tool surface = device tools + memory tools (when project context exists)
-  // + secrets / schedule / notify / host tools (always)
+  // + secrets / schedule / notify / host / transfer tools (always)
   const allTools = projectId
-    ? [...deviceToolDefs, ...MEMORY_TOOLS, ...SECRETS_TOOLS, ...SCHEDULE_TOOLS, ...NOTIFY_TOOLS, ...HOST_TOOLS]
-    : [...deviceToolDefs, ...SECRETS_TOOLS, ...SCHEDULE_TOOLS, ...NOTIFY_TOOLS, ...HOST_TOOLS]
+    ? [...deviceToolDefs, ...MEMORY_TOOLS, ...SECRETS_TOOLS, ...SCHEDULE_TOOLS, ...NOTIFY_TOOLS, ...HOST_TOOLS, ...TRANSFER_TOOLS]
+    : [...deviceToolDefs, ...SECRETS_TOOLS, ...SCHEDULE_TOOLS, ...NOTIFY_TOOLS, ...HOST_TOOLS, ...TRANSFER_TOOLS]
 
   // Plan/Act separation: first iteration plans, subsequent iterations execute
   const planPrefix = `## Instructions
@@ -390,6 +395,20 @@ If a lint error is reported after writing a file, fix it before moving on.
       if (HOST_TOOL_NAMES.has(tc.function.name)) {
         const result = await executeHostTool(tc.function.name, args, {
           userId: parseInt(userId, 10) || 0,
+        })
+        return { tc, args, result }
+      }
+      // Phase 6 — device_send_file: orchestrate read on src + write on dst.
+      if (TRANSFER_TOOL_NAMES.has(tc.function.name)) {
+        const result = await executeTransferTool(tc.function.name, args, {
+          userId,
+          invokeDeviceTool,
+          pickFromDevice: () => {
+            // Default to the first device that has both read_file and
+            // write_file in its tool list (i.e. the local one).
+            const route = deviceToolMap.get('read_file')
+            return route?.device_id || null
+          },
         })
         return { tc, args, result }
       }
