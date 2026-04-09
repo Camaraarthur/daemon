@@ -33,6 +33,12 @@ import {
   NOTIFY_TOOL_NAMES,
   executeNotifyTool,
 } from './notify-tools'
+import {
+  HOST_TOOLS,
+  HOST_TOOL_NAMES,
+  IDEMPOTENT_HOST_TOOLS,
+  executeHostTool,
+} from './host-tools'
 import { buildScaffold } from './system-prompt-scaffold'
 import { listPushSubscriptions } from './db'
 
@@ -54,7 +60,8 @@ function isIdempotent(toolName: string): boolean {
     IDEMPOTENT_DEVICE_TOOLS.has(toolName) ||
     IDEMPOTENT_MEMORY_TOOLS.has(toolName) ||
     IDEMPOTENT_SECRETS_TOOLS.has(toolName) ||
-    IDEMPOTENT_SCHEDULE_TOOLS.has(toolName)
+    IDEMPOTENT_SCHEDULE_TOOLS.has(toolName) ||
+    IDEMPOTENT_HOST_TOOLS.has(toolName)
   )
 }
 
@@ -251,10 +258,10 @@ export async function runAgentLoop(opts: {
     },
   }))
   // Tool surface = device tools + memory tools (when project context exists)
-  // + secrets tools (always) + schedule tools (always) + notify tool (always)
+  // + secrets / schedule / notify / host tools (always)
   const allTools = projectId
-    ? [...deviceToolDefs, ...MEMORY_TOOLS, ...SECRETS_TOOLS, ...SCHEDULE_TOOLS, ...NOTIFY_TOOLS]
-    : [...deviceToolDefs, ...SECRETS_TOOLS, ...SCHEDULE_TOOLS, ...NOTIFY_TOOLS]
+    ? [...deviceToolDefs, ...MEMORY_TOOLS, ...SECRETS_TOOLS, ...SCHEDULE_TOOLS, ...NOTIFY_TOOLS, ...HOST_TOOLS]
+    : [...deviceToolDefs, ...SECRETS_TOOLS, ...SCHEDULE_TOOLS, ...NOTIFY_TOOLS, ...HOST_TOOLS]
 
   // Plan/Act separation: first iteration plans, subsequent iterations execute
   const planPrefix = `## Instructions
@@ -375,6 +382,13 @@ If a lint error is reported after writing a file, fix it before moving on.
       // Notify tool? Send via web push (no device hop).
       if (NOTIFY_TOOL_NAMES.has(tc.function.name)) {
         const result = await executeNotifyTool(tc.function.name, args, {
+          userId: parseInt(userId, 10) || 0,
+        })
+        return { tc, args, result }
+      }
+      // Host tool? Write to data/sites/<daemon_name>/...
+      if (HOST_TOOL_NAMES.has(tc.function.name)) {
+        const result = await executeHostTool(tc.function.name, args, {
           userId: parseInt(userId, 10) || 0,
         })
         return { tc, args, result }

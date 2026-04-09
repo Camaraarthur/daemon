@@ -9,8 +9,8 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server'
-import { readFileSync, existsSync, statSync } from 'fs'
-import { join, extname } from 'path'
+import { readFileSync, existsSync, statSync, realpathSync, mkdirSync } from 'fs'
+import { join, extname, resolve as resolvePath } from 'path'
 
 const DAEMON_ROOT = join(process.cwd(), '..')
 const SITES_DIR = join(DAEMON_ROOT, 'data', 'sites')
@@ -82,8 +82,32 @@ export async function GET(
 
   const filePath = join(SITES_DIR, username, relPath)
 
-  // Verify it's within the sites directory (belt + suspenders)
-  if (!filePath.startsWith(SITES_DIR)) {
+  // Architecture critic finding M-4: realpath BOTH sides before
+  // comparing. startsWith on raw path strings can be fooled by a
+  // symlink pointing out of SITES_DIR. We resolve everything first
+  // and then do the prefix check on the canonical paths.
+  let realFilePath: string | null = null
+  let realSitesRoot: string
+  try {
+    // SITES_DIR may not exist yet (no sites deployed). Create it
+    // lazily so realpathSync below succeeds; otherwise the host
+    // primitive is unusable on a fresh install.
+    if (!existsSync(SITES_DIR)) {
+      mkdirSync(SITES_DIR, { recursive: true, mode: 0o755 })
+    }
+    realSitesRoot = realpathSync(SITES_DIR)
+  } catch {
+    return new NextResponse('Not found', { status: 404 })
+  }
+  try {
+    realFilePath = realpathSync(resolvePath(filePath))
+  } catch {
+    // File doesn't exist yet — that's fine, the SPA fallback below
+    // handles it. We just need to make sure that IF a real path
+    // resolves later, it stays under realSitesRoot.
+    realFilePath = resolvePath(filePath)
+  }
+  if (realFilePath !== realSitesRoot && !realFilePath.startsWith(realSitesRoot + '/')) {
     return new NextResponse('Forbidden', { status: 403 })
   }
 
