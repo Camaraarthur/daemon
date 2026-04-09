@@ -1,6 +1,6 @@
 {
   "$schema": "https://raw.githubusercontent.com/nicholascormier/tauri-schema/refs/heads/main/tauri.conf.json.schema",
-  "productName": "daemon",
+  "productName": "Daemon",
   "version": "0.1.0",
   "identifier": "page.daemon.desktop",
   "build": {
@@ -50,6 +50,21 @@
   },
   "plugins": {
     "shell": {
+      "open": true
+    },
+    "notification": {
+      "all": true
+    },
+    "global-shortcut": {
+      "all": true
+    },
+    "autostart": {
+      "args": []
+    },
+    "clipboard-manager": {
+      "all": true
+    },
+    "opener": {
       "open": true
     }
   }

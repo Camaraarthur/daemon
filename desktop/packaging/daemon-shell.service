@@ -1,0 +1,31 @@
+# systemd --user unit for the daemon shell (the GUI tray app).
+#
+# This is DISTINCT from daemon-device.service which runs the headless
+# worker. The shell is GUI-only — it hosts the chat WebView, the tray
+# icon, and the global hotkey. It needs an X11/Wayland display.
+#
+# Install:
+#   cp daemon-shell.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now daemon-shell
+#
+# Per the OS-research synthesis: never run the GUI shell as a system
+# service. User-session only. Crashing the shell must NOT affect the
+# headless worker.
+
+[Unit]
+Description=Daemon Shell — GUI tray + chat window
+After=graphical-session.target
+PartOf=graphical-session.target
+# Don't fight the shell with daemon-device.service — they're independent.
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/daemon-desktop
+Restart=on-failure
+RestartSec=5
+# The shell talks to the relay over WSS; no special caps needed.
+# It does NOT touch /etc, does NOT need root.
+
+[Install]
+WantedBy=graphical-session.target

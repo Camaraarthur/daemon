@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Name=Daemon
+GenericName=Personal AI Agent
+Comment=One AI agent across every device you own
+Exec=daemon-desktop
+Icon=daemon
+Terminal=false
+Categories=Utility;Network;Chat;
+StartupNotify=true
+StartupWMClass=daemon-desktop
+MimeType=x-scheme-handler/daemon;
+Keywords=AI;agent;chat;assistant;
