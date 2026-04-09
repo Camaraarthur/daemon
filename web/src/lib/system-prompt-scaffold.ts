@@ -66,20 +66,56 @@ async function safe<T>(p: Promise<T>, fallback: T): Promise<T> {
   }
 }
 
+// H-4: per-user 60-second cache. The scaffold runs on EVERY chat turn,
+// and each call previously did 3 serial WS round-trips through
+// pickPrimaryDevice → /command. Cap latency at one parallel batch per
+// minute. Mutations (set_secret, schedule, update_memory_block) are
+// expected to call invalidateScaffoldCache(userId) explicitly when v1.5
+// adds the wiring; until then a 60s stale window is acceptable.
+const CACHE_TTL_MS = 60_000
+const _cache = new Map<string, { at: number; value: string }>()
+
+export function invalidateScaffoldCache(userId: number, projectId?: number | null) {
+  const key = `${userId}:${projectId ?? 'null'}`
+  _cache.delete(key)
+}
+
 /**
  * Build the daemon environment block. Returns an empty string if there's
  * nothing useful to surface (no devices, no project, no secrets, etc.) —
  * the caller can then skip prepending it.
  */
 export async function buildScaffold(opts: ScaffoldOpts): Promise<string> {
+  const cacheKey = `${opts.userId}:${opts.projectId ?? 'null'}`
+  const cached = _cache.get(cacheKey)
+  if (cached && Date.now() - cached.at < CACHE_TTL_MS) {
+    return cached.value
+  }
   const sections: Section[] = []
+
+  // H-4: parallelize the three device round-trips. The previous code
+  // did them serially via three separate `await`s; worst-case 3 ×
+  // (2 s health + 5 s command) = 21 s added to every chat turn.
+  const [blocksResult, secretsResult, schedulesResult] = await Promise.all([
+    opts.projectId
+      ? safe(
+          deviceListBlocks({ userId: opts.userId, projectId: opts.projectId }),
+          { ok: false, blocks: [] as Array<{ label: string; content: string; max_chars: number; updated_at: string }> },
+        )
+      : Promise.resolve({ ok: false, blocks: [] as Array<{ label: string; content: string; max_chars: number; updated_at: string }> }),
+    safe(deviceListSecretsFn({ userId: opts.userId }), {
+      ok: false,
+      secrets: [] as Array<{ name: string; source: 'user' | 'platform'; category: string | null; description: string | null; available: boolean }>,
+    }),
+    safe(deviceListSchedulesFn({ userId: opts.userId }), {
+      ok: false,
+      schedules: [] as ScheduleRow[],
+    }),
+  ])
 
   // ── Memory blocks (device-resident, project-scoped) ────
   if (opts.projectId) {
-    const blocks = await safe(
-      deviceListBlocks({ userId: opts.userId, projectId: opts.projectId }),
-      { ok: false, blocks: [] as Array<{ label: string; content: string; max_chars: number; updated_at: string }> },
-    )
+    const blocks = blocksResult
     if (blocks.ok && blocks.blocks && blocks.blocks.length > 0) {
       const lines = blocks.blocks
         .filter((b) => b.content && b.content.trim().length > 0)
@@ -98,10 +134,7 @@ export async function buildScaffold(opts: ScaffoldOpts): Promise<string> {
   }
 
   // ── Secrets (device vault + platform broker, names only) ──
-  const secrets = await safe(deviceListSecretsFn({ userId: opts.userId }), {
-    ok: false,
-    secrets: [] as Array<{ name: string; source: 'user' | 'platform'; category: string | null; description: string | null; available: boolean }>,
-  })
+  const secrets = secretsResult
   if (secrets.ok && secrets.secrets.length > 0) {
     const userSecrets = secrets.secrets.filter((s) => s.source === 'user')
     const platformSecrets = secrets.secrets.filter((s) => s.source === 'platform')
@@ -123,11 +156,8 @@ export async function buildScaffold(opts: ScaffoldOpts): Promise<string> {
     })
   }
 
-  // ── Schedules (device-resident) ────────────────────────
-  const schedules = await safe(deviceListSchedulesFn({ userId: opts.userId }), {
-    ok: false,
-    schedules: [] as ScheduleRow[],
-  })
+  // ── Schedules (device-resident, fetched in parallel batch above) ──
+  const schedules = schedulesResult
   if (schedules.ok && schedules.schedules.length > 0) {
     const active = schedules.schedules.filter((s) => s.enabled)
     if (active.length > 0) {
@@ -196,11 +226,15 @@ export async function buildScaffold(opts: ScaffoldOpts): Promise<string> {
   for (const s of sorted) {
     const block = `### ${s.title}\n${s.body}\n\n`
     if (used + block.length > TOTAL_CHAR_BUDGET) {
-      // Try a truncated version of the body
+      // Architecture critic finding H-5: account for the TRUNCATED
+      // body length, not the original. Subsequent sections were
+      // budgeted against an inflated `used`, dropping good sections.
       const room = TOTAL_CHAR_BUDGET - used - s.title.length - 10
       if (room < 80) continue
-      kept.push({ ...s, body: truncate(s.body, room) })
-      used += block.length // approximate
+      const truncatedBody = truncate(s.body, room)
+      const truncatedBlock = `### ${s.title}\n${truncatedBody}\n\n`
+      kept.push({ ...s, body: truncatedBody })
+      used += truncatedBlock.length
       continue
     }
     kept.push(s)
@@ -220,5 +254,12 @@ export async function buildScaffold(opts: ScaffoldOpts): Promise<string> {
   for (const s of kept) {
     out += `### ${s.title}\n${s.body}\n\n`
   }
-  return out.trimEnd()
+  out = out.trimEnd()
+  // H-5 final assertion: hard cap at TOTAL_CHAR_BUDGET no matter what.
+  if (out.length > TOTAL_CHAR_BUDGET) {
+    out = out.slice(0, TOTAL_CHAR_BUDGET - 4) + '\n...'
+  }
+  // H-4 cache write
+  _cache.set(cacheKey, { at: Date.now(), value: out })
+  return out
 }

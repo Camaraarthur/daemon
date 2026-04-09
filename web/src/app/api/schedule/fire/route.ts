@@ -18,7 +18,7 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { randomUUID } from 'crypto'
-import {
+import getDb, {
   validateDeviceToken,
   createThread,
   getThread,
@@ -27,15 +27,51 @@ import { runAgentLoopStreaming } from '@/lib/agent-loop-streaming'
 import { StreamingWriter } from '@/lib/streaming-writer'
 import { PROVIDERS } from '@/lib/model-router'
 
+// C-1: fetch the schedule from the device instead of trusting the
+// caller's body. The device daemon has a `schedule.get` WS handler
+// that returns the canonical row by name.
+const WS_SERVER_URL = process.env.WS_SERVER_URL || 'http://localhost:4801'
+
+interface DeviceScheduleRow {
+  name: string
+  cron: string
+  prompt: string
+  thread_id: string | null
+  project_id: number | null
+  enabled: boolean
+}
+
+async function fetchScheduleFromDevice(
+  userId: number,
+  deviceId: string,
+  scheduleName: string,
+): Promise<DeviceScheduleRow | null> {
+  try {
+    const res = await fetch(`${WS_SERVER_URL}/command`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        device_id: deviceId,
+        user_id: String(userId),
+        command: { type: 'schedule.get', name: scheduleName },
+      }),
+      signal: AbortSignal.timeout(5000),
+    })
+    if (!res.ok) return null
+    const data = await res.json()
+    if (!data?.ok || !data?.schedule) return null
+    return data.schedule as DeviceScheduleRow
+  } catch {
+    return null
+  }
+}
+
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
 interface FireBody {
   device_id?: string
   schedule_name?: string
-  prompt?: string
-  thread_id?: string | null
-  project_id?: number | null
 }
 
 function getProviderConfig(tier: 'free' | 'mid') {
@@ -70,42 +106,63 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'invalid json' }, { status: 400 })
   }
   const scheduleName = body.schedule_name?.trim()
-  const prompt = body.prompt?.trim()
-  if (!scheduleName || !prompt) {
+  if (!scheduleName) {
     return NextResponse.json(
-      { error: 'schedule_name and prompt are required' },
+      { error: 'schedule_name is required' },
       { status: 400 },
     )
   }
-  if (prompt.length > 4000) {
-    return NextResponse.json({ error: 'prompt too long (max 4000)' }, { status: 400 })
-  }
-
-  // The device may have sanity-checked deviceId mismatch — log only,
-  // don't reject (the token's deviceId is the source of truth).
   if (body.device_id && body.device_id !== deviceId) {
     console.warn(
       `[schedule/fire] device_id mismatch: token=${deviceId} body=${body.device_id}`,
     )
   }
 
+  // C-1: fetch the canonical schedule row from the device. The body
+  // is no longer trusted to carry prompt / thread_id / project_id.
+  // A token holder can only fire schedules that actually exist in the
+  // user's own device store, with the exact prompt the user authored.
+  const schedule = await fetchScheduleFromDevice(userId, deviceId, scheduleName)
+  if (!schedule) {
+    return NextResponse.json(
+      { error: 'schedule not found on device' },
+      { status: 404 },
+    )
+  }
+  if (!schedule.enabled) {
+    return NextResponse.json(
+      { error: 'schedule is disabled' },
+      { status: 409 },
+    )
+  }
+  const prompt = (schedule.prompt || '').slice(0, 4000)
+  if (!prompt) {
+    return NextResponse.json(
+      { error: 'schedule has empty prompt' },
+      { status: 422 },
+    )
+  }
+
   // ── Resolve / create thread ─────────────────────────────
-  // If the schedule has no thread, create one tagged with the schedule
-  // name. The next firing reuses the same thread, so the user gets a
-  // single ongoing conversation per schedule.
-  let threadId = body.thread_id || null
+  // M-6: validate project ownership before using a body-supplied id.
+  // Now we use the device-canonical project_id, but still check it
+  // belongs to the user.
+  let projectIdForRun: number | null = null
+  if (schedule.project_id) {
+    const owns = getDb()
+      .prepare('SELECT 1 FROM projects WHERE id = ? AND user_id = ?')
+      .get(schedule.project_id, userId)
+    if (owns) projectIdForRun = schedule.project_id
+  }
+  let threadId = schedule.thread_id || null
   if (threadId) {
     const t = getThread(threadId)
-    if (!t || t.user_id !== userId) {
-      // Schedule's thread is gone or doesn't belong to this user — fall
-      // back to creating a fresh one rather than 404'ing.
-      threadId = null
-    }
+    if (!t || t.user_id !== userId) threadId = null
   }
   if (!threadId) {
     const fresh = createThread(
       userId,
-      body.project_id || undefined,
+      projectIdForRun || undefined,
       `[schedule] ${scheduleName}`,
     )
     threadId = fresh.id
@@ -129,7 +186,7 @@ export async function POST(req: NextRequest) {
         sourceSessionId,
         sseSend: () => {}, // no SSE client; events still broadcast + gossip
         userId,
-        projectId: body.project_id || null,
+        projectId: projectIdForRun || null,
       })
 
       // Inject the schedule prompt as a user message via gossip + broadcast
@@ -141,7 +198,7 @@ export async function POST(req: NextRequest) {
         sourceSessionId,
         sseSend: () => {},
         userId,
-        projectId: body.project_id || null,
+        projectId: projectIdForRun || null,
       })
       userMsgWriter.handleEvent({ type: 'token', data: { text: prompt } } as any)
       userMsgWriter.finalize({ content: prompt, model: undefined, toolCalls: [] })
@@ -158,7 +215,7 @@ export async function POST(req: NextRequest) {
         onEvent: writer.handleEvent,
         history: [],
         conversationId: threadId!,
-        projectId: body.project_id || undefined,
+        projectId: projectIdForRun || undefined,
       })
 
       writer.finalize({

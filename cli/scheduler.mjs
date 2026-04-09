@@ -77,28 +77,56 @@ export function parseCron(cron) {
  * Compute the next time after `from` (a Date) at which a cron expression
  * fires. Walks minute-by-minute up to ~366 days ahead before giving up.
  * UTC throughout. Returns a Date.
+ *
+ * Architecture critic finding H-7: implements POSIX day-of-month vs
+ * day-of-week semantics — when EITHER field is "*" we AND, when BOTH
+ * are restricted we OR. The previous version was always-AND, which
+ * silently misfired on schedules like "9am 1st of month OR Mondays".
+ *
+ * We detect "* " by checking whether the parsed set contains the FULL
+ * range for the field (since "*" expands to that). Stash the raw
+ * fields on parseCron output for robustness.
  */
+const FULL_DOM = new Set(Array.from({ length: 31 }, (_, i) => i + 1))
+const FULL_DOW = new Set([0, 1, 2, 3, 4, 5, 6])
+
+function isStarSet(set, full) {
+  if (set.size !== full.size) return false
+  for (const v of full) if (!set.has(v)) return false
+  return true
+}
+
 export function nextRun(cron, from = new Date()) {
   const [mins, hrs, doms, mons, dows] = parseCron(cron)
+  const domIsStar = isStarSet(doms, FULL_DOM)
+  const dowIsStar = isStarSet(dows, FULL_DOW)
+  // POSIX rule: if either dom or dow is *, AND the two restrictions.
+  // If both are restricted, OR them. If both are *, AND (everything matches).
+  const useOr = !domIsStar && !dowIsStar
+
   // Start at the next minute boundary after `from`.
   const t = new Date(from.getTime())
   t.setUTCSeconds(0, 0)
   t.setUTCMinutes(t.getUTCMinutes() + 1)
 
-  const maxIter = 366 * 24 * 60
+  // L-3: cap horizon at 4 years (covers worst-case leap-related crons)
+  // and detect impossible crons (e.g. day 30 of February) up front.
+  const [, , domField, monField] = cron.trim().split(/\s+/)
+  if (monField === '2' && /^([0-9]+)$/.test(domField) && parseInt(domField, 10) > 29) {
+    throw new Error(`cron "${cron}" can never fire (Feb has no day ${domField})`)
+  }
+  const maxIter = 4 * 366 * 24 * 60
   for (let i = 0; i < maxIter; i++) {
-    if (
-      mins.has(t.getUTCMinutes()) &&
-      hrs.has(t.getUTCHours()) &&
-      doms.has(t.getUTCDate()) &&
-      mons.has(t.getUTCMonth() + 1) &&
-      dows.has(t.getUTCDay())
-    ) {
-      return t
-    }
+    const minOk = mins.has(t.getUTCMinutes())
+    const hrOk = hrs.has(t.getUTCHours())
+    const monOk = mons.has(t.getUTCMonth() + 1)
+    const domOk = doms.has(t.getUTCDate())
+    const dowOk = dows.has(t.getUTCDay())
+    const dayMatch = useOr ? (domOk || dowOk) : (domOk && dowOk)
+    if (minOk && hrOk && monOk && dayMatch) return t
     t.setUTCMinutes(t.getUTCMinutes() + 1)
   }
-  throw new Error(`no next run found for cron "${cron}" within 366 days`)
+  throw new Error(`no next run found for cron "${cron}" within 4 years`)
 }
 
 // ── Schedule store API ─────────────────────────────────────

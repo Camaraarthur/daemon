@@ -39,14 +39,23 @@ export async function POST(req: NextRequest) {
       { status: 400 },
     )
   }
-  const sub = upsertPushSubscription({
-    userId,
-    endpoint: body.endpoint,
-    p256dh: body.keys.p256dh,
-    auth: body.keys.auth,
-    userAgent: body.userAgent,
-    platform: body.platform,
-  })
+  let sub
+  try {
+    sub = upsertPushSubscription({
+      userId,
+      endpoint: body.endpoint,
+      p256dh: body.keys.p256dh,
+      auth: body.keys.auth,
+      userAgent: body.userAgent,
+      platform: body.platform,
+    })
+  } catch (e) {
+    // C-2: another user already owns this endpoint
+    return NextResponse.json(
+      { error: e instanceof Error ? e.message : 'subscribe failed' },
+      { status: 409 },
+    )
+  }
   return NextResponse.json({ ok: true, id: sub.id })
 }
 
@@ -64,6 +73,7 @@ export async function DELETE(req: NextRequest) {
   if (!body.endpoint) {
     return NextResponse.json({ error: 'endpoint required' }, { status: 400 })
   }
-  const removed = deletePushSubscription(body.endpoint)
+  // C-2: scope to userId so one user can't delete another's subscription.
+  const removed = deletePushSubscription(body.endpoint, userId)
   return NextResponse.json({ ok: true, removed })
 }

@@ -41,7 +41,14 @@ interface PlatformSecretSpec {
   operatorOnly?: boolean
 }
 
-const OPERATOR_USER_ID = parseInt(process.env.DAEMON_OPERATOR_USER_ID || '3', 10)
+// Architecture critic finding H-8: never default an authorization
+// boundary to a real user id. If DAEMON_OPERATOR_USER_ID is unset,
+// no user is the operator and operator-only secrets are unreachable.
+// Self-hosters set DAEMON_OPERATOR_USER_ID explicitly in their
+// systemd EnvironmentFile.
+const OPERATOR_USER_ID = process.env.DAEMON_OPERATOR_USER_ID
+  ? parseInt(process.env.DAEMON_OPERATOR_USER_ID, 10)
+  : -1
 
 // The catalogue of platform secrets daemon provides. Add to this list
 // when daemon-the-company signs up for a new service. The agent's

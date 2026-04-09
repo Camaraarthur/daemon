@@ -1388,6 +1388,10 @@ async function fireScheduledRun(row) {
     throw new Error('device not paired — no device_token; pair via web UI to enable scheduled runs')
   }
   const url = `${RELAY_HTTP_BASE}/api/schedule/fire`
+  // Architecture critic finding C-1: only send schedule_name. The
+  // relay fetches the canonical schedule row from the device via
+  // schedule.get over WS so a leaked device_token can't fire arbitrary
+  // prompts under spoofed schedule names.
   const res = await fetch(url, {
     method: 'POST',
     headers: {
@@ -1397,9 +1401,6 @@ async function fireScheduledRun(row) {
     body: JSON.stringify({
       device_id: DEVICE_ID,
       schedule_name: row.name,
-      prompt: row.prompt,
-      thread_id: row.thread_id || null,
-      project_id: row.project_id || null,
     }),
   })
   if (!res.ok) {

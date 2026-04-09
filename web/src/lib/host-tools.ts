@@ -27,7 +27,7 @@
  *   - Per-user quotas are v1.5 (architecture critic finding for v1.5).
  */
 
-import { mkdirSync, writeFileSync, readdirSync, statSync, unlinkSync, existsSync, realpathSync, rmSync } from 'fs'
+import { mkdirSync, writeFileSync, readdirSync, statSync, unlinkSync, existsSync, realpathSync } from 'fs'
 import { join, resolve as resolvePath, dirname, sep } from 'path'
 import getDb from './db'
 
@@ -50,7 +50,7 @@ function ensureUserSiteDir(daemonName: string): string {
 
 function safeJoin(siteRoot: string, relPath: string): { ok: true; path: string } | { ok: false; error: string } {
   // Strip leading /, normalize
-  let rel = relPath.replace(/^\/+/, '')
+  const rel = relPath.replace(/^\/+/, '')
   if (!rel) return { ok: false, error: 'path required' }
   // Reject obvious traversal early — realpath catches the rest.
   for (const part of rel.split('/')) {
@@ -60,20 +60,36 @@ function safeJoin(siteRoot: string, relPath: string): { ok: true; path: string }
   }
   const target = resolvePath(siteRoot, rel)
 
-  // realpath the SITE ROOT (it always exists by here) and then
-  // verify the resolved target is under it. Target may not exist
-  // yet (we're about to create it) so we resolve its dirname.
+  // Architecture critic finding H-1: walk up to the nearest existing
+  // ancestor and realpath THAT, not the un-resolved dirname. The
+  // previous code's "parent doesn't exist → trust it" branch was a
+  // hole — a path resolved BENEATH a directory that didn't exist yet
+  // could end up outside the site root once mkdir created the chain.
   const realRoot = realpathSync(siteRoot)
-  let parentReal: string
-  try {
-    parentReal = realpathSync(dirname(target))
-  } catch {
-    // Parent doesn't exist yet — that's fine, we'll mkdir it.
-    // But we need to make sure the un-resolved parent IS under siteRoot
-    // (string compare on the resolved siteRoot).
-    parentReal = dirname(target)
+  let probe = dirname(target)
+  let realProbe: string | null = null
+  // Walk up the parent chain until we find a directory that exists.
+  // The walk is bounded by the resolved path length so it always
+  // terminates.
+  for (let i = 0; i < 64; i++) {
+    if (existsSync(probe)) {
+      try {
+        realProbe = realpathSync(probe)
+      } catch {
+        return { ok: false, error: 'realpath failed' }
+      }
+      break
+    }
+    const parent = dirname(probe)
+    if (parent === probe) break // hit filesystem root
+    probe = parent
   }
-  if (parentReal !== realRoot && !parentReal.startsWith(realRoot + sep)) {
+  if (!realProbe) {
+    return { ok: false, error: 'no existing ancestor' }
+  }
+  // The nearest existing ancestor must be under (or equal to) the
+  // realpathed site root.
+  if (realProbe !== realRoot && !realProbe.startsWith(realRoot + sep)) {
     return { ok: false, error: 'path escapes site root' }
   }
   return { ok: true, path: target }
@@ -235,11 +251,18 @@ export async function executeHostTool(
           return JSON.stringify({ ok: false, error: 'not found' })
         }
         const st = statSync(safe.path)
+        // Architecture critic finding H-6: refuse to delete
+        // directories. The agent must delete files individually so
+        // it can't accidentally nuke an entire subtree by passing
+        // a directory name. v1.5 can add an explicit `recursive:true`
+        // opt-in flag if a use case emerges.
         if (st.isDirectory()) {
-          rmSync(safe.path, { recursive: true, force: true })
-        } else {
-          unlinkSync(safe.path)
+          return JSON.stringify({
+            ok: false,
+            error: 'host_delete refuses directories — list files with host_list and delete each one',
+          })
         }
+        unlinkSync(safe.path)
         return JSON.stringify({ ok: true, path: rawPath })
       }
 

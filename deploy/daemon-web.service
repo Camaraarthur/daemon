@@ -8,6 +8,7 @@ User=arthur
 WorkingDirectory=/home/arthur/daemon/web
 Environment=PORT=4800
 Environment=NODE_ENV=production
+Environment=DAEMON_OPERATOR_USER_ID=3
 Environment=PATH=/home/arthur/.local/bin:/usr/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 Environment=HOME=/home/arthur
 EnvironmentFile=/home/arthur/.secrets/vault.env

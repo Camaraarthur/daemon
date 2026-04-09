@@ -1250,15 +1250,26 @@ export function upsertPushSubscription(opts: {
   userAgent?: string
   platform?: string
 }): PushSubscription {
+  // Architecture critic finding C-2: reject upserts where the existing
+  // row's user_id differs. Otherwise an attacker who learns another
+  // user's push endpoint (trivially exposed in the browser console)
+  // can call subscribe() with that endpoint and silently take over the
+  // subscription.
+  const existing = getDb().prepare(
+    'SELECT user_id FROM push_subscriptions WHERE endpoint = ?'
+  ).get(opts.endpoint) as { user_id: number } | undefined
+  if (existing && existing.user_id !== opts.userId) {
+    throw new Error('endpoint owned by a different user')
+  }
   getDb().prepare(`
     INSERT INTO push_subscriptions (user_id, endpoint, p256dh, auth, user_agent, platform)
     VALUES (?, ?, ?, ?, ?, ?)
     ON CONFLICT(endpoint) DO UPDATE SET
-      user_id = excluded.user_id,
       p256dh = excluded.p256dh,
       auth = excluded.auth,
       user_agent = excluded.user_agent,
       platform = excluded.platform
+    WHERE user_id = excluded.user_id
   `).run(
     opts.userId,
     opts.endpoint,
@@ -1278,7 +1289,21 @@ export function listPushSubscriptions(userId: number): PushSubscription[] {
   ).all(userId) as PushSubscription[]
 }
 
-export function deletePushSubscription(endpoint: string): boolean {
+/**
+ * Delete a push subscription. The internal cleanup path (web-push.ts
+ * dead-subscription removal) calls this without a userId because it
+ * already has the row by endpoint. The user-facing API route at
+ * /api/notifications/subscribe MUST pass userId to scope the delete
+ * (architecture critic finding C-2 — without it, any authenticated
+ * user could delete any other user's subscription by endpoint string).
+ */
+export function deletePushSubscription(endpoint: string, userId?: number): boolean {
+  if (userId !== undefined) {
+    const r = getDb().prepare(
+      'DELETE FROM push_subscriptions WHERE endpoint = ? AND user_id = ?'
+    ).run(endpoint, userId)
+    return r.changes > 0
+  }
   const r = getDb().prepare(
     'DELETE FROM push_subscriptions WHERE endpoint = ?'
   ).run(endpoint)

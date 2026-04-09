@@ -10,7 +10,37 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { readFileSync, existsSync, statSync, realpathSync, mkdirSync } from 'fs'
-import { join, extname, resolve as resolvePath } from 'path'
+import { join, extname, resolve as resolvePath, sep, relative } from 'path'
+import getDb from '@/lib/db'
+
+// H-3: reserved subdomain names that should never resolve to a hosted
+// site even if a user manages to register them. Mirrored from middleware.ts.
+const RESERVED_SUBDOMAINS = new Set([
+  'www', 'api', 'app', 'admin', 'daemon', 'test',
+  'assets', 'static', 'cdn', 'docs', 'help', 'support',
+  '_next', 'private', 'auth', 'login', 'signup', 'me',
+])
+
+// In-memory username → exists cache to avoid hitting the DB on every
+// asset fetch.
+const _usernameCache = new Map<string, { at: number; exists: boolean }>()
+const USERNAME_CACHE_MS = 60_000
+
+function isRegisteredDaemonName(name: string): boolean {
+  if (RESERVED_SUBDOMAINS.has(name)) return false
+  const cached = _usernameCache.get(name)
+  if (cached && Date.now() - cached.at < USERNAME_CACHE_MS) return cached.exists
+  try {
+    const row = getDb()
+      .prepare('SELECT 1 FROM users WHERE daemon_name = ? LIMIT 1')
+      .get(name)
+    const exists = !!row
+    _usernameCache.set(name, { at: Date.now(), exists })
+    return exists
+  } catch {
+    return false
+  }
+}
 
 const DAEMON_ROOT = join(process.cwd(), '..')
 const SITES_DIR = join(DAEMON_ROOT, 'data', 'sites')
@@ -67,6 +97,11 @@ export async function GET(
   if (!/^[a-z0-9_-]+$/.test(username)) {
     return new NextResponse('Not found', { status: 404 })
   }
+  // H-3: must correspond to a real user (not just any directory dropped
+  // into data/sites/), and must not be a reserved subdomain.
+  if (!isRegisteredDaemonName(username)) {
+    return new NextResponse('Not found', { status: 404 })
+  }
 
   // Remaining segments form the file path
   let relPath = pathSegments.slice(1).join('/')
@@ -107,7 +142,15 @@ export async function GET(
     // resolves later, it stays under realSitesRoot.
     realFilePath = resolvePath(filePath)
   }
-  if (realFilePath !== realSitesRoot && !realFilePath.startsWith(realSitesRoot + '/')) {
+  // H-2: use path.relative instead of hardcoded "/" so the check
+  // works on Windows too. If relative() returns an empty string the
+  // file IS the site root (allowed). If it starts with ".." or is
+  // absolute, the file is outside the site root (rejected).
+  const relCheck = relative(realSitesRoot, realFilePath)
+  if (
+    relCheck !== '' &&
+    (relCheck.startsWith('..' + sep) || relCheck === '..' || relCheck.startsWith(sep))
+  ) {
     return new NextResponse('Forbidden', { status: 403 })
   }
 
