@@ -54,6 +54,7 @@ import {
   startScheduler,
   stopScheduler,
 } from './scheduler.mjs'
+import { startOpenServer, stopOpenServer } from './open-server.mjs'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
@@ -1380,6 +1381,11 @@ function connect() {
       fire: fireScheduledRun,
       log: (m) => log(m),
     })
+
+    // Start the loopback /open server (vision.md §4.2) so the chat
+    // UI can render clickable file paths that open locally with the
+    // OS default app. Bound to 127.0.0.1 only.
+    startOpenServer({ log: (m) => log(m) })
   })
 
   ws.on('message', async (data) => {
@@ -1400,6 +1406,7 @@ function connect() {
     isConnected = false
     stopHeartbeat()
     stopScheduler()
+    stopOpenServer()
     scheduleReconnect()
   })
 

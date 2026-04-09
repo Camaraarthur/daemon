@@ -93,6 +93,54 @@ function renderInlineMarkdown(text: string, baseKey: number): (string | React.Re
   return parts
 }
 
+// Vision §4.2 — file-in-chat clickable links. Detect tokens that
+// look like absolute paths (or ~/foo) and render them as buttons that
+// hit the local daemon device's loopback /open endpoint.
+//
+// We accept a path-like token if it:
+//   - starts with "/" or "~/"
+//   - has at least 2 path segments
+//   - contains no whitespace, no shell metacharacters (>, |, &, ;)
+//   - is between 6 and 400 characters
+const PATH_TOKEN_RE = /^(?:~\/|\/)[A-Za-z0-9._\-/+@%~]{4,398}$/
+const LOOPBACK_OPEN_URL = 'http://127.0.0.1:4810/open'
+
+function looksLikePath(s: string): boolean {
+  if (!s || s.length < 6 || s.length > 400) return false
+  if (!PATH_TOKEN_RE.test(s)) return false
+  // Must contain at least 2 slashes (so "/etc" alone doesn't match,
+  // but /etc/hosts does)
+  let slashes = 0
+  for (let i = 0; i < s.length; i++) if (s[i] === '/') slashes++
+  return slashes >= 2
+}
+
+function PathButton({ path, label }: { path: string; label?: string }): React.ReactElement {
+  const display = label || (path.length > 60 ? '...' + path.slice(-57) : path)
+  const href = `${LOOPBACK_OPEN_URL}?path=${encodeURIComponent(path)}`
+  return (
+    <a
+      href={href}
+      onClick={(e) => {
+        e.preventDefault()
+        // Fire-and-forget: hit the loopback, ignore CORS/network errors
+        // (they happen when the user is browsing from a different
+        // machine than where the daemon device runs).
+        fetch(href, { mode: 'cors' }).catch(() => {
+          // Fall back to copying the path to clipboard so the user
+          // can paste it into a terminal.
+          if (navigator.clipboard) navigator.clipboard.writeText(path).catch(() => {})
+        })
+      }}
+      className="inline-flex items-center gap-1 px-2 py-0.5 bg-[#1a1a1a] hover:bg-[#2a2a2a] border border-[#2a2a2a] hover:border-[#ff4a00] rounded text-[#ff8c5a] hover:text-[#ff4a00] text-[12px] font-mono transition-colors no-underline"
+      title={`Open ${path} (locally on your daemon device)`}
+    >
+      <span style={{ fontSize: '10px' }}>📂</span>
+      {display}
+    </a>
+  )
+}
+
 function renderInlineText(text: string): (string | React.ReactElement)[] {
   const parts: (string | React.ReactElement)[] = []
   let key = 0
@@ -109,12 +157,18 @@ function renderInlineText(text: string): (string | React.ReactElement)[] {
 
     const token = match[0]
     if (token.startsWith('`') && token.endsWith('`')) {
-      // Inline code
-      parts.push(
-        <code key={`ic-${key++}`} className="px-1 py-0.5 bg-[#1a1a1a] rounded text-[#e8a0bf] text-[12px] font-mono">
-          {token.slice(1, -1)}
-        </code>
-      )
+      // Inline code — but if the contents look like a file path,
+      // promote to a clickable PathButton instead.
+      const inner = token.slice(1, -1)
+      if (looksLikePath(inner)) {
+        parts.push(<PathButton key={`pb-${key++}`} path={inner} />)
+      } else {
+        parts.push(
+          <code key={`ic-${key++}`} className="px-1 py-0.5 bg-[#1a1a1a] rounded text-[#e8a0bf] text-[12px] font-mono">
+            {inner}
+          </code>
+        )
+      }
     } else if (token.startsWith('**') && token.endsWith('**')) {
       parts.push(<strong key={`b-${key++}`} className="text-white font-semibold">{token.slice(2, -2)}</strong>)
     } else if (token.startsWith('*') && token.endsWith('*')) {
