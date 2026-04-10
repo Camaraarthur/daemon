@@ -42,6 +42,7 @@ import {
   getProject,
   type ChatMessage,
 } from './db'
+import { gossipChatMessage } from './ws-broadcast'
 
 const CLAUDE_PROJECTS_ROOT = path.join(process.env.HOME || '/home/arthur', '.claude', 'projects')
 const CLAUDE_VERSION = '2.1.90' // matches the format we read from
@@ -475,6 +476,7 @@ export function syncProjectFromBoundSession(
   projectId: number,
   threadId: string,
   sessionId: string,
+  userId?: number,
 ): number {
   const jsonlPath = findJsonlForSessionId(sessionId)
   if (!jsonlPath) return 0
@@ -513,14 +515,33 @@ export function syncProjectFromBoundSession(
       continue
     }
     const model = e.type === 'assistant' ? (e.message?.model as string | undefined) : undefined
+    const createdAt = e.timestamp ? jsonlTimestampToSqlite(e.timestamp) : undefined
     try {
-      addMessage(threadId, {
+      const saved = addMessage(threadId, {
         role,
         content: text,
         model: model || undefined,
         source_session_id: sessionId,
-        created_at: e.timestamp ? jsonlTimestampToSqlite(e.timestamp) : undefined,
+        created_at: createdAt,
       })
+      // The Claude Code sync writes to the relay's DB via addMessage,
+      // but the messages API reads from the DEVICE (Step 8). Without
+      // gossiping, these messages are orphaned on the relay and the
+      // user sees "no conversation history." Gossip each imported
+      // message so it lands in ~/.daemon/store.db on the device.
+      if (userId && saved) {
+        gossipChatMessage(userId, {
+          id: saved.id,
+          thread_id: threadId,
+          role,
+          content: text,
+          model: model || null,
+          created_at: createdAt || new Date().toISOString().replace('T', ' ').slice(0, 19),
+          source_session_id: sessionId,
+          complete: true,
+          project_id: projectId,
+        })
+      }
       seen.add(key)
       imported++
     } catch {}
@@ -564,6 +585,7 @@ export function syncBoundProject(
   projectId: number,
   threadId: string,
   localPath: string | null,
+  userId?: number,
 ): { sessionId: string | null; imported: number } {
   let link = getClaudeCodeLink(projectId)
   let sessionId = link?.enabled ? link.active_session_id : null
@@ -576,7 +598,7 @@ export function syncBoundProject(
 
   if (!sessionId) return { sessionId: null, imported: 0 }
 
-  const imported = syncProjectFromBoundSession(projectId, threadId, sessionId)
+  const imported = syncProjectFromBoundSession(projectId, threadId, sessionId, userId)
   return { sessionId, imported }
 }
 

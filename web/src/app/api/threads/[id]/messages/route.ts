@@ -44,7 +44,7 @@ export async function GET(
   if (thread.project_id) {
     try {
       const proj = getProject(userId, thread.project_id)
-      const result = syncBoundProject(thread.project_id, id, proj?.local_path || null)
+      const result = syncBoundProject(thread.project_id, id, proj?.local_path || null, userId)
       boundSessionId = result.sessionId
     } catch (e) {
       console.warn('[claude-sync] pull-on-read failed:', e)
