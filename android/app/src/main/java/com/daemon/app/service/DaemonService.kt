@@ -115,6 +115,13 @@ class DaemonService : Service() {
         setupNetworkListener()
         acquireWakeLock()
         setupSshKeepalive()
+        // If we already have a device_token, mint a session cookie for
+        // HTTP routes (chat, voice/command, …). Non-blocking.
+        scope.launch {
+            if (TokenStore.loadDeviceToken(this@DaemonService) != null) {
+                RelayHttpClient.getOrExchangeSessionToken(this@DaemonService)
+            }
+        }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {

@@ -21,7 +21,8 @@ ${code}
 
 // POST /api/auth — signup or login
 export async function POST(req: NextRequest) {
-  const { action, email, password, daemon_name, credential, google_email } = await req.json()
+  const body = await req.json().catch(() => ({}))
+  const { action, email, password, daemon_name, credential, google_email } = body
 
   if (action === 'signup') {
     if (!email || !password || !daemon_name) {
@@ -174,7 +175,7 @@ print(json.dumps({"token": token, "daemon_name": row["daemon_name"], "email": ro
   // Native auth should NEVER require OAuth in an embedded webview
   // (Google blocks it) or a password the user never set.
   if (action === 'device_token_exchange') {
-    const { device_token } = await req.json().catch(() => ({ device_token: null }))
+    const device_token: string | null = body?.device_token ?? null
     // Pull device_token from body OR Authorization header (Bearer)
     const authHeader = req.headers.get('authorization') || ''
     const bearer = authHeader.match(/^Bearer\s+(.+)$/i)?.[1]
