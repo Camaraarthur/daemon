@@ -89,6 +89,8 @@ object WsDispatcher {
             "bluetooth_scan" -> CommandExecutor.bluetoothScan(ctx)
             "esp32_command" -> CommandExecutor.esp32Command(args)
             "esp32_scan" -> CommandExecutor.esp32ScanAndCommand(args)
+            "open_app" -> CommandExecutor.openApp(ctx, args)
+            "send_whatsapp" -> CommandExecutor.sendWhatsApp(ctx, args)
 
             else -> JSONObject().apply {
                 put("ok", false)
@@ -109,7 +111,7 @@ object WsDispatcher {
      * what's available without having to probe.
      */
     fun toolList(): List<JSONObject> {
-        val tools = listOf(
+        val simple = listOf(
             "bash" to "Execute a shell command. Returns stdout, stderr, exit_code.",
             "read_file" to "Read the contents of a file under the user's storage.",
             "list_files" to "List files in a directory.",
@@ -121,7 +123,7 @@ object WsDispatcher {
             "send_notification" to "Show a system notification.",
             "bluetooth_scan" to "Scan for nearby Bluetooth LE devices.",
         )
-        return tools.map { (name, desc) ->
+        val simpleTools = simple.map { (name, desc) ->
             JSONObject().apply {
                 put("name", name)
                 put("description", desc)
@@ -131,5 +133,42 @@ object WsDispatcher {
                 })
             }
         }
+
+        // Tools with explicit schemas
+        val openAppTool = JSONObject().apply {
+            put("name", "open_app")
+            put("description", "Launch an installed Android app by its package name (e.g. com.android.chrome).")
+            put("inputSchema", JSONObject().apply {
+                put("type", "object")
+                put("properties", JSONObject().apply {
+                    put("package_name", JSONObject().apply {
+                        put("type", "string")
+                        put("description", "Android package name, e.g. com.android.chrome")
+                    })
+                })
+                put("required", org.json.JSONArray().apply { put("package_name") })
+            })
+        }
+
+        val sendWhatsAppTool = JSONObject().apply {
+            put("name", "send_whatsapp")
+            put("description", "Open WhatsApp with a prefilled message via wa.me deep link. User still has to tap send (autosend would require an accessibility service).")
+            put("inputSchema", JSONObject().apply {
+                put("type", "object")
+                put("properties", JSONObject().apply {
+                    put("phone", JSONObject().apply {
+                        put("type", "string")
+                        put("description", "Phone number in E.164 format without the leading + (e.g. 31612345678)")
+                    })
+                    put("message", JSONObject().apply {
+                        put("type", "string")
+                        put("description", "Message text to prefill into WhatsApp")
+                    })
+                })
+                put("required", org.json.JSONArray().apply { put("phone"); put("message") })
+            })
+        }
+
+        return simpleTools + listOf(openAppTool, sendWhatsAppTool)
     }
 }

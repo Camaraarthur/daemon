@@ -522,6 +522,8 @@ class DaemonService : Service() {
                     "setup_ssh" -> setupSshConfig()
                     "esp32_command" -> CommandExecutor.esp32Command(cmd)
                     "esp32_scan" -> CommandExecutor.esp32ScanAndCommand(cmd)
+                    "open_app" -> CommandExecutor.openApp(this@DaemonService, cmd)
+                    "send_whatsapp" -> CommandExecutor.sendWhatsApp(this@DaemonService, cmd)
                     "connectivity_check" -> getConnectivityStatus()
                     "ping" -> JSONObject().apply {
                         put("status", "alive")

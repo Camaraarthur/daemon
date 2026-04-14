@@ -3,6 +3,7 @@ package com.daemon.app.service
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.net.Uri
 import android.graphics.ImageFormat
 import android.hardware.camera2.CameraCaptureSession
 import android.hardware.camera2.CameraCharacteristics
@@ -28,6 +29,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.io.ByteArrayOutputStream
 import java.io.File
+import java.net.URLEncoder
 import kotlinx.coroutines.withTimeout
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
@@ -479,6 +481,87 @@ object CommandExecutor {
             }
         } catch (e: Exception) {
             JSONObject().put("error", "ESP32 at $ip:$port — ${e.message}")
+        }
+    }
+
+    /**
+     * Launch another installed app by its package name.
+     * Returns {ok:true, package:...} on success, {ok:false, error:"not installed"} if
+     * no launch intent is registered for that package.
+     */
+    fun openApp(context: Context, cmd: JSONObject): JSONObject {
+        val packageName = cmd.optString("package_name", "")
+        if (packageName.isBlank()) {
+            Log.w("CommandExecutor", "openApp called with blank package_name")
+            return JSONObject().apply {
+                put("ok", false)
+                put("error", "package_name is required")
+            }
+        }
+        return try {
+            val intent = context.packageManager.getLaunchIntentForPackage(packageName)
+            if (intent == null) {
+                Log.w("CommandExecutor", "openApp: no launch intent for $packageName")
+                JSONObject().apply {
+                    put("ok", false)
+                    put("error", "not installed")
+                    put("package", packageName)
+                }
+            } else {
+                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                context.startActivity(intent)
+                Log.i("CommandExecutor", "openApp launched $packageName")
+                JSONObject().apply {
+                    put("ok", true)
+                    put("package", packageName)
+                }
+            }
+        } catch (e: Exception) {
+            Log.e("CommandExecutor", "openApp failed for $packageName", e)
+            JSONObject().apply {
+                put("ok", false)
+                put("error", e.message ?: "unknown error")
+                put("package", packageName)
+            }
+        }
+    }
+
+    /**
+     * Open WhatsApp with a prefilled message using the wa.me deep link.
+     * NOTE: this OPENS WhatsApp with the message pre-filled — the user still
+     * has to tap send. Full autosend would require an accessibility service.
+     */
+    fun sendWhatsApp(context: Context, cmd: JSONObject): JSONObject {
+        val phone = cmd.optString("phone", "")
+        val message = cmd.optString("message", "")
+        if (phone.isBlank()) {
+            Log.w("CommandExecutor", "sendWhatsApp called with blank phone")
+            return JSONObject().apply {
+                put("ok", false)
+                put("error", "phone is required (E.164 without +)")
+            }
+        }
+        return try {
+            val encoded = URLEncoder.encode(message, "UTF-8")
+            val uri = Uri.parse("https://wa.me/${phone}?text=${encoded}")
+            val intent = Intent(Intent.ACTION_VIEW, uri).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            context.startActivity(intent)
+            Log.i("CommandExecutor", "sendWhatsApp opened chat for $phone (msg len=${message.length})")
+            JSONObject().apply {
+                put("ok", true)
+                put("phone", phone)
+                put("prefilled", true)
+                put("note", "WhatsApp opened with prefilled message; user must tap send")
+            }
+        } catch (e: Exception) {
+            Log.e("CommandExecutor", "sendWhatsApp failed for $phone", e)
+            JSONObject().apply {
+                put("ok", false)
+                put("error", e.message ?: "unknown error")
+                put("phone", phone)
+            }
         }
     }
 
