@@ -37,6 +37,10 @@ dirs = "5"
 # Secure token storage — Secret Service on Linux, Keychain on macOS,
 # Credential Manager on Windows. Single API across all three.
 keyring = "3"
+# HTTPS client for the device_token → session cookie exchange
+# (auth.rs). rustls-tls avoids the native-tls/OpenSSL dependency
+# tree on Windows and keeps the build self-contained.
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

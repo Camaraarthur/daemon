@@ -2,6 +2,9 @@ import { NextRequest, NextResponse } from 'next/server'
 import { execFile } from 'child_process'
 import { promisify } from 'util'
 import { join } from 'path'
+import { validateDeviceToken } from '@/lib/db'
+import getDb from '@/lib/db'
+import { randomBytes } from 'crypto'
 
 const execFileAsync = promisify(execFile)
 const DAEMON_ROOT = join(process.cwd(), '..')
@@ -161,6 +164,55 @@ print(json.dumps({"token": token, "daemon_name": row["daemon_name"], "email": ro
         domain: '.daemon.page', path: '/',
       })
     }
+    return response
+  }
+
+  // Exchange a device_token for a session cookie. Native apps (Tauri
+  // desktop, iOS, Android) already paired with the relay have a
+  // device_token in ~/.daemon/config.json — they call this at startup
+  // to get an authenticated session without any Google/password login.
+  // Native auth should NEVER require OAuth in an embedded webview
+  // (Google blocks it) or a password the user never set.
+  if (action === 'device_token_exchange') {
+    const { device_token } = await req.json().catch(() => ({ device_token: null }))
+    // Pull device_token from body OR Authorization header (Bearer)
+    const authHeader = req.headers.get('authorization') || ''
+    const bearer = authHeader.match(/^Bearer\s+(.+)$/i)?.[1]
+    const token = device_token || bearer
+    if (!token) {
+      return NextResponse.json({ error: 'device_token required' }, { status: 400 })
+    }
+    const tokenInfo = validateDeviceToken(token)
+    if (!tokenInfo) {
+      return NextResponse.json({ error: 'invalid device_token' }, { status: 401 })
+    }
+    // Look up user metadata via the relay's own DB (no Python subprocess)
+    const user = getDb()
+      .prepare('SELECT id, email, daemon_name FROM users WHERE id = ?')
+      .get(tokenInfo.userId) as { id: number; email: string; daemon_name: string } | undefined
+    if (!user) {
+      return NextResponse.json({ error: 'user not found' }, { status: 404 })
+    }
+    // Mint a session token (same shape as sessions produced by login)
+    const sessionToken = randomBytes(32).toString('hex')
+    const now = new Date().toISOString()
+    getDb()
+      .prepare('INSERT INTO sessions (token, user_id, created_at) VALUES (?, ?, ?)')
+      .run(sessionToken, user.id, now)
+    const response = NextResponse.json({
+      ok: true,
+      token: sessionToken,
+      daemon_name: user.daemon_name,
+      email: user.email,
+    })
+    response.cookies.set('daemon_token', sessionToken, {
+      httpOnly: true,
+      secure: true,
+      sameSite: 'lax',
+      maxAge: 30 * 24 * 3600,
+      domain: '.daemon.page',
+      path: '/',
+    })
     return response
   }
 
