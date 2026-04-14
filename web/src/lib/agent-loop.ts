@@ -45,6 +45,7 @@ import {
   executeTransferTool,
 } from './transfer-tools'
 import { CANVAS_TOOLS, isCanvasTool, executeCanvasTool } from './canvas-tools'
+import { PAGE_TOOLS, isPageTool, executePageTool } from './page-tools'
 import { buildScaffold } from './system-prompt-scaffold'
 import { listPushSubscriptions } from './db'
 
@@ -266,8 +267,8 @@ export async function runAgentLoop(opts: {
   // Tool surface = device tools + memory tools (when project context exists)
   // + secrets / schedule / notify / host / transfer tools (always)
   const allTools = projectId
-    ? [...deviceToolDefs, ...MEMORY_TOOLS, ...SECRETS_TOOLS, ...SCHEDULE_TOOLS, ...NOTIFY_TOOLS, ...HOST_TOOLS, ...TRANSFER_TOOLS, ...CANVAS_TOOLS]
-    : [...deviceToolDefs, ...SECRETS_TOOLS, ...SCHEDULE_TOOLS, ...NOTIFY_TOOLS, ...HOST_TOOLS, ...TRANSFER_TOOLS, ...CANVAS_TOOLS]
+    ? [...deviceToolDefs, ...MEMORY_TOOLS, ...SECRETS_TOOLS, ...SCHEDULE_TOOLS, ...NOTIFY_TOOLS, ...HOST_TOOLS, ...TRANSFER_TOOLS, ...CANVAS_TOOLS, ...PAGE_TOOLS]
+    : [...deviceToolDefs, ...SECRETS_TOOLS, ...SCHEDULE_TOOLS, ...NOTIFY_TOOLS, ...HOST_TOOLS, ...TRANSFER_TOOLS, ...CANVAS_TOOLS, ...PAGE_TOOLS]
 
   // Plan/Act separation: first iteration plans, subsequent iterations execute
   const planPrefix = `## Instructions
@@ -406,6 +407,13 @@ If a lint error is reported after writing a file, fix it before moving on.
           args as Record<string, any>,
           userId,
         )
+        return { tc, args, result }
+      }
+      // Page tool? Mutate page.json + re-render index.html under data/sites/<daemon_name>/.
+      if (isPageTool(tc.function.name)) {
+        const result = await executePageTool(tc.function.name, args, {
+          userId: parseInt(userId, 10) || 0,
+        })
         return { tc, args, result }
       }
       // Phase 6 — device_send_file: orchestrate read on src + write on dst.

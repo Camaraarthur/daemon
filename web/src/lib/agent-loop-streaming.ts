@@ -41,6 +41,7 @@ import {
   executeTransferTool,
 } from './transfer-tools'
 import { CANVAS_TOOLS, isCanvasTool, executeCanvasTool } from './canvas-tools'
+import { PAGE_TOOLS, isPageTool, executePageTool } from './page-tools'
 import { buildScaffold } from './system-prompt-scaffold'
 import { listPushSubscriptions } from './db'
 
@@ -180,8 +181,8 @@ export async function runAgentLoopStreaming(opts: {
   // Tool surface = device tools + memory tools (when project context exists)
   // + secrets / schedule / notify / host / transfer tools (always)
   const tools = projectId
-    ? [...deviceToolDefs, ...MEMORY_TOOLS, ...SECRETS_TOOLS, ...SCHEDULE_TOOLS, ...NOTIFY_TOOLS, ...HOST_TOOLS, ...TRANSFER_TOOLS, ...CANVAS_TOOLS]
-    : [...deviceToolDefs, ...SECRETS_TOOLS, ...SCHEDULE_TOOLS, ...NOTIFY_TOOLS, ...HOST_TOOLS, ...TRANSFER_TOOLS, ...CANVAS_TOOLS]
+    ? [...deviceToolDefs, ...MEMORY_TOOLS, ...SECRETS_TOOLS, ...SCHEDULE_TOOLS, ...NOTIFY_TOOLS, ...HOST_TOOLS, ...TRANSFER_TOOLS, ...CANVAS_TOOLS, ...PAGE_TOOLS]
+    : [...deviceToolDefs, ...SECRETS_TOOLS, ...SCHEDULE_TOOLS, ...NOTIFY_TOOLS, ...HOST_TOOLS, ...TRANSFER_TOOLS, ...CANVAS_TOOLS, ...PAGE_TOOLS]
 
   // Inject device context into the system prompt
   let enrichedSystemPrompt = systemPrompt
@@ -299,6 +300,16 @@ export async function runAgentLoopStreaming(opts: {
         args as Record<string, any>,
         userId,
       )
+      onEvent({ type: 'tool_result', data: { id: tc.id, name: tc.function.name, output: result } })
+      return { tc, args, result }
+    }
+
+    // Page tool — mutate page.json + re-render index.html for the user's site.
+    if (isPageTool(tc.function.name)) {
+      onEvent({ type: 'tool_call', data: { id: tc.id, name: tc.function.name, args } })
+      const result = await executePageTool(tc.function.name, args, {
+        userId: parseInt(userId, 10) || 0,
+      })
       onEvent({ type: 'tool_result', data: { id: tc.id, name: tc.function.name, output: result } })
       return { tc, args, result }
     }
