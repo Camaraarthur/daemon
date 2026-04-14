@@ -444,13 +444,22 @@ export function getProjectByName(userId: number, name: string): Project | undefi
 }
 
 export function createProject(userId: number, data: Partial<Project>): Project {
+  // UX: auto-slugged projects ("untitled-xxxxxx") leave display_name
+  // NULL so the sidebar renders "Untitled" until rename / auto-title.
+  // Only copy name→display_name for real human-chosen names.
+  const isAutoSlug = typeof data.name === 'string' && data.name.startsWith('untitled-')
+  const displayName = data.display_name
+    ? data.display_name
+    : isAutoSlug
+      ? null
+      : data.name
   const result = getDb().prepare(`
     INSERT INTO projects (user_id, name, display_name, local_path, git_remote, git_branch, stack, domain, service_name, settings)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     userId,
     data.name!,
-    data.display_name || data.name,
+    displayName,
     data.local_path || null,
     data.git_remote || null,
     data.git_branch || 'develop',

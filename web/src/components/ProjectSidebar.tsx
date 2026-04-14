@@ -3,6 +3,23 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useProjectsStore, Project, Thread } from '@/store/projects'
 
+/**
+ * Resolve the human-visible project label. Projects can be created
+ * without a name (UX: click "+" → immediately ready); in that case
+ * the backend gives them an internal slug like "untitled-abc123".
+ * We show a clean "Untitled" placeholder until the user renames or
+ * auto-titling fills in display_name.
+ */
+function projectLabel(project: Project): string {
+  if (project.display_name && project.display_name.trim()) {
+    return project.display_name
+  }
+  if (project.name && project.name.startsWith('untitled-')) {
+    return 'Untitled'
+  }
+  return project.name || 'Untitled'
+}
+
 function timeAgo(dateStr: string | null): string {
   if (!dateStr) return ''
   const now = Date.now()
@@ -108,7 +125,7 @@ function SubProject({
     >
       <StatusDot project={project} />
       <span className={`text-[11px] truncate flex-1 ${isActive ? 'text-white' : 'text-[#777]'}`}>
-        {project.display_name || project.name}
+        {projectLabel(project)}
       </span>
     </button>
   )
@@ -141,7 +158,9 @@ function ProjectGroup({
 }) {
   const hasChildren = children.length > 0
   const [editing, setEditing] = useState(false)
-  const [editName, setEditName] = useState(project.display_name || project.name)
+  const [editName, setEditName] = useState(
+    projectLabel(project) === 'Untitled' ? '' : projectLabel(project),
+  )
 
   return (
     <div className="mb-0.5">
@@ -180,13 +199,18 @@ function ProjectGroup({
             />
           ) : (
             <span className={`text-xs truncate flex-1 ${isActive ? 'text-white font-medium' : 'text-[#aaa]'}`}>
-              {project.display_name || project.name}
+              {projectLabel(project)}
             </span>
           )}
           {/* Edit pencil — visible on hover */}
           {!editing && (
             <button
-              onClick={(e) => { e.stopPropagation(); setEditName(project.display_name || project.name); setEditing(true) }}
+              onClick={(e) => {
+                e.stopPropagation()
+                const current = projectLabel(project)
+                setEditName(current === 'Untitled' ? '' : current)
+                setEditing(true)
+              }}
               className="opacity-0 group-hover:opacity-100 text-[#444] hover:text-[#888] transition-all shrink-0"
               title="Rename"
             >
@@ -414,7 +438,9 @@ export default function ProjectSidebar({
     createProject: storeCreateProject,
   } = useProjectsStore()
 
-  const [showNewProject, setShowNewProject] = useState(false)
+  // showNewProject / NewProjectForm removed — new projects are now
+  // created in one click with an auto-generated name. The form
+  // function is kept further up for future rename UI.
 
   useEffect(() => {
     fetchProjects()
@@ -501,7 +527,17 @@ export default function ProjectSidebar({
         <span className="text-[10px] font-semibold text-[#555] uppercase tracking-widest">Projects</span>
         <div className="flex items-center gap-2">
           <button
-            onClick={() => setShowNewProject(!showNewProject)}
+            onClick={async () => {
+              // One-click new project. No name prompt — projects are
+              // created with a generated placeholder name and the
+              // display_name fills in over the first few messages via
+              // auto-titling. Rename manually anytime by clicking the
+              // project name in the sidebar.
+              const created = await storeCreateProject('', undefined)
+              if (created) {
+                handleSelectProject(created.id)
+              }
+            }}
             className="text-[#555] hover:text-[#ff0505] transition-colors"
             title="New project"
           >
@@ -520,14 +556,6 @@ export default function ProjectSidebar({
           )}
         </div>
       </div>
-
-      {/* New project form */}
-      {showNewProject && (
-        <NewProjectForm
-          onCreated={() => setShowNewProject(false)}
-          onCreate={storeCreateProject}
-        />
-      )}
 
       {/* Project list */}
       <div className="flex-1 overflow-y-auto p-2">

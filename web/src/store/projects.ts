@@ -166,10 +166,18 @@ export const useProjectsStore = create<ProjectsState>((set, get) => ({
 
   createProject: async (name: string, path?: string) => {
     try {
+      // Allow empty name — the server auto-generates a placeholder.
+      // display_name stays null so the UI shows "Untitled" until the
+      // user renames (or until auto-title fills it in).
+      const body: Record<string, unknown> = { local_path: path || null }
+      if (name && name.trim()) {
+        body.name = name.trim()
+        body.display_name = name.trim()
+      }
       const res = await fetch('/api/projects', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, display_name: name, local_path: path || null }),
+        body: JSON.stringify(body),
       })
       const data = await res.json()
       if (data.project) {
