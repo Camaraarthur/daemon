@@ -1,48 +1,91 @@
 import { NextRequest } from 'next/server'
+import { getUserId } from '@/lib/auth'
 
-// In-memory stream state — the daemon writes to this, SSE clients read from it
-// This is a simple pub/sub in the server process
-const listeners: Set<(data: string) => void> = new Set()
-let lastEvent: string = JSON.stringify({ type: 'idle' })
+// Per-user in-memory pub/sub.
+// The daemon / agent tools push events scoped to a userId; canvas SSE clients
+// only receive events for their own userId. Unauthenticated callers get an
+// empty (heartbeat-only) stream so the public /canvas page doesn't 401 on
+// first paint.
+//
+// Event types emitted here: sensor, camera, text, html, card, clear, idle.
+// (sensor/camera retained for pre-existing tools — do not break.)
 
-export function pushEvent(data: any) {
+type Listener = (data: string) => void
+
+// userId → Set<Listener>
+const listenersByUser: Map<number, Set<Listener>> = new Map()
+// userId → last event JSON (for immediate replay on subscribe)
+const lastEventByUser: Map<number, string> = new Map()
+
+const IDLE_EVENT = JSON.stringify({ type: 'idle' })
+
+export function pushEvent(userId: number, data: any) {
   const json = JSON.stringify(data)
-  lastEvent = json
-  listeners.forEach(fn => fn(json))
+  lastEventByUser.set(userId, json)
+  const set = listenersByUser.get(userId)
+  if (!set) return
+  for (const fn of set) {
+    try { fn(json) } catch { /* listener disconnected — cleanup in GET */ }
+  }
 }
 
-// Make pushEvent available globally for other API routes to call
+// Expose globally so other modules (agent tools) can push without importing
+// this route file (which would pull Next server types into non-route code).
 ;(globalThis as any).__daemonStreamPush = pushEvent
 
 export async function GET(req: NextRequest) {
-  // No auth required for the canvas — it's embedded in the public page
-  // But it only shows what the daemon explicitly pushes (no sensitive data)
+  // Resolve userId from session cookie. If there is no valid session, we still
+  // open an SSE stream (so the /canvas iframe works before login) but it will
+  // only receive heartbeats until/unless the user authenticates.
+  const userId = await getUserId(req).catch(() => null)
 
   const encoder = new TextEncoder()
   const stream = new ReadableStream({
     start(controller) {
-      // Send last known state immediately
-      controller.enqueue(encoder.encode(`data: ${lastEvent}\n\n`))
-
-      const listener = (data: string) => {
-        try {
-          controller.enqueue(encoder.encode(`data: ${data}\n\n`))
-        } catch {
-          listeners.delete(listener)
-        }
+      let closed = false
+      const safeEnqueue = (chunk: Uint8Array) => {
+        if (closed) return
+        try { controller.enqueue(chunk) } catch { closed = true }
       }
-      listeners.add(listener)
+
+      let listener: Listener | null = null
+
+      if (userId != null) {
+        // Send last known state for this user immediately
+        const last = lastEventByUser.get(userId) ?? IDLE_EVENT
+        safeEnqueue(encoder.encode(`data: ${last}\n\n`))
+
+        listener = (data: string) => {
+          safeEnqueue(encoder.encode(`data: ${data}\n\n`))
+        }
+        let set = listenersByUser.get(userId)
+        if (!set) {
+          set = new Set()
+          listenersByUser.set(userId, set)
+        }
+        set.add(listener)
+      } else {
+        // Anonymous — just idle + heartbeats, no partitioned events.
+        safeEnqueue(encoder.encode(`data: ${IDLE_EVENT}\n\n`))
+      }
 
       // Heartbeat every 15s
       const heartbeat = setInterval(() => {
-        try { controller.enqueue(encoder.encode(': heartbeat\n\n')) }
-        catch { clearInterval(heartbeat) }
+        safeEnqueue(encoder.encode(`: heartbeat\n\n`))
       }, 15000)
 
       // Cleanup on close
       req.signal.addEventListener('abort', () => {
-        listeners.delete(listener)
+        closed = true
         clearInterval(heartbeat)
+        if (listener != null && userId != null) {
+          const set = listenersByUser.get(userId)
+          if (set) {
+            set.delete(listener)
+            if (set.size === 0) listenersByUser.delete(userId)
+          }
+        }
+        try { controller.close() } catch {}
       })
     },
   })
@@ -53,6 +96,7 @@ export async function GET(req: NextRequest) {
       'Cache-Control': 'no-cache',
       'Connection': 'keep-alive',
       'Access-Control-Allow-Origin': '*',
+      'X-Accel-Buffering': 'no',
     },
   })
 }

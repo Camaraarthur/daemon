@@ -3,8 +3,19 @@
 import { useEffect, useState, useRef, useCallback } from 'react'
 
 interface CanvasState {
-  type: 'idle' | 'sensor' | 'camera' | 'text' | 'image'
+  type: 'idle' | 'sensor' | 'camera' | 'text' | 'image' | 'html' | 'card'
   data?: any
+}
+
+// Strip <script>, on* handlers, and javascript: urls from agent-supplied HTML.
+// This is intentionally strict — agent output is untrusted.
+function sanitizeHtml(html: string): string {
+  return html
+    .replace(/<script[\s\S]*?<\/script>/gi, '')
+    .replace(/<iframe[\s\S]*?<\/iframe>/gi, '')
+    .replace(/\son[a-z]+\s*=\s*"[^"]*"/gi, '')
+    .replace(/\son[a-z]+\s*=\s*'[^']*'/gi, '')
+    .replace(/javascript:/gi, '')
 }
 
 export default function DaemonCanvas() {
@@ -27,6 +38,10 @@ export default function DaemonCanvas() {
           setState({ type: 'camera', data })
         } else if (data.type === 'text') {
           setState({ type: 'text', data })
+        } else if (data.type === 'html') {
+          setState({ type: 'html', data })
+        } else if (data.type === 'card') {
+          setState({ type: 'card', data })
         } else if (data.type === 'clear') {
           setState({ type: 'idle' })
           sensorHistoryRef.current = []
@@ -198,6 +213,40 @@ export default function DaemonCanvas() {
       {state.type === 'text' && (
         <div className="w-full h-full flex items-center justify-center p-8 text-center">
           <p className="text-white text-2xl font-medium">{state.data?.text}</p>
+        </div>
+      )}
+
+      {state.type === 'html' && (
+        <div
+          className="w-full h-full overflow-auto p-6 text-white"
+          // Agent-supplied HTML; sanitized above. Links are forced to _blank + noopener.
+          ref={(el) => {
+            if (!el) return
+            el.querySelectorAll('a').forEach(a => {
+              a.setAttribute('target', '_blank')
+              a.setAttribute('rel', 'noopener noreferrer')
+            })
+          }}
+          dangerouslySetInnerHTML={{ __html: sanitizeHtml(state.data?.html || '') }}
+        />
+      )}
+
+      {state.type === 'card' && (
+        <div className="w-full h-full flex items-center justify-center p-6">
+          <div className="max-w-md w-full bg-[#141414] border border-[#262626] rounded-2xl p-6 shadow-xl">
+            {state.data?.image_url && (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={state.data.image_url}
+                alt=""
+                className="w-full h-40 object-cover rounded-lg mb-4"
+              />
+            )}
+            <h2 className="text-white text-xl font-semibold mb-2">{state.data?.title}</h2>
+            <p className="text-neutral-300 text-sm leading-relaxed whitespace-pre-wrap">
+              {state.data?.body}
+            </p>
+          </div>
         </div>
       )}
     </div>

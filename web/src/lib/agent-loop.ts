@@ -44,6 +44,7 @@ import {
   TRANSFER_TOOL_NAMES,
   executeTransferTool,
 } from './transfer-tools'
+import { CANVAS_TOOLS, isCanvasTool, executeCanvasTool } from './canvas-tools'
 import { buildScaffold } from './system-prompt-scaffold'
 import { listPushSubscriptions } from './db'
 
@@ -265,8 +266,8 @@ export async function runAgentLoop(opts: {
   // Tool surface = device tools + memory tools (when project context exists)
   // + secrets / schedule / notify / host / transfer tools (always)
   const allTools = projectId
-    ? [...deviceToolDefs, ...MEMORY_TOOLS, ...SECRETS_TOOLS, ...SCHEDULE_TOOLS, ...NOTIFY_TOOLS, ...HOST_TOOLS, ...TRANSFER_TOOLS]
-    : [...deviceToolDefs, ...SECRETS_TOOLS, ...SCHEDULE_TOOLS, ...NOTIFY_TOOLS, ...HOST_TOOLS, ...TRANSFER_TOOLS]
+    ? [...deviceToolDefs, ...MEMORY_TOOLS, ...SECRETS_TOOLS, ...SCHEDULE_TOOLS, ...NOTIFY_TOOLS, ...HOST_TOOLS, ...TRANSFER_TOOLS, ...CANVAS_TOOLS]
+    : [...deviceToolDefs, ...SECRETS_TOOLS, ...SCHEDULE_TOOLS, ...NOTIFY_TOOLS, ...HOST_TOOLS, ...TRANSFER_TOOLS, ...CANVAS_TOOLS]
 
   // Plan/Act separation: first iteration plans, subsequent iterations execute
   const planPrefix = `## Instructions
@@ -396,6 +397,15 @@ If a lint error is reported after writing a file, fix it before moving on.
         const result = await executeHostTool(tc.function.name, args, {
           userId: parseInt(userId, 10) || 0,
         })
+        return { tc, args, result }
+      }
+      // Canvas tool? Push event to per-user SSE stream.
+      if (isCanvasTool(tc.function.name)) {
+        const result = await executeCanvasTool(
+          tc.function.name,
+          args as Record<string, any>,
+          userId,
+        )
         return { tc, args, result }
       }
       // Phase 6 — device_send_file: orchestrate read on src + write on dst.

@@ -40,6 +40,7 @@ import {
   TRANSFER_TOOL_NAMES,
   executeTransferTool,
 } from './transfer-tools'
+import { CANVAS_TOOLS, isCanvasTool, executeCanvasTool } from './canvas-tools'
 import { buildScaffold } from './system-prompt-scaffold'
 import { listPushSubscriptions } from './db'
 
@@ -179,8 +180,8 @@ export async function runAgentLoopStreaming(opts: {
   // Tool surface = device tools + memory tools (when project context exists)
   // + secrets / schedule / notify / host / transfer tools (always)
   const tools = projectId
-    ? [...deviceToolDefs, ...MEMORY_TOOLS, ...SECRETS_TOOLS, ...SCHEDULE_TOOLS, ...NOTIFY_TOOLS, ...HOST_TOOLS, ...TRANSFER_TOOLS]
-    : [...deviceToolDefs, ...SECRETS_TOOLS, ...SCHEDULE_TOOLS, ...NOTIFY_TOOLS, ...HOST_TOOLS, ...TRANSFER_TOOLS]
+    ? [...deviceToolDefs, ...MEMORY_TOOLS, ...SECRETS_TOOLS, ...SCHEDULE_TOOLS, ...NOTIFY_TOOLS, ...HOST_TOOLS, ...TRANSFER_TOOLS, ...CANVAS_TOOLS]
+    : [...deviceToolDefs, ...SECRETS_TOOLS, ...SCHEDULE_TOOLS, ...NOTIFY_TOOLS, ...HOST_TOOLS, ...TRANSFER_TOOLS, ...CANVAS_TOOLS]
 
   // Inject device context into the system prompt
   let enrichedSystemPrompt = systemPrompt
@@ -286,6 +287,18 @@ export async function runAgentLoopStreaming(opts: {
       const result = await executeHostTool(tc.function.name, args, {
         userId: parseInt(userId, 10) || 0,
       })
+      onEvent({ type: 'tool_result', data: { id: tc.id, name: tc.function.name, output: result } })
+      return { tc, args, result }
+    }
+
+    // Canvas tool — push event to per-user SSE stream.
+    if (isCanvasTool(tc.function.name)) {
+      onEvent({ type: 'tool_call', data: { id: tc.id, name: tc.function.name, args } })
+      const result = await executeCanvasTool(
+        tc.function.name,
+        args as Record<string, any>,
+        userId,
+      )
       onEvent({ type: 'tool_result', data: { id: tc.id, name: tc.function.name, output: result } })
       return { tc, args, result }
     }
