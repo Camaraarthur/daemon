@@ -1,11 +1,17 @@
 'use client'
 
-import { useEffect, useState, useRef, useCallback } from 'react'
+import { useEffect, useMemo, useRef, useState, useCallback } from 'react'
+import styles from './canvas.module.css'
 
-interface CanvasState {
-  type: 'idle' | 'sensor' | 'camera' | 'text' | 'image' | 'html' | 'card'
-  data?: any
-}
+type CanvasEvent =
+  | { type: 'idle'; data?: any }
+  | { type: 'clear'; data?: any }
+  | { type: 'text'; data: { text: string; durationMs?: number } }
+  | { type: 'html'; data: { html: string; durationMs?: number } }
+  | { type: 'card'; data: { title: string; body: string; image_url?: string } }
+  | { type: 'image'; data: { url?: string; image_url?: string; caption?: string; title?: string } }
+  | { type: 'camera'; data: { url?: string; image_url?: string; caption?: string; title?: string; ts?: number } }
+  | { type: 'sensor'; data: { distance: number } }
 
 // Strip <script>, on* handlers, and javascript: urls from agent-supplied HTML.
 // This is intentionally strict — agent output is untrusted.
@@ -18,112 +24,129 @@ function sanitizeHtml(html: string): string {
     .replace(/javascript:/gi, '')
 }
 
-export default function DaemonCanvas() {
-  const [state, setState] = useState<CanvasState>({ type: 'idle' })
-  const sensorHistoryRef = useRef<number[]>([])
-  const canvasRef = useRef<HTMLCanvasElement>(null)
-  const idleCanvasRef = useRef<HTMLCanvasElement>(null)
-  const animRef = useRef<number>(0)
+// Font-size hint for plain text: scale with length so short lines are huge
+// and long blocks stay readable. Range ~ 5vw down to 2.2vw.
+function textSize(text: string): string {
+  const len = text.trim().length
+  if (len <= 24) return 'clamp(2.5rem, 7vw, 6rem)'
+  if (len <= 80) return 'clamp(2rem, 5vw, 4rem)'
+  if (len <= 200) return 'clamp(1.5rem, 3.2vw, 2.6rem)'
+  return 'clamp(1.15rem, 2.2vw, 1.8rem)'
+}
 
-  // Connect to SSE for live updates
+function formatTime(ts?: number): string {
+  const d = ts ? new Date(ts) : new Date()
+  return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+}
+
+export default function DaemonCanvas() {
+  const [event, setEvent] = useState<CanvasEvent>({ type: 'idle' })
+  const [daemonName, setDaemonName] = useState<string>('')
+  const [renderKey, setRenderKey] = useState(0) // force re-trigger fade-in on repeat
+
+  // Small FIFO queue so bursts of events don't stomp each other / flicker.
+  const queueRef = useRef<CanvasEvent[]>([])
+  const playingRef = useRef(false)
+  const sensorHistoryRef = useRef<number[]>([])
+  const sensorCanvasRef = useRef<HTMLCanvasElement>(null)
+
+  // Drain queue, one event at a time, with a small gap so the fade can play.
+  const drain = useCallback(() => {
+    if (playingRef.current) return
+    const next = queueRef.current.shift()
+    if (!next) return
+    playingRef.current = true
+    setEvent(next)
+    setRenderKey((k) => k + 1)
+    // Minimum dwell so the fade-in is visible even if events arrive fast.
+    const dwell = next.type === 'sensor' ? 60 : 260
+    window.setTimeout(() => {
+      playingRef.current = false
+      if (queueRef.current.length > 0) drain()
+    }, dwell)
+  }, [])
+
+  const enqueue = useCallback(
+    (ev: CanvasEvent) => {
+      // Sensor events compress — only keep the latest one in queue.
+      if (ev.type === 'sensor') {
+        const q = queueRef.current
+        const last = q[q.length - 1]
+        if (last && last.type === 'sensor') {
+          q[q.length - 1] = ev
+        } else {
+          q.push(ev)
+        }
+      } else {
+        queueRef.current.push(ev)
+      }
+      drain()
+    },
+    [drain],
+  )
+
+  // Connect to SSE
   useEffect(() => {
     const es = new EventSource('/api/stream')
     es.onmessage = (e) => {
       try {
-        const data = JSON.parse(e.data)
-        if (data.type === 'sensor') {
-          sensorHistoryRef.current = [...sensorHistoryRef.current.slice(-120), data.distance]
-          setState({ type: 'sensor', data })
-        } else if (data.type === 'camera') {
-          setState({ type: 'camera', data })
-        } else if (data.type === 'text') {
-          setState({ type: 'text', data })
-        } else if (data.type === 'html') {
-          setState({ type: 'html', data })
-        } else if (data.type === 'card') {
-          setState({ type: 'card', data })
-        } else if (data.type === 'clear') {
-          setState({ type: 'idle' })
+        const data = JSON.parse(e.data) as CanvasEvent
+        if (data.type === 'sensor' && data.data) {
+          sensorHistoryRef.current = [
+            ...sensorHistoryRef.current.slice(-120),
+            (data.data as any).distance,
+          ]
+        }
+        if (data.type === 'clear') {
+          queueRef.current = []
           sensorHistoryRef.current = []
         }
+        enqueue(data)
       } catch {}
     }
     es.onerror = () => {}
     return () => es.close()
+  }, [enqueue])
+
+  // Fetch daemon name (optional, graceful fallback)
+  useEffect(() => {
+    let alive = true
+    fetch('/api/me', { credentials: 'include' })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j) => {
+        if (!alive || !j) return
+        if (typeof j.daemon_name === 'string' && j.daemon_name) {
+          setDaemonName(j.daemon_name)
+        }
+      })
+      .catch(() => {})
+    return () => {
+      alive = false
+    }
   }, [])
 
-  // Idle animation — subtle breathing red dot + waveform
-  const drawIdle = useCallback(() => {
-    const canvas = idleCanvasRef.current
-    if (!canvas) return
-    const ctx = canvas.getContext('2d')
-    if (!ctx) return
-
-    // Resize to container
-    const rect = canvas.parentElement?.getBoundingClientRect()
-    if (rect) {
-      canvas.width = rect.width * devicePixelRatio
-      canvas.height = rect.height * devicePixelRatio
-      ctx.scale(devicePixelRatio, devicePixelRatio)
-    }
-    const w = rect?.width || 600
-    const h = rect?.height || 300
-    const t = Date.now() / 1000
-
-    ctx.fillStyle = '#0a0a0a'
-    ctx.fillRect(0, 0, w, h)
-
-    // Breathing red dot — center
-    const pulse = 0.3 + Math.sin(t * 1.5) * 0.2
-    const radius = 3 + Math.sin(t * 1.5) * 1
-    ctx.beginPath()
-    ctx.arc(w / 2, h / 2, radius, 0, Math.PI * 2)
-    ctx.fillStyle = `rgba(255, 5, 5, ${pulse})`
-    ctx.fill()
-
-    // Soft glow around dot
-    const glow = ctx.createRadialGradient(w / 2, h / 2, 0, w / 2, h / 2, 40)
-    glow.addColorStop(0, `rgba(255, 5, 5, ${pulse * 0.15})`)
-    glow.addColorStop(1, 'rgba(255, 5, 5, 0)')
-    ctx.beginPath()
-    ctx.arc(w / 2, h / 2, 40, 0, Math.PI * 2)
-    ctx.fillStyle = glow
-    ctx.fill()
-
-    animRef.current = requestAnimationFrame(drawIdle)
-  }, [])
-
+  // Sensor graph
   useEffect(() => {
-    if (state.type === 'idle') {
-      animRef.current = requestAnimationFrame(drawIdle)
-      return () => cancelAnimationFrame(animRef.current)
-    }
-  }, [state.type, drawIdle])
-
-  // Draw sensor graph
-  useEffect(() => {
-    if (state.type !== 'sensor' || !canvasRef.current) return
-    const canvas = canvasRef.current
+    if (event.type !== 'sensor' || !sensorCanvasRef.current) return
+    const canvas = sensorCanvasRef.current
     const ctx = canvas.getContext('2d')
     if (!ctx) return
 
     const rect = canvas.parentElement?.getBoundingClientRect()
     if (!rect) return
-    const dpr = devicePixelRatio || 1
+    const dpr = window.devicePixelRatio || 1
     canvas.width = rect.width * dpr
     canvas.height = rect.height * dpr
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
 
     const w = rect.width
     const h = rect.height
-    // Filter out -1 (out of range) for graph, keep only valid readings
     const history = sensorHistoryRef.current
-    const valid = history.filter(v => v > 0)
+    const valid = history.filter((v) => v > 0)
 
-    ctx.fillStyle = '#0a0a0a'
-    ctx.fillRect(0, 0, w, h)
+    ctx.clearRect(0, 0, w, h)
 
-    // Grid lines
+    // Grid
     ctx.strokeStyle = '#1a1a1a'
     ctx.lineWidth = 0.5
     for (let i = 0; i <= 4; i++) {
@@ -131,31 +154,28 @@ export default function DaemonCanvas() {
       ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w, y); ctx.stroke()
     }
 
-    // Draw graph with all values, treating -1 as gaps
     if (history.length >= 2 && valid.length >= 1) {
-      const padding = 60
+      const padding = 72
       const rawMin = Math.min(...valid)
       const rawMax = Math.max(...valid)
       const range = rawMax - rawMin
-      // Add 10% margin above and below, minimum 5cm range
       const margin = Math.max(range * 0.1, 2.5)
       const minVal = Math.max(0, rawMin - margin)
       const maxVal = rawMax + margin
       const valRange = maxVal - minVal || 1
 
-      ctx.strokeStyle = '#ff0505'
+      ctx.strokeStyle = '#7c3aed'
       ctx.lineWidth = 2
       ctx.beginPath()
       let started = false
       for (let i = 0; i < history.length; i++) {
         const x = (i / 120) * w
         if (history[i] <= 0) { started = false; continue }
-        const y = padding + (h - padding - 10) * (1 - (history[i] - minVal) / valRange)
+        const y = padding + (h - padding - 20) * (1 - (history[i] - minVal) / valRange)
         if (!started) { ctx.moveTo(x, y); started = true } else { ctx.lineTo(x, y) }
       }
       ctx.stroke()
 
-      // Fill under curve
       if (started) {
         let lastX = 0
         for (let i = history.length - 1; i >= 0; i--) {
@@ -164,91 +184,142 @@ export default function DaemonCanvas() {
         ctx.lineTo(lastX, h)
         ctx.lineTo(0, h)
         ctx.closePath()
-        ctx.fillStyle = 'rgba(255, 5, 5, 0.06)'
+        ctx.fillStyle = 'rgba(124, 58, 237, 0.10)'
         ctx.fill()
       }
 
-      // Scale labels on right — dynamic to actual data range
-      ctx.fillStyle = '#333'
-      ctx.font = '10px system-ui'
+      ctx.fillStyle = '#525252'
+      ctx.font = '11px var(--font-geist), system-ui'
       ctx.textAlign = 'right'
       for (let i = 0; i <= 4; i++) {
         const val = maxVal - (valRange / 4) * i
-        const y = padding + ((h - padding - 10) / 4) * i
-        ctx.fillText(`${val.toFixed(0)}cm`, w - 8, y + 3)
+        const y = padding + ((h - padding - 20) / 4) * i
+        ctx.fillText(`${val.toFixed(0)} cm`, w - 12, y + 4)
       }
       ctx.textAlign = 'left'
     }
 
-    // Current value — top left, clearly separated
     const current = history[history.length - 1]
     if (current > 0) {
-      ctx.fillStyle = '#ff0505'
-      ctx.font = 'bold 28px system-ui'
-      ctx.fillText(`${current.toFixed(1)} cm`, 14, 34)
-      ctx.fillStyle = '#444'
-      ctx.font = '11px system-ui'
-      ctx.fillText('distance sensor', 14, 50)
+      ctx.fillStyle = '#f5f5f5'
+      ctx.font = '600 36px var(--font-geist), system-ui'
+      ctx.fillText(`${current.toFixed(1)} cm`, 22, 48)
+      ctx.fillStyle = '#a3a3a3'
+      ctx.font = '12px var(--font-geist), system-ui'
+      ctx.fillText('DISTANCE SENSOR', 22, 68)
     } else {
-      ctx.fillStyle = '#333'
-      ctx.font = '14px system-ui'
-      ctx.fillText('sensor: out of range', 14, 34)
+      ctx.fillStyle = '#525252'
+      ctx.font = '14px var(--font-geist), system-ui'
+      ctx.fillText('sensor: out of range', 22, 40)
     }
-  }, [state])
+  }, [event, renderKey])
+
+  const body = useMemo(() => {
+    switch (event.type) {
+      case 'idle':
+      case 'clear':
+        return (
+          <div className={styles.idle}>
+            <div className={styles.breath}>
+              <div className={styles.breathCore} />
+            </div>
+            <div className={styles.idleLabel}>listening</div>
+          </div>
+        )
+
+      case 'text': {
+        const t = (event.data?.text || '').toString()
+        return (
+          <div className={styles.textBox} style={{ fontSize: textSize(t) }}>
+            {t}
+          </div>
+        )
+      }
+
+      case 'card': {
+        const d = event.data || ({} as any)
+        const hasImg = !!d.image_url
+        return (
+          <div className={`${styles.card} ${hasImg ? styles.cardWithImage : ''}`}>
+            <div>
+              <div className={styles.cardAccent}>Daemon</div>
+              <h2 className={styles.cardTitle}>{d.title}</h2>
+              <p className={styles.cardBody}>{d.body}</p>
+            </div>
+            {hasImg && (
+              <div className={styles.cardImageWrap}>
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={d.image_url} alt="" className={styles.cardImage} />
+              </div>
+            )}
+          </div>
+        )
+      }
+
+      case 'html':
+        return (
+          <div
+            className={styles.prose}
+            ref={(el) => {
+              if (!el) return
+              el.querySelectorAll('a').forEach((a) => {
+                a.setAttribute('target', '_blank')
+                a.setAttribute('rel', 'noopener noreferrer')
+              })
+            }}
+            dangerouslySetInnerHTML={{
+              __html: sanitizeHtml((event.data as any)?.html || ''),
+            }}
+          />
+        )
+
+      case 'image':
+      case 'camera': {
+        const d = (event.data || {}) as any
+        const src = d.url || d.image_url
+        if (!src) return null
+        const caption = d.caption || d.title || (event.type === 'camera' ? 'Camera' : 'Image')
+        return (
+          <div className={styles.mediaWrap}>
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src={src} alt={caption} className={styles.media} />
+            <div className={styles.mediaCaption}>
+              <strong>{caption}</strong>
+              <span>{formatTime(d.ts)}</span>
+            </div>
+          </div>
+        )
+      }
+
+      case 'sensor':
+        return (
+          <div className={styles.sensorWrap}>
+            <canvas ref={sensorCanvasRef} className={styles.sensorCanvas} />
+          </div>
+        )
+
+      default:
+        return null
+    }
+  }, [event])
 
   return (
-    <div className="w-full h-full bg-[#0a0a0a] overflow-hidden" style={{ minHeight: '100%' }}>
-      {state.type === 'idle' && (
-        <canvas ref={idleCanvasRef} className="w-full h-full" />
-      )}
-
-      {state.type === 'sensor' && (
-        <canvas ref={canvasRef} className="w-full h-full" />
-      )}
-
-      {state.type === 'camera' && (
-        <img src={state.data?.url} alt="camera" className="w-full h-full object-cover" />
-      )}
-
-      {state.type === 'text' && (
-        <div className="w-full h-full flex items-center justify-center p-8 text-center">
-          <p className="text-white text-2xl font-medium">{state.data?.text}</p>
+    <div className={styles.root}>
+      <div className={styles.stage}>
+        <div key={renderKey} className={styles.frame}>
+          {body}
         </div>
-      )}
+      </div>
 
-      {state.type === 'html' && (
-        <div
-          className="w-full h-full overflow-auto p-6 text-white"
-          // Agent-supplied HTML; sanitized above. Links are forced to _blank + noopener.
-          ref={(el) => {
-            if (!el) return
-            el.querySelectorAll('a').forEach(a => {
-              a.setAttribute('target', '_blank')
-              a.setAttribute('rel', 'noopener noreferrer')
-            })
-          }}
-          dangerouslySetInnerHTML={{ __html: sanitizeHtml(state.data?.html || '') }}
-        />
-      )}
-
-      {state.type === 'card' && (
-        <div className="w-full h-full flex items-center justify-center p-6">
-          <div className="max-w-md w-full bg-[#141414] border border-[#262626] rounded-2xl p-6 shadow-xl">
-            {state.data?.image_url && (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img
-                src={state.data.image_url}
-                alt=""
-                className="w-full h-40 object-cover rounded-lg mb-4"
-              />
-            )}
-            <h2 className="text-white text-xl font-semibold mb-2">{state.data?.title}</h2>
-            <p className="text-neutral-300 text-sm leading-relaxed whitespace-pre-wrap">
-              {state.data?.body}
-            </p>
-          </div>
-        </div>
-      )}
+      <div className={styles.footer}>
+        <span className={styles.live}>
+          <span className={styles.liveDot} />
+          live
+        </span>
+        <span className={styles.name}>
+          {daemonName ? <>daemon <span>/ {daemonName}</span></> : 'daemon'}
+        </span>
+      </div>
     </div>
   )
 }
