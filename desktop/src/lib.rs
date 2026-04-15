@@ -77,7 +77,7 @@ pub fn run() {
         return;
     }
 
-    info!("Launching GUI (main window → https://my.daemon.page/chat)");
+    info!("Launching GUI (main window → https://my.daemon.page/canvas)");
 
     let builder_result = tauri::Builder::default()
         // single_instance MUST be the FIRST plugin — Tauri's own docs.

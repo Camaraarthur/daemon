@@ -21,6 +21,10 @@ use tauri::{AppHandle, Manager};
 #[derive(Deserialize)]
 struct DeviceConfig {
     device_token: Option<String>,
+    // Some paired clients write a pre-minted daemon_token directly as
+    // `session_token` (e.g. the CLI pairing flow on MSI). Use it as-is
+    // and skip the /api/auth exchange when present.
+    session_token: Option<String>,
     server_url: Option<String>,
     relay_url: Option<String>,
 }
@@ -44,6 +48,16 @@ fn read_device_token() -> Option<String> {
     let text = fs::read_to_string(path).ok()?;
     let cfg: DeviceConfig = serde_json::from_str(&text).ok()?;
     cfg.device_token.filter(|s| !s.is_empty())
+}
+
+/// If the config has a pre-minted session_token (daemon_token), return it.
+/// This is the path used by the MSI demo machine: pairing wrote a long-
+/// lived session directly, so we skip the exchange entirely.
+fn read_session_token() -> Option<String> {
+    let path = config_path()?;
+    let text = fs::read_to_string(path).ok()?;
+    let cfg: DeviceConfig = serde_json::from_str(&text).ok()?;
+    cfg.session_token.filter(|s| !s.is_empty())
 }
 
 fn relay_http_base() -> String {
@@ -101,10 +115,18 @@ async fn exchange_device_token_for_session(device_token: &str) -> Result<String,
 /// webview before the chat URL is loaded. Non-blocking: runs in a
 /// tokio task so setup() returns fast.
 pub fn auto_login_if_paired(app: &AppHandle) {
+    // Fast path: if config.json already contains a session_token, use
+    // it directly as the daemon_token cookie — no exchange round-trip.
+    if let Some(session_token) = read_session_token() {
+        info!("[auth] session_token found in config.json — injecting directly");
+        inject_cookie(app, &session_token);
+        return;
+    }
+
     let device_token = match read_device_token() {
         Some(t) => t,
         None => {
-            info!("[auth] no device_token in config.json — user will need to sign in manually");
+            info!("[auth] no device_token or session_token in config.json — user will need to sign in manually");
             return;
         }
     };
@@ -115,20 +137,7 @@ pub fn auto_login_if_paired(app: &AppHandle) {
         match exchange_device_token_for_session(&device_token).await {
             Ok(session_token) => {
                 info!("[auth] session token received, injecting into webview");
-                // Inject the daemon_token cookie via window.eval so the
-                // webview's cookie jar has it before any fetch runs.
-                // Belt-and-braces: also do a fresh reload so the chat
-                // page picks up the new cookie and skips the login
-                // screen.
-                if let Some(window) = app_handle.get_webview_window("main") {
-                    let script = format!(
-                        "document.cookie = 'daemon_token={}; path=/; domain=.daemon.page; secure; samesite=lax; max-age=2592000'; if (window.location.pathname.startsWith('/login')) {{ window.location.href = '/chat'; }} else {{ window.location.reload(); }}",
-                        session_token
-                    );
-                    if let Err(e) = window.eval(&script) {
-                        error!("[auth] eval failed: {}", e);
-                    }
-                }
+                inject_cookie(&app_handle, &session_token);
             }
             Err(e) => {
                 warn!("[auth] device_token exchange failed: {}", e);
@@ -136,4 +145,19 @@ pub fn auto_login_if_paired(app: &AppHandle) {
             }
         }
     });
+}
+
+/// Inject the daemon_token cookie into the main webview and reload so
+/// the current URL (usually /canvas) picks it up. If we happened to land
+/// on /login, bounce to /canvas.
+fn inject_cookie(app: &AppHandle, session_token: &str) {
+    if let Some(window) = app.get_webview_window("main") {
+        let script = format!(
+            "document.cookie = 'daemon_token={}; path=/; domain=.daemon.page; secure; samesite=lax; max-age=2592000'; if (window.location.pathname.startsWith('/login')) {{ window.location.href = '/canvas'; }} else {{ window.location.reload(); }}",
+            session_token
+        );
+        if let Err(e) = window.eval(&script) {
+            error!("[auth] eval failed: {}", e);
+        }
+    }
 }
