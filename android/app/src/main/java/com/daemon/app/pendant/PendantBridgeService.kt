@@ -200,6 +200,16 @@ class PendantBridgeService(
                     JSONObject().put("status", "ota_started")
                 }
             }
+            "pendant.voice.post" -> {
+                // Debug: bypass Deepgram, POST an explicit transcript to /api/voice/command.
+                val t = cmd.optString("transcript", "")
+                if (t.isBlank()) JSONObject().put("error", "missing 'transcript'")
+                else {
+                    val now = System.currentTimeMillis()
+                    postTranscriptToVoiceCommand(t, now - 1000, now)
+                    JSONObject().put("status", "posted").put("transcript", t)
+                }
+            }
             "pendant.status" -> getStatus()
             "pendant.set_deepgram_key" -> {
                 val key = cmd.optString("key", "")
@@ -249,6 +259,7 @@ class PendantBridgeService(
             put("recording", true)
             put("mode", mode)
         })
+        canvasText(if (mode == "conversation") "🟢 conversation recording" else "🎤 listening…")
         debugLog("recording start mode=$mode at $sessionStartMs")
     }
 
@@ -265,6 +276,7 @@ class PendantBridgeService(
             put("mode", sessionMode ?: "unknown")
             put("duration_ms", sessionEndMs - sessionStartMs)
         })
+        canvasText("⏸ transcribing…")
         debugLog("recording stop mode=${sessionMode} duration=${sessionEndMs - sessionStartMs}ms")
     }
 
@@ -296,6 +308,12 @@ class PendantBridgeService(
                             put("type", "pendant.connection")
                             put("connected", event.connected)
                         })
+                        // Visible state card on /canvas.
+                        val cardData = JSONObject().apply {
+                            put("title", "Pendant")
+                            put("body", if (event.connected) "✅ connected" else "⚠️ disconnected — reconnecting…")
+                        }
+                        pushCanvas("card", cardData)
                         // Auto-reconnect on unexpected disconnect
                         if (!event.connected) {
                             val addr = getBondedAddress()
@@ -365,6 +383,11 @@ class PendantBridgeService(
                     put("audio_path", file.absolutePath)
                     put("mode", sessionMode ?: "unknown")
                 })
+                if (transcript.isBlank()) {
+                    canvasText("🔇 no speech detected")
+                } else {
+                    canvasText("💬 \"$transcript\"")
+                }
                 val mode = sessionMode
                 val started = sessionStartMs
                 val ended = if (sessionEndMs > 0) sessionEndMs else System.currentTimeMillis()
@@ -380,6 +403,7 @@ class PendantBridgeService(
                     put("error", error)
                     put("audio_path", file.absolutePath)
                 })
+                canvasText("❌ transcript error: $error")
             }
         }
     }
@@ -395,6 +419,35 @@ class PendantBridgeService(
         java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", java.util.Locale.US)
             .apply { timeZone = java.util.TimeZone.getTimeZone("UTC") }
             .format(java.util.Date(ms))
+
+    /**
+     * Fire-and-forget visual feedback to the /canvas page. Used so the user
+     * sees "listening", "transcribing", "<transcript>" in real time,
+     * independent of whether the agent ever runs.
+     */
+    fun pushCanvas(type: String, data: JSONObject) {
+        scope.launch {
+            try {
+                val payload = JSONObject().apply {
+                    put("type", type)
+                    put("data", data)
+                    put("client", "pendant-phone")
+                }
+                val code = com.daemon.app.service.RelayHttpClient.postAuthenticated(
+                    context, "/api/stream/push", payload,
+                )
+                debugLog("canvas $type → HTTP $code")
+            } catch (e: Exception) {
+                debugLog("canvas push error: ${e.message}")
+            }
+        }
+    }
+
+    private fun canvasText(s: String, durationMs: Int = 0) {
+        val data = JSONObject().put("text", s)
+        if (durationMs > 0) data.put("durationMs", durationMs)
+        pushCanvas("text", data)
+    }
 
     private fun postTranscriptToVoiceCommand(transcript: String, holdStartedAt: Long, holdEndedAt: Long) {
         if (transcript.isBlank()) { debugLog("voice/command POST skipped — empty transcript"); return }

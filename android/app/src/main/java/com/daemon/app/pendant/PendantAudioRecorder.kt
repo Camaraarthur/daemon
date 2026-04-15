@@ -88,9 +88,12 @@ class PendantAudioRecorder(
         val minBuf = AudioRecord.getMinBufferSize(
             SAMPLE_RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT,
         ).coerceAtLeast(4096)
+        // MIC is the raw front-of-phone source. VOICE_RECOGNITION respects the
+        // communication mode and gets hijacked when camera/BT-headset/etc. own
+        // the mic — would silently return zero samples. MIC bypasses that.
         val rec = try {
             AudioRecord(
-                MediaRecorder.AudioSource.VOICE_RECOGNITION,
+                MediaRecorder.AudioSource.MIC,
                 SAMPLE_RATE,
                 AudioFormat.CHANNEL_IN_MONO,
                 AudioFormat.ENCODING_PCM_16BIT,
@@ -263,8 +266,10 @@ class PendantAudioRecorder(
                     }
                     try {
                         val json = JSONObject(r.body?.string() ?: "{}")
+                        // Deepgram shape: results.channels[0].alternatives[0].transcript
                         val transcript = json
-                            .optJSONArray("results")
+                            .optJSONObject("results")
+                            ?.optJSONArray("channels")
                             ?.optJSONObject(0)
                             ?.optJSONArray("alternatives")
                             ?.optJSONObject(0)

@@ -519,10 +519,49 @@ fun DaemonWebView(token: String?, onConnectDevice: () -> Unit = {}, onTokenRecei
                                 onTokenReceived(tokenMatch.groupValues[1])
                             }
                         }
-                        // Inject dark background CSS and "Connect device" button for the native bridge
+                        // Inject dark background CSS and "Connect device" button for the native bridge.
+                        //
+                        // Also re-apply the chat-container height fix. The /chat page sets
+                        // `height: 100dvh; min-height: -webkit-fill-available` on .chat-container,
+                        // but Android WebView treats `-webkit-fill-available` as 0 when the html
+                        // element doesn't have an explicit height — sidebar renders, chat panel
+                        // collapses to 0px → screen looks blank/black. Force explicit pixels from
+                        // window.innerHeight and re-apply on resize. (Re-introduces the fix that
+                        // existed before the pendant-firmware MainActivity rewrite stripped it.)
                         view?.evaluateJavascript("""
                             document.body.style.backgroundColor='#0a0a0a';
                             document.documentElement.style.backgroundColor='#0a0a0a';
+                            (function(){
+                                if (window.__daemonHeightFix) return;
+                                window.__daemonHeightFix = true;
+                                function applyHeight() {
+                                    var h = window.innerHeight;
+                                    if (!h) return;
+                                    var px = h + 'px';
+                                    document.documentElement.style.height = px;
+                                    document.body.style.height = px;
+                                    document.body.style.minHeight = px;
+                                    document.querySelectorAll('.chat-container').forEach(function(el){
+                                        el.style.height = px;
+                                        el.style.minHeight = px;
+                                        el.style.maxHeight = px;
+                                    });
+                                }
+                                applyHeight();
+                                window.addEventListener('resize', applyHeight);
+                                // Re-apply on SPA route changes (no full reload, no onPageFinished)
+                                var lastPath = location.pathname;
+                                setInterval(function(){
+                                    if (location.pathname !== lastPath) {
+                                        lastPath = location.pathname;
+                                        setTimeout(applyHeight, 80);
+                                    }
+                                }, 250);
+                                // Also a small delayed re-apply for when the chat-container
+                                // mounts after this script runs.
+                                setTimeout(applyHeight, 400);
+                                setTimeout(applyHeight, 1500);
+                            })();
                             if (window.DaemonBridge && !document.getElementById('daemon-connect-btn')) {
                                 var btn = document.createElement('button');
                                 btn.id = 'daemon-connect-btn';
