@@ -17,6 +17,9 @@ import android.util.Log
 import kotlinx.coroutines.*
 import okhttp3.*
 import org.json.JSONObject
+import android.content.BroadcastReceiver
+import android.content.IntentFilter
+import com.daemon.app.pendant.PendantBridgeService
 import java.util.concurrent.TimeUnit
 import kotlin.math.min
 import kotlin.random.Random
@@ -122,6 +125,81 @@ class DaemonService : Service() {
                 RelayHttpClient.getOrExchangeSessionToken(this@DaemonService)
             }
         }
+        initPendantBridge()
+    }
+
+    // ── Pendant bridge (BLE) ────────────────────────────────────────
+    var pendantBridge: PendantBridgeService? = null
+    private var otaReceiver: BroadcastReceiver? = null
+    private var simReceiver: BroadcastReceiver? = null
+
+    private fun initPendantBridge() {
+        capabilities["pendant"] = true
+        pendantBridge = PendantBridgeService(
+            context = this,
+            httpClient = client,
+            sendWsMessage = { msg -> webSocket?.send(msg.toString()) },
+        )
+        pendantBridge?.start()
+
+        // adb-triggered OTA: adb shell am broadcast -a com.daemon.app.PENDANT_OTA --es url 'http://HOST:7777/firmware.bin'
+        otaReceiver = object : BroadcastReceiver() {
+            override fun onReceive(c: Context, i: Intent) {
+                val url = i.getStringExtra("url")
+                val path = i.getStringExtra("path")
+                Log.d(TAG, "OTA broadcast received url=$url path=$path")
+                val cmd = JSONObject().put("type", "pendant.ota.upload")
+                if (url != null) cmd.put("url", url)
+                if (path != null) cmd.put("path", path)
+                pendantBridge?.handleCommand("pendant.ota.upload", cmd)
+            }
+        }
+        val filter = IntentFilter("com.daemon.app.PENDANT_OTA")
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(otaReceiver, filter, Context.RECEIVER_EXPORTED)
+        } else {
+            @Suppress("UnspecifiedRegisterReceiverFlag")
+            registerReceiver(otaReceiver, filter)
+        }
+
+        // adb-triggered generic pendant command.
+        //   adb shell am broadcast -a com.daemon.app.PENDANT_CMD --es type pendant.set_deepgram_key --es key $KEY
+        val cmdReceiver = object : BroadcastReceiver() {
+            override fun onReceive(c: Context, i: Intent) {
+                val type = i.getStringExtra("type") ?: return
+                val json = JSONObject()
+                i.extras?.keySet()?.forEach { k ->
+                    if (k != "type") json.put(k, i.getStringExtra(k) ?: i.getIntExtra(k, 0))
+                }
+                val result = pendantBridge?.handleCommand(type, json)
+                Log.d(TAG, "PENDANT_CMD type=$type → $result")
+            }
+        }
+        val cmdFilter = IntentFilter("com.daemon.app.PENDANT_CMD")
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(cmdReceiver, cmdFilter, Context.RECEIVER_EXPORTED)
+        } else {
+            @Suppress("UnspecifiedRegisterReceiverFlag")
+            registerReceiver(cmdReceiver, cmdFilter)
+        }
+
+        // adb-triggered fake pendant button events for stress testing.
+        //   adb shell am broadcast -a com.daemon.app.PENDANT_SIM_BUTTON --ei code 3
+        simReceiver = object : BroadcastReceiver() {
+            override fun onReceive(c: Context, i: Intent) {
+                val code = i.getIntExtra("code", -1)
+                if (code < 0) return
+                Log.d(TAG, "PENDANT_SIM_BUTTON received code=0x${code.toString(16)}")
+                pendantBridge?.simulateButton(code)
+            }
+        }
+        val simFilter = IntentFilter("com.daemon.app.PENDANT_SIM_BUTTON")
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(simReceiver, simFilter, Context.RECEIVER_EXPORTED)
+        } else {
+            @Suppress("UnspecifiedRegisterReceiverFlag")
+            registerReceiver(simReceiver, simFilter)
+        }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -151,6 +229,10 @@ class DaemonService : Service() {
 
     override fun onDestroy() {
         Log.d(TAG, "Service destroyed, scheduling restart")
+        try { otaReceiver?.let { unregisterReceiver(it) } } catch (_: Exception) {}
+        try { simReceiver?.let { unregisterReceiver(it) } } catch (_: Exception) {}
+        pendantBridge?.destroy()
+        pendantBridge = null
         instance = null
         teardownNetworkListener()
         releaseWakeLock()

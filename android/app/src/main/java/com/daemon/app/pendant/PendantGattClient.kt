@@ -81,6 +81,9 @@ class PendantGattClient(private val context: Context) {
                 Log.d(TAG, "Disconnected from pendant (status=$status)")
                 isConnected = false
                 _events.tryEmit(PendantEvent.ConnectionState(false))
+                // Pendant reboots after OTA — service handles shift. Reset
+                // cacheRefreshed so the next connect re-refreshes and rediscovers.
+                cacheRefreshed = false
                 gatt = null
             }
         }
@@ -289,8 +292,20 @@ class PendantGattClient(private val context: Context) {
     ): Result<Unit> = withContext(Dispatchers.IO) {
         // Wait up to 30s for a connected + service-discovered state.
         // The bridge auto-reconnects on disconnect, so we just need to be patient.
+        Log.d(TAG, "uploadFirmware: entry gatt=${gatt != null} isConnected=$isConnected mtu=$mtu")
         val deadline = System.currentTimeMillis() + 30_000
+        var redicoverTried = false
         while (gatt?.getService(PendantUuids.OTA_SERVICE) == null) {
+            val g = gatt
+            if (g != null) {
+                Log.d(TAG, "OTA service missing; services.size=${g.services.size} connState=isConnected=$isConnected")
+                if (!redicoverTried) {
+                    redicoverTried = true
+                    Log.d(TAG, "Calling discoverServices() to refresh")
+                    @Suppress("MissingPermission")
+                    g.discoverServices()
+                }
+            }
             if (System.currentTimeMillis() > deadline) {
                 return@withContext Result.failure(IllegalStateException("timed out waiting for OTA service"))
             }

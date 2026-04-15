@@ -40,6 +40,16 @@ class PendantBridgeService(
     // HOLD event confirms it, MAIN_UP after hold triggers stop
     private var holdActive = false
 
+    // Current recording session metadata. `sessionMode` is:
+    //   "command"      — hold press; transcript → /api/voice/command
+    //   "conversation" — double-click; transcripts → /api/voice/context in chunks
+    //   null           — idle
+    @Volatile private var sessionMode: String? = null
+    @Volatile private var sessionStartMs: Long = 0
+    @Volatile private var sessionEndMs: Long = 0
+    // Stable id per conversation session (rolling chunks reference it).
+    @Volatile private var conversationSessionId: String? = null
+
     init {
         setupAudioListener()
         collectEvents()
@@ -216,27 +226,46 @@ class PendantBridgeService(
 
     // ── Recording ───────────────────────────────────────────────────
 
-    private fun startRecording() {
+    private fun startRecording(mode: String = "command") {
         if (isRecording) return
         isRecording = true
-        gattClient.setMic(true)
-        audioRecorder.startRecording()
+        sessionMode = mode
+        sessionStartMs = System.currentTimeMillis()
+        if (mode == "conversation") {
+            conversationSessionId = java.util.UUID.randomUUID().toString()
+            chunkIndex = 0
+            // 15 s rolling chunks, 5 min hard cap.
+            audioRecorder.setConversationChunking(flushMs = 15_000, capMs = 300_000)
+        } else {
+            audioRecorder.setConversationChunking(flushMs = 0, capMs = 0)
+        }
+        // Skip pendant setMic() — we're using the PHONE mic for capture. The
+        // pendant mic isn't streaming audio yet, and setMic(true) causes the
+        // pendant to emit a spurious 0x04 DOUBLE event that confuses routing.
+        // Revisit when firmware v0.9 streams audio on AUDIO_STREAM char.
+        audioRecorder.startPhoneMicRecording()
         sendWsMessage(JSONObject().apply {
             put("type", "pendant.recording_state")
             put("recording", true)
+            put("mode", mode)
         })
+        debugLog("recording start mode=$mode at $sessionStartMs")
     }
 
     private fun stopRecording() {
         if (!isRecording) return
         isRecording = false
         holdActive = false
-        gattClient.setMic(false)
-        audioRecorder.stopRecording()
+        sessionEndMs = System.currentTimeMillis()
+        // Matching startRecording — not touching pendant mic.
+        audioRecorder.stopPhoneMicRecording()
         sendWsMessage(JSONObject().apply {
             put("type", "pendant.recording_state")
             put("recording", false)
+            put("mode", sessionMode ?: "unknown")
+            put("duration_ms", sessionEndMs - sessionStartMs)
         })
+        debugLog("recording stop mode=${sessionMode} duration=${sessionEndMs - sessionStartMs}ms")
     }
 
     // ── Event Collection ────────────────────────────────────────────
@@ -282,21 +311,39 @@ class PendantBridgeService(
         }
     }
 
+    /** Test-only entry point: inject a fake button event code. */
+    fun simulateButton(code: Int) {
+        debugLog("simulateButton 0x${Integer.toHexString(code)}")
+        handleButtonEvent(code)
+    }
+
     private fun handleButtonEvent(code: Int) {
         when (code) {
+            // 0x03 HOLD_START — command recording (release ends it via 0x06 STOPPED)
             PendantUuids.EVENT_HOLD -> {
                 holdActive = true
-                if (!isRecording) startRecording()
+                if (!isRecording) startRecording(mode = "command")
             }
+            // 0x04 DOUBLE — conversation recording starts (or toggles off if already running)
+            PendantUuids.EVENT_DOUBLE -> {
+                if (isRecording && sessionMode == "conversation") stopRecording()
+                else if (!isRecording) startRecording(mode = "conversation")
+            }
+            // 0x02 MAIN_UP — legacy; not emitted by current firmware
             PendantUuids.EVENT_MAIN_UP -> {
                 if (holdActive && isRecording) stopRecording()
             }
+            // 0x05 RECORDING — legacy; not emitted by current firmware
             PendantUuids.EVENT_RECORDING -> {
-                if (!isRecording) startRecording()
+                if (!isRecording) startRecording(mode = "command")
             }
+            // 0x06 STOPPED — firmware-signalled stop
             PendantUuids.EVENT_STOPPED -> {
                 if (isRecording) stopRecording()
             }
+            // 0x07 / 0x08 — CMD_IN_CONVO markers (firmware v0.8.2+).
+            // Full handling deferred; mark timestamps for relay to slice later.
+            else -> { /* unknown code — ignore for robustness */ }
         }
     }
 
@@ -316,8 +363,15 @@ class PendantBridgeService(
                     put("type", "pendant.recording")
                     put("transcript", transcript)
                     put("audio_path", file.absolutePath)
+                    put("mode", sessionMode ?: "unknown")
                 })
-                postTranscriptToVoiceCommand(transcript)
+                val mode = sessionMode
+                val started = sessionStartMs
+                val ended = if (sessionEndMs > 0) sessionEndMs else System.currentTimeMillis()
+                when (mode) {
+                    "conversation" -> postTranscriptChunk(transcript, started, ended)
+                    else -> postTranscriptToVoiceCommand(transcript, started, ended)
+                }
             }
 
             override fun onTranscriptError(file: File, error: String) {
@@ -337,21 +391,62 @@ class PendantBridgeService(
      * /api/voice/command. Fire-and-forget; the relay responds 202
      * immediately and broadcasts the assistant reply over WS.
      */
-    private fun postTranscriptToVoiceCommand(transcript: String) {
-        if (transcript.isBlank()) return
+    private fun postTranscriptToVoiceCommand(transcript: String, holdStartedAt: Long, holdEndedAt: Long) {
+        if (transcript.isBlank()) { debugLog("voice/command POST skipped — empty transcript"); return }
         scope.launch {
-            try {
-                val payload = JSONObject().apply {
-                    put("transcript", transcript)
-                    put("source", "pendant")
-                    put("device_id", android.os.Build.MODEL)
+            // One retry for transient network flake. Demo-critical path.
+            repeat(2) { attempt ->
+                try {
+                    val payload = JSONObject().apply {
+                        put("transcript", transcript)
+                        put("source", "pendant")
+                        put("device_id", android.os.Build.MODEL)
+                        put("hold_started_at", holdStartedAt)
+                        put("hold_ended_at", holdEndedAt)
+                    }
+                    val code = com.daemon.app.service.RelayHttpClient.postAuthenticated(
+                        context, "/api/voice/command", payload,
+                    )
+                    debugLog("voice/command POST → HTTP $code (transcript ${transcript.length}ch attempt=$attempt)")
+                    if (code in 200..299) return@launch
+                } catch (e: Exception) {
+                    debugLog("voice/command POST error attempt=$attempt: ${e.message}")
                 }
-                val code = com.daemon.app.service.RelayHttpClient.postAuthenticated(
-                    context, "/api/voice/command", payload,
-                )
-                debugLog("voice/command POST → HTTP $code (transcript ${transcript.length}ch)")
-            } catch (e: Exception) {
-                debugLog("voice/command POST error: ${e.message}")
+                if (attempt == 0) delay(500)
+            }
+        }
+    }
+
+    /**
+     * Conversation-mode chunk. Each ~15 s transcript slice posts to
+     * /api/voice/context with session_id + chunk_index + started_at/ended_at.
+     */
+    @Volatile private var chunkIndex = 0
+    private fun postTranscriptChunk(transcript: String, startedAt: Long, endedAt: Long) {
+        if (transcript.isBlank()) return
+        val sessionId = conversationSessionId ?: return
+        val idx = chunkIndex++
+        scope.launch {
+            repeat(2) { attempt ->
+                try {
+                    val payload = JSONObject().apply {
+                        put("transcript", transcript)
+                        put("source", "pendant")
+                        put("device_id", android.os.Build.MODEL)
+                        put("session_id", sessionId)
+                        put("chunk_index", idx)
+                        put("started_at", startedAt)
+                        put("ended_at", endedAt)
+                    }
+                    val code = com.daemon.app.service.RelayHttpClient.postAuthenticated(
+                        context, "/api/voice/context", payload,
+                    )
+                    debugLog("voice/context POST → HTTP $code (session=${sessionId.take(8)} chunk=$idx attempt=$attempt)")
+                    if (code in 200..299) return@launch
+                } catch (e: Exception) {
+                    debugLog("voice/context POST error attempt=$attempt: ${e.message}")
+                }
+                if (attempt == 0) delay(500)
             }
         }
     }

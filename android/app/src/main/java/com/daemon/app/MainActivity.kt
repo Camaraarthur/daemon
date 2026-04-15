@@ -69,6 +69,13 @@ class MainActivity : ComponentActivity() {
         // Request battery optimization exemption so the service stays alive
         requestBatteryOptimizationExemption()
 
+        // Auto-start DaemonService when perms already granted (returning user).
+        // The service carries the pendant bridge + OTA broadcast receiver.
+        // No-op on first-launch; normal flow handles that via requestPermissionsAndStart().
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
+            startDaemonService()
+        }
+
         // Check for app update
         checkForUpdate()
 

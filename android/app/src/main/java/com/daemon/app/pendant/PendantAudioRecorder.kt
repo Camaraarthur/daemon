@@ -1,6 +1,9 @@
 package com.daemon.app.pendant
 
 import android.content.Context
+import android.media.AudioFormat
+import android.media.AudioRecord
+import android.media.MediaRecorder
 import android.util.Log
 import kotlinx.coroutines.*
 import okhttp3.*
@@ -50,13 +53,117 @@ class PendantAudioRecorder(
     fun startRecording() {
         buffer.reset()
         isRecording = true
-        Log.d(TAG, "Recording started")
+        Log.d(TAG, "Recording started (pendant BLE chunks)")
     }
 
     fun addChunk(data: ByteArray) {
         if (isRecording) {
             buffer.write(data)
         }
+    }
+
+    // ── Phone-mic capture (used until pendant firmware streams audio) ──
+
+    private var phoneMicJob: Job? = null
+    private var phoneMicRecord: AudioRecord? = null
+    // If > 0, auto-flush a chunk every N ms (conversation mode).
+    // 0 = capture in one long buffer until stop (command mode).
+    @Volatile private var chunkFlushMs: Long = 0
+    @Volatile private var chunkStartMs: Long = 0
+    // 5-minute hard cap for conversation mode (demo safety).
+    @Volatile private var sessionCapMs: Long = 0
+
+    fun setConversationChunking(flushMs: Long, capMs: Long) {
+        chunkFlushMs = flushMs
+        sessionCapMs = capMs
+    }
+
+    @Suppress("MissingPermission")
+    fun startPhoneMicRecording() {
+        if (isRecording) return
+        buffer.reset()
+        isRecording = true
+        chunkStartMs = System.currentTimeMillis()
+        Log.d(TAG, "Recording started (phone mic, chunkFlushMs=$chunkFlushMs)")
+        val minBuf = AudioRecord.getMinBufferSize(
+            SAMPLE_RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT,
+        ).coerceAtLeast(4096)
+        val rec = try {
+            AudioRecord(
+                MediaRecorder.AudioSource.VOICE_RECOGNITION,
+                SAMPLE_RATE,
+                AudioFormat.CHANNEL_IN_MONO,
+                AudioFormat.ENCODING_PCM_16BIT,
+                minBuf * 2,
+            )
+        } catch (e: Exception) {
+            Log.e(TAG, "AudioRecord init failed: ${e.message}")
+            isRecording = false
+            return
+        }
+        if (rec.state != AudioRecord.STATE_INITIALIZED) {
+            Log.e(TAG, "AudioRecord not initialized")
+            isRecording = false
+            return
+        }
+        phoneMicRecord = rec
+        rec.startRecording()
+        phoneMicJob = scope.launch {
+            val chunk = ByteArray(minBuf)
+            try {
+                while (isActive && isRecording) {
+                    val n = rec.read(chunk, 0, chunk.size)
+                    if (n > 0) buffer.write(chunk, 0, n)
+
+                    // Periodic chunk flush for conversation mode.
+                    val now = System.currentTimeMillis()
+                    if (chunkFlushMs > 0 && (now - chunkStartMs) >= chunkFlushMs) {
+                        val pcm = buffer.toByteArray()
+                        buffer.reset()
+                        val startedAt = chunkStartMs
+                        chunkStartMs = now
+                        if (pcm.isNotEmpty()) {
+                            launch { flushChunk(pcm, startedAt, now) }
+                        }
+                    }
+                    // Hard cap for conversation mode (5 min safety).
+                    if (sessionCapMs > 0 && (now - sessionStartMs()) >= sessionCapMs) {
+                        Log.w(TAG, "Conversation cap reached, stopping")
+                        isRecording = false
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "phone mic read loop: ${e.message}")
+            }
+        }
+    }
+
+    @Volatile private var _sessionStart = 0L
+    private fun sessionStartMs(): Long {
+        if (_sessionStart == 0L) _sessionStart = System.currentTimeMillis()
+        return _sessionStart
+    }
+
+    private fun flushChunk(pcm: ByteArray, startedAt: Long, endedAt: Long) {
+        val wav = saveWav(pcm) ?: return
+        val dur = endedAt - startedAt
+        listener?.onRecordingSaved(wav, dur)
+        transcribe(wav)  // listener.onTranscriptReady will fire → bridge routes to /voice/context
+    }
+
+    fun stopPhoneMicRecording() {
+        if (!isRecording) return
+        phoneMicJob?.cancel()
+        phoneMicJob = null
+        try {
+            phoneMicRecord?.stop()
+            phoneMicRecord?.release()
+        } catch (_: Exception) {}
+        phoneMicRecord = null
+        _sessionStart = 0L
+        chunkFlushMs = 0
+        sessionCapMs = 0
+        stopRecording()
     }
 
     fun stopRecording() {
