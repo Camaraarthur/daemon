@@ -234,6 +234,31 @@ const TOOLS = [
       required: ['heading', 'body_html'],
     },
   },
+  {
+    name: 'phone_open_app',
+    description:
+      "Launch an app on the user's primary phone by Android package name. Examples: com.spotify.music (Spotify), com.google.android.GoogleCamera (Camera), com.whatsapp (WhatsApp), com.android.chrome (Chrome), com.google.android.apps.maps (Maps). Returns ok/error from the device.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        package_name: { type: 'string', description: 'Android package name, e.g. com.spotify.music.' },
+      },
+      required: ['package_name'],
+    },
+  },
+  {
+    name: 'phone_send_whatsapp',
+    description:
+      "Open WhatsApp on the user's phone with the message PRE-FILLED to the given number. The user taps Send themselves — this is a draft, not autosend. Use when the user says 'WhatsApp X' or 'send a whatsapp to Y'. Phone number should be in international format without the leading + (e.g. 31612345678).",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        phone: { type: 'string', description: 'Recipient phone in E.164 without leading + (e.g. 31612345678).' },
+        message: { type: 'string', description: 'Pre-filled message body. User taps Send.' },
+      },
+      required: ['phone', 'message'],
+    },
+  },
 ]
 
 // ── Tool dispatch ──────────────────────────────────────────
@@ -306,6 +331,42 @@ async function callTool(name, args) {
         }
 
         return [{ type: 'text', text: `Wrote "${heading}". ${canvasNote}; ${pageNote}.` }]
+      }
+
+      case 'phone_open_app': {
+        const pkg = String(args.package_name ?? '').trim()
+        if (!pkg) return [{ type: 'text', text: 'Error: package_name is required' }]
+        const skillResp = await invokeSkill('open_app', { package_name: pkg })
+        let canvasNote = 'canvas: ok'
+        try {
+          await pushToCanvas('card', { title: 'Opened app', body: pkg })
+        } catch (e) {
+          canvasNote = `canvas: ${e.message}`
+        }
+        return [{
+          type: 'text',
+          text: `open_app(${pkg}) → ${JSON.stringify(skillResp).slice(0, 300)}; ${canvasNote}.`,
+        }]
+      }
+
+      case 'phone_send_whatsapp': {
+        const phone = String(args.phone ?? '').replace(/[^\d]/g, '')
+        const message = String(args.message ?? '').trim()
+        if (!phone || !message) return [{ type: 'text', text: 'Error: phone and message are required' }]
+        const skillResp = await invokeSkill('send_whatsapp', { phone, message })
+        let canvasNote = 'canvas: ok'
+        try {
+          await pushToCanvas('card', {
+            title: 'WhatsApp drafted',
+            body: `to: +${phone}\n${message.slice(0, 140)}`,
+          })
+        } catch (e) {
+          canvasNote = `canvas: ${e.message}`
+        }
+        return [{
+          type: 'text',
+          text: `WhatsApp opened on phone with prefilled message. User taps Send. ${canvasNote}.`,
+        }]
       }
 
       default:
