@@ -87,6 +87,9 @@ export async function POST(req: NextRequest) {
   const sessionTokenMatch = cookie.match(/daemon_token=([a-f0-9]+)/i)
   const sessionToken = sessionTokenMatch?.[1] || ''
   const composioKey = process.env.COMPOSIO_API_KEY || ''
+  // Composio connections live under the CRA workspace email, not tutucamara@gmail.com.
+  const composioUserEmail = process.env.DAEMON_COMPOSIO_USER_EMAIL
+    || 'arthur.camara@carloratti.com'
 
   void runPendantAgent({
     transcript,
@@ -94,7 +97,7 @@ export async function POST(req: NextRequest) {
     userId,
     projectId: voiceProject.id,
     sessionToken,
-    userEmail: userRow?.email || '',
+    userEmail: composioUserEmail,
     daemonName: userRow?.daemon_name || 'my',
     primaryDeviceId: primaryDevice?.device_id || '',
     composioKey,
@@ -151,9 +154,14 @@ async function runPendantAgent(opts: {
     '--permission-mode', 'bypassPermissions',
   ]
 
+  // Strip ANTHROPIC_API_KEY so claude falls back to the Max subscription
+  // auth (stored in ~/.claude/). When the env var is set, claude prefers
+  // API pay-as-you-go billing which has a separate (often empty) balance.
+  const spawnEnv = { ...process.env }
+  delete spawnEnv.ANTHROPIC_API_KEY
   const child = spawn(CLAUDE_BIN, args, {
     cwd: workDir,
-    env: { ...process.env },
+    env: spawnEnv,
     stdio: ['ignore', 'pipe', 'pipe'],
   })
 
