@@ -391,6 +391,11 @@ class PendantBridgeService(
      * /api/voice/command. Fire-and-forget; the relay responds 202
      * immediately and broadcasts the assistant reply over WS.
      */
+    private fun isoTs(ms: Long): String =
+        java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", java.util.Locale.US)
+            .apply { timeZone = java.util.TimeZone.getTimeZone("UTC") }
+            .format(java.util.Date(ms))
+
     private fun postTranscriptToVoiceCommand(transcript: String, holdStartedAt: Long, holdEndedAt: Long) {
         if (transcript.isBlank()) { debugLog("voice/command POST skipped — empty transcript"); return }
         scope.launch {
@@ -401,8 +406,11 @@ class PendantBridgeService(
                         put("transcript", transcript)
                         put("source", "pendant")
                         put("device_id", android.os.Build.MODEL)
+                        // Keep both ms and ISO shapes — relay may read either
                         put("hold_started_at", holdStartedAt)
                         put("hold_ended_at", holdEndedAt)
+                        put("hold_started_at_iso", isoTs(holdStartedAt))
+                        put("hold_ended_at_iso", isoTs(holdEndedAt))
                     }
                     val code = com.daemon.app.service.RelayHttpClient.postAuthenticated(
                         context, "/api/voice/command", payload,
@@ -435,8 +443,9 @@ class PendantBridgeService(
                         put("device_id", android.os.Build.MODEL)
                         put("session_id", sessionId)
                         put("chunk_index", idx)
-                        put("started_at", startedAt)
-                        put("ended_at", endedAt)
+                        // /api/voice/context expects ISO8601 strings
+                        put("started_at", isoTs(startedAt))
+                        put("ended_at", isoTs(endedAt))
                     }
                     val code = com.daemon.app.service.RelayHttpClient.postAuthenticated(
                         context, "/api/voice/context", payload,
