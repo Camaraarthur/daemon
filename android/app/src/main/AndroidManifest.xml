@@ -91,4 +91,23 @@
         </receiver>
 
     </application>
+
+    <!-- Android 11+ package visibility. Without this block, the app can't
+         see any other installed packages, which makes
+         packageManager.getLaunchIntentForPackage() return null even when
+         the target app IS installed (e.g., open_app("com.spotify.music")
+         reporting "not installed" when Spotify is in fact installed).
+         This <queries> block grants visibility to every launcher app. -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.LAUNCHER" />
+        </intent>
+        <!-- WhatsApp deeplink (wa.me) — not always covered by the LAUNCHER
+             query because the deeplink uses ACTION_VIEW + https scheme. -->
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:scheme="https" android:host="wa.me" />
+        </intent>
+    </queries>
 </manifest>

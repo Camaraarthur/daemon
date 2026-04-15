@@ -146,11 +146,22 @@ async function runPendantAgent(opts: {
     complete: false,
   })
 
+  // Push a "you said" card immediately so the audience sees the
+  // transcript land before the agent runs. Best-effort.
+  pushPendantCanvas(opts.sessionToken, 'card', {
+    title: 'You said',
+    body: opts.transcript.slice(0, 400),
+  })
+
+  // stream-json output gives us per-event tool calls, text deltas, etc. —
+  // we mirror them to the canvas so the audience sees "agent thinking,
+  // calling tool X, replying" instead of just the final terse reply.
   const args = [
     '-p', opts.transcript,
     '--append-system-prompt', `@${PENDANT_PROMPT}`,
     '--mcp-config', mcpPath,
-    '--output-format', 'text',
+    '--output-format', 'stream-json',
+    '--verbose',
     '--permission-mode', 'bypassPermissions',
   ]
 
@@ -165,7 +176,6 @@ async function runPendantAgent(opts: {
     stdio: ['ignore', 'pipe', 'pipe'],
   })
 
-  let stdout = ''
   let stderr = ''
   let killed = false
   const killTimer = setTimeout(() => {
@@ -173,14 +183,34 @@ async function runPendantAgent(opts: {
     try { child.kill('SIGKILL') } catch {}
   }, SPAWN_TIMEOUT_MS)
 
-  child.stdout.on('data', (c) => { stdout += c.toString() })
+  // Parse line-buffered stream-json. Each event is a JSON object;
+  // we surface tool_use blocks and assistant text to the canvas.
+  let buf = ''
+  let finalReply = ''
+  child.stdout.on('data', (chunk) => {
+    buf += chunk.toString()
+    let nl
+    while ((nl = buf.indexOf('\n')) >= 0) {
+      const line = buf.slice(0, nl).trim()
+      buf = buf.slice(nl + 1)
+      if (!line) continue
+      try {
+        const ev = JSON.parse(line)
+        handlePendantStreamEvent(ev, opts.sessionToken, (text) => {
+          if (text) finalReply += text
+        })
+      } catch {
+        // not JSON — ignore (claude prints non-JSON status sometimes)
+      }
+    }
+  })
   child.stderr.on('data', (c) => { stderr += c.toString() })
 
   await new Promise<void>((resolve) => child.on('close', () => resolve()))
   clearTimeout(killTimer)
 
-  const reply = (stdout.trim() || (killed ? 'pendant timed out.' : 'no output.')).slice(0, 4000)
-  if (stderr && !stdout.trim()) console.warn('[pendant] stderr:', stderr.slice(0, 500))
+  const reply = (finalReply.trim() || (killed ? 'pendant timed out.' : 'no output.')).slice(0, 4000)
+  if (stderr && !finalReply.trim()) console.warn('[pendant] stderr:', stderr.slice(0, 500))
 
   broadcastThreadEvent(opts.threadId, {
     type: 'message.completed',
@@ -219,4 +249,63 @@ async function runPendantAgent(opts: {
   }
 
   rm(workDir, { recursive: true, force: true }).catch(() => {})
+}
+
+// Fire-and-forget canvas push. Used to mirror agent activity (tool calls,
+// thinking, replies) to the live canvas during a pendant turn.
+function pushPendantCanvas(sessionToken: string, type: string, data: any) {
+  const origin = process.env.NEXT_PUBLIC_DAEMON_ORIGIN || 'https://my.daemon.page'
+  fetch(`${origin}/api/stream/push`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Cookie: `daemon_token=${sessionToken}`,
+    },
+    body: JSON.stringify({ type, data, client: 'pendant-agent' }),
+  }).catch(() => {})
+}
+
+// claude --output-format stream-json emits one JSON object per line.
+// Shape (simplified):
+//   {type:'system', subtype:'init', ...}                        — boot
+//   {type:'assistant', message:{content:[{type:'text'|'tool_use', ...}]}}  — turn
+//   {type:'user', message:{content:[{type:'tool_result', ...}]}}           — tool reply
+//   {type:'result', subtype:'success', result: '<final text>', ...}         — done
+//
+// We surface tool_use (so audience sees "calling X") and the final result
+// to the canvas. Text blocks are accumulated into finalReply so the chat
+// thread + canvas final card show the assistant's actual reply.
+function handlePendantStreamEvent(
+  ev: any,
+  sessionToken: string,
+  onText: (text: string) => void,
+) {
+  try {
+    if (ev?.type === 'assistant' && ev.message?.content) {
+      for (const block of ev.message.content) {
+        if (block.type === 'text' && typeof block.text === 'string') {
+          onText(block.text)
+        } else if (block.type === 'tool_use' && typeof block.name === 'string') {
+          // mirror tool calls live on canvas — strip the mcp__server__ prefix
+          // for a cleaner label ("canvas_text" not "mcp__canvas__canvas_text")
+          const cleanName = block.name.replace(/^mcp__[^_]+__/, '')
+          let argsBody = ''
+          try { argsBody = JSON.stringify(block.input || {}, null, 2) } catch {}
+          if (argsBody.length > 220) argsBody = argsBody.slice(0, 220) + '…'
+          pushPendantCanvas(sessionToken, 'card', {
+            title: `🔧 ${cleanName}`,
+            body: argsBody,
+          })
+        }
+      }
+    } else if (ev?.type === 'result' && typeof ev.result === 'string') {
+      pushPendantCanvas(sessionToken, 'card', {
+        title: 'Done',
+        body: ev.result.slice(0, 280),
+      })
+      onText(ev.result)
+    }
+  } catch {
+    // never let canvas push errors break the spawn
+  }
 }
