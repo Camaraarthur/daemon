@@ -8,6 +8,7 @@ import { requireAuth, getUserId } from '@/lib/auth'
 import * as db from '@/lib/db'
 import getDb from '@/lib/db'
 import { broadcastThreadEvent, gossipChatMessage } from '@/lib/ws-broadcast'
+import { fetchMessagesFromDevice } from '@/lib/device-store'
 
 /**
  * POST /api/voice/command
@@ -101,6 +102,7 @@ export async function POST(req: NextRequest) {
     daemonName: userRow?.daemon_name || 'my',
     primaryDeviceId: primaryDevice?.device_id || '',
     composioKey,
+    userMsgIdToExclude: userMsgId,
   }).catch((e) => console.error('[voice/command] pendant spawn error:', e))
 
   return NextResponse.json(
@@ -119,6 +121,7 @@ async function runPendantAgent(opts: {
   daemonName: string
   primaryDeviceId: string
   composioKey: string
+  userMsgIdToExclude: string
 }) {
   const rawTemplate = await readFile(PENDANT_MCP_TEMPLATE, 'utf8')
   const mcpJson = rawTemplate
@@ -153,11 +156,25 @@ async function runPendantAgent(opts: {
     body: opts.transcript.slice(0, 400),
   })
 
+  // Build the prompt with recent thread context. Each pendant turn is a
+  // fresh `claude -p` spawn — without explicit context, the agent has
+  // zero memory of prior turns and can't recognize follow-ups like "hi"
+  // as the answer to "what should I write?". Fetch the last few messages
+  // from the Voice thread (excluding the just-broadcast user transcript)
+  // and prepend them as a context block. Best-effort — if the device is
+  // offline or fetch fails, fall back to bare transcript.
+  const promptText = await buildPendantPrompt({
+    userId: opts.userId,
+    threadId: opts.threadId,
+    currentTranscript: opts.transcript,
+    currentUserMsgId: opts.userMsgIdToExclude,
+  })
+
   // stream-json output gives us per-event tool calls, text deltas, etc. —
   // we mirror them to the canvas so the audience sees "agent thinking,
   // calling tool X, replying" instead of just the final terse reply.
   const args = [
-    '-p', opts.transcript,
+    '-p', promptText,
     '--append-system-prompt', `@${PENDANT_PROMPT}`,
     '--mcp-config', mcpPath,
     '--output-format', 'stream-json',
@@ -249,6 +266,67 @@ async function runPendantAgent(opts: {
   }
 
   rm(workDir, { recursive: true, force: true }).catch(() => {})
+}
+
+// Build the prompt body sent to `claude -p`. If we can fetch recent
+// thread messages from the user's device, we prepend them as a context
+// block so the agent recognizes follow-ups ("hi" answering "what should
+// I write?"). Bounded to the last 8 messages to keep the prompt small.
+//
+// Format:
+//   Recent voice conversation (most recent last). Use this to recognize
+//   follow-ups and continuations. Times are ISO 8601 UTC.
+//
+//     [2026-04-15T15:38:30Z] user: write a draft message to myself on whatsapp
+//     [2026-04-15T15:38:36Z] assistant: sure — what should I write?
+//
+//   New transcript (act on this; the lines above are only context):
+//     hi
+async function buildPendantPrompt(opts: {
+  userId: number
+  threadId: string
+  currentTranscript: string
+  currentUserMsgId: string
+}): Promise<string> {
+  let history: Array<{ role: string; content: string; created_at: string; id: string }> = []
+  try {
+    const r = await Promise.race([
+      fetchMessagesFromDevice({ userId: opts.userId, threadId: opts.threadId, limit: 16 }),
+      new Promise<{ ok: false; messages: [] }>((resolve) =>
+        setTimeout(() => resolve({ ok: false, messages: [] }), 3000),
+      ),
+    ])
+    if (r.ok && Array.isArray(r.messages)) history = r.messages as any
+  } catch {}
+
+  // Drop the message we just wrote (so the agent doesn't see "user: hi"
+  // duplicated in both the context block and the new-transcript line).
+  // Also drop incomplete assistant placeholders.
+  const filtered = history
+    .filter((m) => m.id !== opts.currentUserMsgId)
+    .filter((m) => typeof m.content === 'string' && m.content.trim().length > 0)
+    .slice(-8)
+
+  if (filtered.length === 0) return opts.currentTranscript
+
+  const lines = filtered.map((m) => {
+    const ts = m.created_at || ''
+    const role = m.role === 'assistant' ? 'assistant' : 'user'
+    const body = String(m.content).replace(/\s+/g, ' ').slice(0, 400)
+    return `  [${ts}] ${role}: ${body}`
+  })
+
+  return [
+    'Recent voice conversation (most recent last). Use this to recognize',
+    'follow-ups and continuations. Times are ISO 8601 UTC. If the new',
+    'transcript looks like a short reply ("hi", "yes", "no", a name…),',
+    'treat it as the answer to the most recent assistant question.',
+    '',
+    ...lines,
+    '',
+    'New transcript (act on this; the lines above are only context):',
+    `  ${opts.currentTranscript}`,
+  ].join('\n')
 }
 
 // Fire-and-forget canvas push. Used to mirror agent activity (tool calls,

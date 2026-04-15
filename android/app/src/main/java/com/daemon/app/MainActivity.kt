@@ -541,10 +541,24 @@ fun DaemonWebView(token: String?, onConnectDevice: () -> Unit = {}, onTokenRecei
                                     document.documentElement.style.height = px;
                                     document.body.style.height = px;
                                     document.body.style.minHeight = px;
+                                    // .chat-container — the root /chat page
                                     document.querySelectorAll('.chat-container').forEach(function(el){
                                         el.style.height = px;
                                         el.style.minHeight = px;
                                         el.style.maxHeight = px;
+                                    });
+                                    // Tailwind min-h-screen / min-h-[100dvh] / h-screen / h-[100dvh]
+                                    // — used by /chat/[name] and other per-project pages.
+                                    var sel = '[class*="min-h-screen"],[class*="min-h-[100dvh]"],[class*="h-screen"],[class*="h-[100dvh]"],[class*="h-[100vh]"]';
+                                    document.querySelectorAll(sel).forEach(function(el){
+                                        el.style.minHeight = px;
+                                        el.style.height = px;
+                                    });
+                                    // Failsafe: any direct body child currently rendered at 0 height.
+                                    Array.from(document.body.children).forEach(function(el){
+                                        if (el.offsetHeight === 0 && el.tagName !== 'SCRIPT' && el.tagName !== 'STYLE') {
+                                            el.style.minHeight = px;
+                                        }
                                     });
                                 }
                                 applyHeight();
