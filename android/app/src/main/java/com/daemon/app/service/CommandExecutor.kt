@@ -55,6 +55,15 @@ object CommandExecutor {
     suspend fun takePhoto(context: Context, cmd: JSONObject): JSONObject {
         val cameraId = cmd.optString("camera_id", "0")
         Log.d("CommandExecutor", "takePhoto called with cameraId=$cameraId")
+        // B4: fail fast when screen is locked — Camera2 will hang indefinitely
+        // trying to open a capture session without an active activity surface,
+        // absorbing the relay's skill.invoke timeout and giving the agent zero
+        // signal to fall back. Tell the caller explicitly.
+        val km = context.getSystemService(Context.KEYGUARD_SERVICE) as? android.app.KeyguardManager
+        if (km?.isKeyguardLocked == true) {
+            Log.w("CommandExecutor", "takePhoto refused — keyguard locked")
+            return JSONObject().put("ok", false).put("error", "screen_locked")
+        }
         return try {
             val base64 = withTimeout(20000) { capturePhoto(context, cameraId) }
             Log.d("CommandExecutor", "Photo captured, base64 length=${base64.length}")
@@ -300,6 +309,14 @@ object CommandExecutor {
     fun sendNotification(context: Context, cmd: JSONObject): JSONObject {
         val title = cmd.optString("title", "daemon")
         val body = cmd.optString("body", "")
+        // Optional tap target — when set, tapping the notification opens
+        // this URL via ACTION_VIEW. The user-tap counts as user
+        // interaction, so Android lets the activity launch even when a
+        // direct startActivity() from the foreground service would have
+        // been silently blocked (the "send_whatsapp / open_app does
+        // nothing" bug, B5). Use this from the relay as a reliable way
+        // to "open WhatsApp with a prefilled draft" / "open Spotify".
+        val tapUrl = cmd.optString("tap_url", "")
 
         val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -308,15 +325,32 @@ object CommandExecutor {
             )
         }
 
-        val notification = android.app.Notification.Builder(context, "daemon_msgs")
+        val builder = android.app.Notification.Builder(context, "daemon_msgs")
             .setContentTitle(title)
             .setContentText(body)
             .setSmallIcon(android.R.drawable.ic_dialog_info)
             .setAutoCancel(true)
-            .build()
 
-        nm.notify(System.currentTimeMillis().toInt(), notification)
-        return JSONObject().put("sent", true)
+        if (tapUrl.isNotBlank()) {
+            try {
+                val viewIntent = android.content.Intent(
+                    android.content.Intent.ACTION_VIEW,
+                    android.net.Uri.parse(tapUrl),
+                ).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                val pi = android.app.PendingIntent.getActivity(
+                    context,
+                    System.currentTimeMillis().toInt(),
+                    viewIntent,
+                    android.app.PendingIntent.FLAG_IMMUTABLE or android.app.PendingIntent.FLAG_UPDATE_CURRENT,
+                )
+                builder.setContentIntent(pi)
+            } catch (e: Exception) {
+                Log.w("CommandExecutor", "sendNotification: bad tap_url '$tapUrl': ${e.message}")
+            }
+        }
+
+        nm.notify(System.currentTimeMillis().toInt(), builder.build())
+        return JSONObject().put("sent", true).put("tap_url", tapUrl)
     }
 
     fun listFiles(cmd: JSONObject): JSONObject {
@@ -509,8 +543,43 @@ object CommandExecutor {
                 }
             } else {
                 intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                context.startActivity(intent)
-                Log.i("CommandExecutor", "openApp launched $packageName")
+                // B5: from a background foreground-service, startActivity is
+                // silently dropped by Android 10+ unless the user recently
+                // touched the daemon app. Post a high-priority full-screen
+                // notification with a PendingIntent — Android honours that as
+                // a user-initiated launch. Notification is dismissed on tap.
+                val pi = android.app.PendingIntent.getActivity(
+                    context, packageName.hashCode(), intent,
+                    android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE,
+                )
+                val channelId = "daemon_open_app"
+                val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as android.app.NotificationManager
+                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O
+                    && nm.getNotificationChannel(channelId) == null) {
+                    nm.createNotificationChannel(
+                        android.app.NotificationChannel(
+                            channelId, "Open app",
+                            android.app.NotificationManager.IMPORTANCE_HIGH,
+                        ),
+                    )
+                }
+                val notif = androidx.core.app.NotificationCompat.Builder(context, channelId)
+                    .setContentTitle("Opening $packageName")
+                    .setContentText("Tap to launch")
+                    .setSmallIcon(android.R.drawable.ic_menu_send)
+                    .setPriority(androidx.core.app.NotificationCompat.PRIORITY_HIGH)
+                    .setCategory(androidx.core.app.NotificationCompat.CATEGORY_CALL)
+                    .setFullScreenIntent(pi, true)
+                    .setContentIntent(pi)
+                    .setAutoCancel(true)
+                    .build()
+                val notifId = packageName.hashCode()
+                nm.notify(notifId, notif)
+                // Also try direct startActivity — if the user is already
+                // interactive (app foregrounded recently), this launches
+                // immediately without the notification cue.
+                try { context.startActivity(intent) } catch (_: Exception) {}
+                Log.i("CommandExecutor", "openApp launched $packageName (with full-screen fallback)")
                 JSONObject().apply {
                     put("ok", true)
                     put("package", packageName)

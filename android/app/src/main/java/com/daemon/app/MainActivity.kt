@@ -450,7 +450,14 @@ fun DaemonWebView(token: String?, onConnectDevice: () -> Unit = {}, onTokenRecei
     AndroidView(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color(0xFF0A0A0A)),
+            .background(Color(0xFF0A0A0A))
+            // Re-add system bar insets. Removed in f51e5b2 ("fix: mobile
+            // rendering, diagrams, signed APK flow") — that commit thought
+            // edge-to-edge was the right call but it makes the WebView
+            // slide under the status bar (Wi-Fi/clock unreachable) and
+            // under the gesture bar at the bottom.
+            .statusBarsPadding()
+            .navigationBarsPadding(),
         factory = { context ->
             WebView(context).apply {
                 // Dark background to prevent white flash

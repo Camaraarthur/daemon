@@ -94,7 +94,8 @@ class DaemonService : Service() {
 
     // Connection state
     private var currentBackoffMs = INITIAL_BACKOFF_MS
-    private var isConnected = false
+    @Volatile private var isConnected = false
+    @Volatile private var isConnecting = false
     private var lastPongTime = 0L
     private var reconnectJob: Job? = null
     private var heartbeatJob: Job? = null
@@ -352,6 +353,13 @@ class DaemonService : Service() {
     // ── Connection Management ────────────────────────────────────────
 
     private fun connectWithBackoff() {
+        // Idempotency — bail if a connect is already in flight or succeeded.
+        // Fixes the B1/B2 storm where onAvailable + onCapabilitiesChanged +
+        // ACTION_START each raced to spawn their own WS.
+        if (isConnected || isConnecting) {
+            Log.d(TAG, "connectWithBackoff skipped (connected=$isConnected connecting=$isConnecting)")
+            return
+        }
         reconnectJob?.cancel()
         reconnectJob = scope.launch {
             connectAttempt++
@@ -361,6 +369,12 @@ class DaemonService : Service() {
     }
 
     private fun scheduleReconnect() {
+        // Don't schedule if we're already reconnecting or connected. Eliminates
+        // the ghost-reconnect race that was killing healthy new sockets.
+        if (isConnected || isConnecting) {
+            Log.d(TAG, "scheduleReconnect skipped (connected=$isConnected connecting=$isConnecting)")
+            return
+        }
         reconnectJob?.cancel()
         reconnectJob = scope.launch {
             // Exponential backoff with jitter
@@ -375,11 +389,21 @@ class DaemonService : Service() {
             currentBackoffMs = min((currentBackoffMs * BACKOFF_MULTIPLIER).toLong(), MAX_BACKOFF_MS)
 
             connectAttempt++
+            if (isConnected || isConnecting) {
+                Log.d(TAG, "scheduleReconnect fired but already connected, skipping")
+                return@launch
+            }
             connectWebSocket()
         }
     }
 
     private fun connectWebSocket() {
+        if (isConnecting) {
+            Log.d(TAG, "connectWebSocket called while already connecting, skipping")
+            return
+        }
+        isConnecting = true
+
         // Close any existing connection
         try { webSocket?.close(1000, null) } catch (_: Exception) {}
         webSocket = null
@@ -393,6 +417,10 @@ class DaemonService : Service() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
                 Log.d(TAG, "WebSocket connected to $serverUrl")
                 isConnected = true
+                isConnecting = false
+                // Kill any stale reconnect timer that may have been scheduled
+                // by a predecessor's onClosed callback before we opened.
+                reconnectJob?.cancel()
                 currentBackoffMs = INITIAL_BACKOFF_MS // Reset backoff on success
                 connectAttempt = 0
                 lastPongTime = System.currentTimeMillis()
@@ -438,7 +466,15 @@ class DaemonService : Service() {
 
             override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
                 Log.d(TAG, "WebSocket closed: $code $reason")
+                // Only act if this close is for the CURRENT socket. Stale
+                // sockets (replaced by successful reconnect) must not trigger
+                // another reconnect cycle.
+                if (this@DaemonService.webSocket !== webSocket) {
+                    Log.d(TAG, "  (stale socket, ignored)")
+                    return
+                }
                 isConnected = false
+                isConnecting = false
                 stopHeartbeat()
                 updateNotification("Disconnected")
                 scheduleReconnect()
@@ -446,7 +482,12 @@ class DaemonService : Service() {
 
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
                 Log.e(TAG, "WebSocket error: ${t.message}")
+                if (this@DaemonService.webSocket !== webSocket) {
+                    Log.d(TAG, "  (stale socket failure, ignored)")
+                    return
+                }
                 isConnected = false
+                isConnecting = false
                 stopHeartbeat()
                 updateNotification("Connection failed")
                 scheduleReconnect()
@@ -620,6 +661,18 @@ class DaemonService : Service() {
                     }
                     "heartbeat_ack" -> {
                         lastPongTime = System.currentTimeMillis()
+                        null
+                    }
+                    // B6: server-driven app-level ping/pong so Doze-masked
+                    // zombies are detected within seconds, not minutes.
+                    "app_ping" -> {
+                        lastPongTime = System.currentTimeMillis()
+                        val t = cmd.optLong("t", 0L)
+                        webSocket?.send(JSONObject().apply {
+                            put("type", "app_pong")
+                            put("t", t)
+                            put("device_t", System.currentTimeMillis())
+                        }.toString())
                         null
                     }
                     "registered" -> {

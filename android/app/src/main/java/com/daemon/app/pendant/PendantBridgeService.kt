@@ -59,6 +59,32 @@ class PendantBridgeService(
 
     fun start() {
         debugLog("PendantBridge starting...")
+        // B3 fix: if BT adapter isn't ready yet at service start (common during
+        // app cold-start), defer the connect until it is. Without this, the
+        // bonded-address fast path fails silently and user has to tap "Connect
+        // device" to re-kick.
+        val btAdapter = (context.getSystemService(Context.BLUETOOTH_SERVICE)
+                as? android.bluetooth.BluetoothManager)?.adapter
+        if (btAdapter == null || !btAdapter.isEnabled) {
+            debugLog("BT adapter not ready (${btAdapter?.state}) — retrying start() in 3s")
+            scope.launch {
+                var tries = 0
+                while (tries < 10 && !(btAdapter?.isEnabled == true)) {
+                    delay(1000); tries++
+                }
+                if (btAdapter?.isEnabled == true) {
+                    debugLog("BT ready after ${tries}s, starting")
+                    startInternal()
+                } else {
+                    debugLog("BT still off after 10s, giving up on auto-connect")
+                }
+            }
+            return
+        }
+        startInternal()
+    }
+
+    private fun startInternal() {
         val address = getBondedAddress()
         if (address != null) {
             debugLog("Auto-connecting to bonded pendant: $address")
