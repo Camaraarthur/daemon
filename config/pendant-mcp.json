@@ -1,0 +1,36 @@
+{
+  "mcpServers": {
+    "canvas": {
+      "type": "stdio",
+      "command": "node",
+      "args": ["/home/arthur/daemon/cli/mcp-canvas-server.mjs"],
+      "env": {
+        "DAEMON_RELAY_URL": "https://my.daemon.page",
+        "DAEMON_SESSION_TOKEN": "__DAEMON_SESSION_TOKEN__",
+        "DAEMON_CANVAS_CLIENT": "pendant-agent"
+      }
+    },
+    "composio": {
+      "type": "stdio",
+      "command": "node",
+      "args": ["/home/arthur/daemon/cli/mcp-composio-server.mjs"],
+      "env": {
+        "COMPOSIO_API_KEY": "__COMPOSIO_API_KEY__",
+        "DAEMON_USER_EMAIL": "__DAEMON_USER_EMAIL__"
+      }
+    },
+    "phone": {
+      "type": "stdio",
+      "command": "node",
+      "args": ["/home/arthur/daemon/cli/mcp-phone-server.mjs"],
+      "env": {
+        "DAEMON_RELAY_HTTP": "http://localhost:4801",
+        "DAEMON_RELAY_HTTPS": "https://my.daemon.page",
+        "DAEMON_SESSION_TOKEN": "__DAEMON_SESSION_TOKEN__",
+        "DAEMON_USER_ID": "__DAEMON_USER_ID__",
+        "DAEMON_PRIMARY_DEVICE_ID": "__DAEMON_PRIMARY_DEVICE_ID__",
+        "DAEMON_NAME": "__DAEMON_NAME__"
+      }
+    }
+  }
+}
