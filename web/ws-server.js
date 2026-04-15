@@ -723,13 +723,43 @@ wss.on('connection', (ws, req) => {
 
           deviceUserId = authUserId || 0 // 0 = unauthenticated (legacy/debug)
 
-          // If device was previously registered under this user, count as reconnection
+          // Anti-flap. If a duplicate connection arrives within 5 s of an
+          // old still-open one, reject the NEW one — it's the duplicate
+          // spawn, not the legitimate reconnect. Kicking the old socket
+          // every time produces a flap loop (old reconnects, kicks new,
+          // forever) when both clients hold the same device_token (e.g.
+          // two foreground service instances on Android, or a stale
+          // process that survived under Doze).
+          //
+          // Otherwise — old was either dead/stale or has been around long
+          // enough that this is a real reconnect — replace it normally.
           const oldDevice = getUserDevice(deviceUserId, msg.device_id)
           if (oldDevice) {
+            const oldRegisteredAt = oldDevice.registeredAt ? Date.parse(oldDevice.registeredAt) : 0
+            const oldAgeMs = Date.now() - oldRegisteredAt
+            const oldStillOpen = oldDevice.ws && oldDevice.ws.readyState === 1 // WebSocket.OPEN
+            const FLAP_WINDOW_MS = 5000
+
+            if (oldStillOpen && oldAgeMs < FLAP_WINDOW_MS) {
+              console.warn(`[ws] Anti-flap: rejecting duplicate connection for ${msg.device_id} (old conn is ${oldAgeMs} ms old, still open). Telling new client to back off 30 s.`)
+              try {
+                ws.send(JSON.stringify({
+                  type: 'auth_error',
+                  code: 'duplicate_connection',
+                  message: 'Another client is already connected with this device_token. Wait 30 s before retrying.',
+                  retry_after_ms: 30000,
+                }))
+              } catch (_) {}
+              ws.close(4002, 'duplicate_connection')
+              break
+            }
+
             stats.reconnections = (oldDevice.stats?.reconnections || 0) + 1
-            console.log(`[ws] Device reconnected: ${msg.device_id} (reconnection #${stats.reconnections})`)
-            // Close old connection cleanly
-            try { oldDevice.ws.close(1000, 'new connection') } catch (_) {}
+            console.log(`[ws] Device reconnected: ${msg.device_id} (reconnection #${stats.reconnections}, old ${oldAgeMs} ms)`)
+            // Use a custom close code so the old client can distinguish
+            // "you were replaced" from a normal disconnect and back off
+            // its own reconnect attempts to avoid joining the flap.
+            try { oldDevice.ws.close(4003, 'replaced_by_newer') } catch (_) {}
             removeDevice(deviceUserId, msg.device_id)
           }
 
