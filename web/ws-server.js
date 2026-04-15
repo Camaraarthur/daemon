@@ -873,8 +873,23 @@ wss.on('connection', (ws, req) => {
 
   ws.on('close', () => {
     if (deviceId && deviceUserId !== null) {
-      console.log(`[ws] Device disconnected: ${deviceId} [user:${deviceUserId}]`)
-      removeDevice(deviceUserId, deviceId)
+      console.log(`[ws] Device disconnected: ${deviceId} [user:${deviceUserId}] — keeping in map for 30s grace`)
+      // GRACE PERIOD. Don't remove the device immediately on disconnect.
+      // Mobile clients flap (Doze, network handover, BLE bursts) and the
+      // disconnect-then-reconnect window is < 2 s in normal operation.
+      // Removing eagerly makes /tools and /api/devices report "offline"
+      // during the gap, which then makes the pendant agent refuse to
+      // dispatch tools to a device that's actually about to be back.
+      // After 30 s of true silence, drop it.
+      const stale = getUserDevice(deviceUserId, deviceId)
+      if (stale) stale.disconnectedAt = Date.now()
+      setTimeout(() => {
+        const cur = getUserDevice(deviceUserId, deviceId)
+        if (cur && cur.disconnectedAt && Date.now() - cur.disconnectedAt >= 30000) {
+          console.log(`[ws] Grace period expired, removing ${deviceId} [user:${deviceUserId}]`)
+          removeDevice(deviceUserId, deviceId)
+        }
+      }, 30000)
     }
   })
 
@@ -886,7 +901,42 @@ wss.on('connection', (ws, req) => {
     isAlive = true
   })
 
-  // Server-side ping — detect dead connections
+  // App-level heartbeat. Standard ws.ping() rides at the protocol level
+  // and many mobile clients (Android in Doze, iOS suspended) keep
+  // responding to it via the OS even though the app process has stopped
+  // dispatching messages. So a "pong" back doesn't actually prove the
+  // app is alive. We send a JSON app_ping that the device daemon must
+  // reply to with app_pong inside the message handler. If app_pong is
+  // missed twice in a row, the connection is a zombie — terminate it
+  // so the client reconnects cleanly.
+  let appPongMissed = 0
+  const appPingInterval = setInterval(() => {
+    if (ws.readyState !== WebSocket.OPEN) {
+      clearInterval(appPingInterval)
+      return
+    }
+    if (appPongMissed >= 2) {
+      console.log(`[ws] app-level zombie detected for ${deviceId} (${appPongMissed} missed), terminating`)
+      clearInterval(appPingInterval)
+      ws.terminate()
+      return
+    }
+    try {
+      ws.send(JSON.stringify({ type: 'app_ping', t: Date.now() }))
+      appPongMissed++
+    } catch (_) {
+      clearInterval(appPingInterval)
+    }
+  }, 10_000)
+  ws.on('message', (raw) => {
+    try {
+      const m = JSON.parse(raw.toString())
+      if (m && m.type === 'app_pong') appPongMissed = 0
+    } catch {}
+  })
+
+  // Server-side ping — detect dead connections (kernel-level only;
+  // the app_ping above catches the higher-level zombies)
   const pingInterval = setInterval(() => {
     if (!isAlive) {
       console.log(`[ws] Dead connection detected for ${deviceId}, terminating`)
@@ -902,7 +952,10 @@ wss.on('connection', (ws, req) => {
     }
   }, PING_INTERVAL)
 
-  ws.on('close', () => clearInterval(pingInterval))
+  ws.on('close', () => {
+    clearInterval(pingInterval)
+    clearInterval(appPingInterval)
+  })
 })
 
 // API to send commands to devices (used internally)
