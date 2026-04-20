@@ -207,6 +207,8 @@ function ProjectGroup({
   onSelectThread,
   onRename,
   onArchive,
+  onSetParent,
+  allProjects,
 }: {
   project: Project
   children: Project[]
@@ -220,9 +222,12 @@ function ProjectGroup({
   onSelectThread: (threadId: string, projectId: number) => void
   onRename: (projectId: number, newName: string) => void
   onArchive?: (projectId: number) => void
+  onSetParent?: (projectId: number, parentId: number | null) => void
+  allProjects?: Project[]
 }) {
   const hasChildren = children.length > 0
   const [editing, setEditing] = useState(false)
+  const [pickingParent, setPickingParent] = useState(false)
   const [editName, setEditName] = useState(
     projectLabel(project) === 'Untitled' ? '' : projectLabel(project),
   )
@@ -285,6 +290,24 @@ function ProjectGroup({
               </svg>
             </button>
           )}
+          {/* Move under parent — visible on hover. Opens an inline <select>
+               of top-level projects (excluding self and descendants). */}
+          {!editing && onSetParent && allProjects && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation()
+                setPickingParent(true)
+              }}
+              className="opacity-0 group-hover:opacity-100 text-[#444] hover:text-[#888] transition-all shrink-0"
+              title={project.parent_id ? 'Change / remove parent' : 'Move under a project'}
+            >
+              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                {/* folder-tree-ish icon */}
+                <path d="M3 7h6l2 2h10v10H3V7z" />
+                <line x1="7" y1="12" x2="17" y2="12" />
+              </svg>
+            </button>
+          )}
           {/* Archive (soft delete) — visible on hover */}
           {!editing && onArchive && (
             <button
@@ -302,6 +325,33 @@ function ProjectGroup({
                 <line x1="6" y1="6" x2="18" y2="18" />
               </svg>
             </button>
+          )}
+          {/* Parent picker inline — opens below the row when the folder
+              icon is clicked. Filters out self + descendants to prevent
+              cycles. Pick "— none —" to make this project top-level. */}
+          {pickingParent && onSetParent && allProjects && (
+            <select
+              autoFocus
+              onClick={(e) => e.stopPropagation()}
+              onBlur={() => setPickingParent(false)}
+              onChange={(e) => {
+                const v = e.target.value
+                const newParent = v === '' ? null : parseInt(v, 10)
+                onSetParent(project.id, newParent)
+                setPickingParent(false)
+              }}
+              className="text-[10px] bg-[#222] text-white border border-[#444] rounded px-1 py-0.5 max-w-[120px]"
+              defaultValue={project.parent_id ? String(project.parent_id) : ''}
+            >
+              <option value="">— top-level —</option>
+              {allProjects
+                .filter((p) => p.id !== project.id)
+                .map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {projectLabel(p)}
+                  </option>
+                ))}
+            </select>
           )}
           {project.last_active && !editing && (
             <span className="text-[9px] text-[#333] shrink-0">{timeAgo(project.last_active)}</span>
@@ -719,6 +769,15 @@ export default function ProjectSidebar({
                 })
                 fetchProjects()
               }}
+              onSetParent={async (id, parentId) => {
+                await fetch(`/api/projects/${id}/parent`, {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ parent_id: parentId }),
+                })
+                fetchProjects()
+              }}
+              allProjects={projects}
             />
           ))
         )}

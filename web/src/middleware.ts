@@ -89,7 +89,7 @@ export function middleware(request: NextRequest) {
   const subdomain = getUserSubdomain(host)
   if (subdomain) {
     // These paths are always handled by the Next.js app, not the hosted site
-    const appPaths = ['/chat', '/login', '/settings', '/api/', '/_next/', '/canvas', '/download']
+    const appPaths = ['/chat', '/login', '/settings', '/api/', '/_next/', '/canvas', '/download', '/files']
     const isAppPath = appPaths.some(p => path === p || path.startsWith(p + '/') || path.startsWith(p))
 
     // Daemon-owned root assets — never route these to hosted sites

@@ -486,7 +486,7 @@ export function updateProject(userId: number, projectId: number, data: Partial<P
   const values: any[] = []
 
   for (const [key, val] of Object.entries(data)) {
-    if (['name', 'display_name', 'local_path', 'git_remote', 'git_branch', 'stack', 'domain', 'service_name', 'settings', 'last_active'].includes(key)) {
+    if (['name', 'display_name', 'local_path', 'git_remote', 'git_branch', 'stack', 'domain', 'service_name', 'settings', 'last_active', 'parent_id'].includes(key)) {
       fields.push(`${key} = ?`)
       values.push(val)
     }

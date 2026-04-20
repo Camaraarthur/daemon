@@ -698,6 +698,14 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    // Bump the project's last_active so the sidebar sorts it to the top.
+    // This is the "most recently used" signal readers of listProjects rely
+    // on. Without it, the sidebar gets frozen in whatever order projects
+    // were last modified (usually creation order).
+    if (resolvedProjectId) {
+      try { db.touchProject(resolvedProjectId, parseInt(userId) || 0) } catch {}
+    }
+
     // Persist user message to SQLite
     try {
       // Ensure thread exists in DB
