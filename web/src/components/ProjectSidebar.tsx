@@ -580,6 +580,39 @@ export default function ProjectSidebar({
   const [devices, setDevices] = useState<Array<{ id: string; name: string; platform: string; status: string; token_id?: number }>>([])
   const [showPairing, setShowPairing] = useState(false)
 
+  // Reorganize / auto-indexer state
+  const [indexing, setIndexing] = useState(false)
+  const [indexSummary, setIndexSummary] = useState<string | null>(null)
+
+  const handleReorganize = async () => {
+    if (indexing) return
+    setIndexing(true)
+    setIndexSummary(null)
+    try {
+      const res = await fetch('/api/admin/indexer/run', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ dry: false }),
+      })
+      const data = await res.json()
+      if (data?.summary) {
+        const s = data.summary
+        setIndexSummary(`${s.applied ?? 0} applied / ${s.classified ?? 0} classified`)
+      } else if (data?.error) {
+        setIndexSummary(`error: ${String(data.error).slice(0, 60)}`)
+      } else {
+        setIndexSummary('done')
+      }
+      // Refresh the sidebar so moved / renamed projects show up.
+      fetchProjects()
+    } catch (e: any) {
+      setIndexSummary(`error: ${e?.message || 'failed'}`)
+    } finally {
+      setIndexing(false)
+      setTimeout(() => setIndexSummary(null), 6000)
+    }
+  }
+
   const refreshDevices = () => {
     fetch('/api/devices')
       .then(r => r.json())
@@ -689,6 +722,25 @@ export default function ProjectSidebar({
             />
           ))
         )}
+      </div>
+
+      {/* Reorganize — runs the chat->project auto-indexer for orphan /
+          untitled threads. Cheap Haiku classification, moves threads
+          under the right parent project or renames the auto-untitled
+          placeholder. */}
+      <div className="border-t border-[#222] px-2 py-1.5 shrink-0">
+        <button
+          onClick={handleReorganize}
+          disabled={indexing}
+          className="w-full text-left text-[10px] text-[#555] hover:text-[#ff0505] disabled:opacity-40 transition-colors flex items-center gap-1.5 px-2 py-1 rounded hover:bg-[#151515]"
+          title="Auto-classify untitled/orphan threads into the right project"
+        >
+          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7" />
+          </svg>
+          <span className="flex-1">{indexing ? 'reorganizing…' : 'reorganize threads'}</span>
+          {indexSummary && <span className="text-[9px] text-[#444]">{indexSummary}</span>}
+        </button>
       </div>
 
       {/* Devices section */}
