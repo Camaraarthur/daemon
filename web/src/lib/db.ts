@@ -425,10 +425,20 @@ export interface Project {
   parent_id: number | null
 }
 
-export function listProjects(userId: number): Project[] {
-  return getDb().prepare(
+export function listProjects(userId: number, opts?: { includeArchived?: boolean }): Project[] {
+  const all = getDb().prepare(
     'SELECT * FROM projects WHERE user_id = ? ORDER BY last_active DESC NULLS LAST, created_at DESC'
   ).all(userId) as Project[]
+  if (opts?.includeArchived) return all
+  // Filter out projects flagged archived in their settings JSON. Soft delete
+  // — the row stays so chat_threads + history still resolve, just hidden
+  // from the sidebar.
+  return all.filter((p) => {
+    try {
+      const s = JSON.parse(p.settings || '{}')
+      return !s.archived
+    } catch { return true }
+  })
 }
 
 export function getProject(userId: number, projectId: number): Project | undefined {

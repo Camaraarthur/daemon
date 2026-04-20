@@ -11,13 +11,78 @@ import { useProjectsStore, Project, Thread } from '@/store/projects'
  * auto-titling fills in display_name.
  */
 function projectLabel(project: Project): string {
+  // If the name is an auto-slug (untitled-xxxx) we always show "Untitled",
+  // even if display_name was filled in with the slug itself (legacy bug).
+  // The real test: name starts with "untitled-" AND display_name either
+  // is empty or equals the name.
+  if (project.name && project.name.startsWith('untitled-')) {
+    if (!project.display_name || project.display_name === project.name) {
+      return 'Untitled'
+    }
+  }
   if (project.display_name && project.display_name.trim()) {
     return project.display_name
   }
-  if (project.name && project.name.startsWith('untitled-')) {
-    return 'Untitled'
-  }
   return project.name || 'Untitled'
+}
+
+/**
+ * Quick-access nav for the live canvas + the public daemon page.
+ * Shown at the very top of the sidebar so phone users can jump
+ * between "what the agent is doing right now" (canvas), the
+ * persistent shareable surface (public page), and chat without
+ * fishing for URLs.
+ */
+function SurfaceNav() {
+  const [daemonName, setDaemonName] = useState<string | null>(null)
+  useEffect(() => {
+    let alive = true
+    fetch('/api/me')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => { if (alive && d?.daemon_name) setDaemonName(d.daemon_name) })
+      .catch(() => {})
+    return () => { alive = false }
+  }, [])
+
+  // Public page lives at <daemon_name>.daemon.page; from inside any
+  // hosted Next route we link to "/" on that subdomain. Fall back to
+  // the relative root if we don't know the name yet.
+  const publicHref = daemonName ? `https://${daemonName}.daemon.page/` : '/'
+
+  return (
+    <div className="px-2 pt-2 pb-1 border-b border-[#222] shrink-0 flex gap-1">
+      <a
+        href="/canvas"
+        className="flex-1 text-center text-[11px] text-[#999] hover:text-white bg-[#1a1a1a] hover:bg-[#222] py-1.5 rounded transition-colors"
+        title="Live agent surface"
+      >
+        canvas
+      </a>
+      <a
+        href={publicHref}
+        target={daemonName ? '_blank' : undefined}
+        rel="noreferrer"
+        className="flex-1 text-center text-[11px] text-[#999] hover:text-white bg-[#1a1a1a] hover:bg-[#222] py-1.5 rounded transition-colors"
+        title="Public page"
+      >
+        page
+      </a>
+      <a
+        href="/chat"
+        className="flex-1 text-center text-[11px] text-[#999] hover:text-white bg-[#1a1a1a] hover:bg-[#222] py-1.5 rounded transition-colors"
+        title="Chat"
+      >
+        chat
+      </a>
+      <a
+        href="/files"
+        className="flex-1 text-center text-[11px] text-[#999] hover:text-white bg-[#1a1a1a] hover:bg-[#222] py-1.5 rounded transition-colors"
+        title="Drop / read text files across devices"
+      >
+        files
+      </a>
+    </div>
+  )
 }
 
 function timeAgo(dateStr: string | null): string {
@@ -37,13 +102,11 @@ function timeAgo(dateStr: string | null): string {
 }
 
 function StatusDot({ project }: { project: Project }) {
-  let color = 'bg-[#333]'
-  if (project.service_name) {
-    color = 'bg-green-500'
-  } else if (project.local_path) {
-    color = 'bg-yellow-500'
-  }
-  return <div className={`w-1.5 h-1.5 rounded-full shrink-0 ${color}`} />
+  // Only show a dot when the project has an actively running service.
+  // The "has local_path" yellow dot was confusing — most projects have
+  // a path, the dot doesn't tell the user anything actionable.
+  if (!project.service_name) return null
+  return <div className="w-1.5 h-1.5 rounded-full shrink-0 bg-green-500" />
 }
 
 function HistoryExpander({
@@ -143,6 +206,7 @@ function ProjectGroup({
   onSelectProject,
   onSelectThread,
   onRename,
+  onArchive,
 }: {
   project: Project
   children: Project[]
@@ -155,6 +219,7 @@ function ProjectGroup({
   onSelectProject: (projectId: number) => void
   onSelectThread: (threadId: string, projectId: number) => void
   onRename: (projectId: number, newName: string) => void
+  onArchive?: (projectId: number) => void
 }) {
   const hasChildren = children.length > 0
   const [editing, setEditing] = useState(false)
@@ -217,6 +282,24 @@ function ProjectGroup({
               <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                 <path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7" />
                 <path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z" />
+              </svg>
+            </button>
+          )}
+          {/* Archive (soft delete) — visible on hover */}
+          {!editing && onArchive && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation()
+                if (confirm(`Archive "${projectLabel(project)}"? Hidden from the sidebar but threads + history are kept.`)) {
+                  onArchive(project.id)
+                }
+              }}
+              className="opacity-0 group-hover:opacity-100 text-[#444] hover:text-[#ff0505] transition-all shrink-0"
+              title="Archive (hide from sidebar)"
+            >
+              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <line x1="18" y1="6" x2="6" y2="18" />
+                <line x1="6" y1="6" x2="18" y2="18" />
               </svg>
             </button>
           )}
@@ -446,19 +529,26 @@ export default function ProjectSidebar({
     fetchProjects()
   }, [fetchProjects])
 
-  // FLAT project list — no sub-projects in v0. One conversation per project.
+  // Tree by parent_id. Projects with parent_id are nested under their
+  // parent; everything else is top-level.
   const { topLevel, childrenMap } = useMemo(() => {
     const childrenMap: Record<number, Project[]> = {}
-    // Treat all projects as top-level regardless of legacy parent_id
-    const topLevel = [...projects]
-
-    // Sort by last_active DESC (most recent first)
-    topLevel.sort((a, b) => {
+    const topLevel: Project[] = []
+    for (const p of projects) {
+      const parent = (p as any).parent_id
+      if (parent && projects.some((q) => q.id === parent)) {
+        ;(childrenMap[parent] ||= []).push(p)
+      } else {
+        topLevel.push(p)
+      }
+    }
+    const byRecent = (a: Project, b: Project) => {
       if (!a.last_active) return 1
       if (!b.last_active) return -1
       return b.last_active.localeCompare(a.last_active)
-    })
-
+    }
+    topLevel.sort(byRecent)
+    for (const k of Object.keys(childrenMap)) childrenMap[Number(k)].sort(byRecent)
     return { topLevel, childrenMap }
   }, [projects])
 
@@ -522,6 +612,9 @@ export default function ProjectSidebar({
 
   return (
     <div className="flex flex-col h-full bg-[#111]">
+      {/* Surfaces — quick access to canvas + public page from anywhere */}
+      <SurfaceNav />
+
       {/* Header */}
       <div className="p-3 border-b border-[#222] flex items-center justify-between shrink-0">
         <span className="text-[10px] font-semibold text-[#555] uppercase tracking-widest">Projects</span>
@@ -582,6 +675,14 @@ export default function ProjectSidebar({
                   method: 'PUT',
                   headers: { 'Content-Type': 'application/json' },
                   body: JSON.stringify({ id, display_name: name }),
+                })
+                fetchProjects()
+              }}
+              onArchive={async (id) => {
+                await fetch(`/api/projects/${id}/archive`, {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ archived: true }),
                 })
                 fetchProjects()
               }}
