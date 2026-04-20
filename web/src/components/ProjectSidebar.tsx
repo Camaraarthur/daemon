@@ -186,8 +186,10 @@ function SubProject({
         isActive ? 'bg-[#1a1a1a]' : 'hover:bg-[#151515]'
       }`}
     >
+      {/* Corner glyph so sub-projects read as visually nested, not just indented */}
+      <span className="text-[#444] text-[10px] font-mono shrink-0 select-none">└</span>
       <StatusDot project={project} />
-      <span className={`text-[11px] truncate flex-1 ${isActive ? 'text-white' : 'text-[#777]'}`}>
+      <span className={`text-[11px] truncate flex-1 ${isActive ? 'text-white' : 'text-[#9a9a9a]'}`}>
         {projectLabel(project)}
       </span>
     </button>
@@ -361,7 +363,7 @@ function ProjectGroup({
 
       {/* Expanded: sub-projects + history */}
       {isExpanded && (
-        <div className="ml-4 border-l border-[#1a1a1a] pl-1">
+        <div className="ml-4 border-l-2 border-[#2a2a2a] pl-2">
           {/* Sub-projects */}
           {hasChildren && (
             <div className="mt-0.5">
@@ -603,16 +605,29 @@ export default function ProjectSidebar({
   }, [projects])
 
   const handleSelectProject = (projectId: number) => {
+    // If the project has children (sub-projects), clicking it should ONLY
+    // toggle the sub-project tree — don't load messages, don't close the
+    // sidebar. The user clarified they use parent projects as grouping
+    // folders (Daemon contains Daemon Firmware, Daemon Main, etc.), not
+    // as chattable projects themselves. To chat in a project, click a
+    // leaf (no children) or a thread under History.
+    const children = childrenMap[projectId] || []
+    if (children.length > 0) {
+      toggleProject(projectId)
+      return
+    }
+
     const wasActive = activeProjectId === projectId
     setActiveProject(projectId)
     setActiveThread(null) // clear any thread selection — show merged timeline
     fetchProjectMessages(projectId)
-    // If selecting a new project, ensure it's expanded. If re-clicking active project, toggle.
     const isCurrentlyExpanded = expandedProjects.includes(projectId)
     if (wasActive || !isCurrentlyExpanded) {
       toggleProject(projectId)
     }
-    onClose?.()
+    // Sidebar NOTE: intentionally NOT calling onClose() here. Selecting
+    // a project shouldn't collapse the sidebar — user loses context on
+    // narrow windows. Only thread-select closes the sidebar.
   }
 
   const handleSelectThread = (threadId: string, projectId: number) => {
