@@ -191,6 +191,20 @@ function runMigrations(db) {
       CREATE INDEX IF NOT EXISTS idx_fact_emb_model ON fact_embeddings(model);
     `,
     ],
+    [
+      '006_files',
+      `
+      CREATE TABLE IF NOT EXISTS files (
+        id TEXT PRIMARY KEY,
+        title TEXT NOT NULL DEFAULT '',
+        body TEXT NOT NULL DEFAULT '',
+        mime TEXT NOT NULL DEFAULT 'text/markdown',
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE INDEX IF NOT EXISTS idx_files_updated ON files(updated_at DESC);
+    `,
+    ],
   ]
 
   const insertMigration = db.prepare(
@@ -592,4 +606,46 @@ export function recallMemory(project_id, query, limit = 20) {
 
   hits.sort((a, b) => b.score - a.score)
   return hits.slice(0, Number(limit))
+}
+
+// ── Files (pasted documents, cross-device) ────────────────
+
+export function listFiles(limit = 200) {
+  const db = getStore()
+  return db
+    .prepare(
+      `SELECT id, title, mime, created_at, updated_at, length(body) AS size
+       FROM files ORDER BY updated_at DESC LIMIT ?`,
+    )
+    .all(Number(limit))
+}
+
+export function getFile(id) {
+  const db = getStore()
+  return db.prepare(`SELECT * FROM files WHERE id = ?`).get(String(id)) || null
+}
+
+export function putFile({ id, title, body, mime }) {
+  const db = getStore()
+  const fid = id || (globalThis.crypto?.randomUUID?.() ||
+    `f_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`)
+  const t = String(title ?? '').slice(0, 500)
+  const b = String(body ?? '')
+  const m = String(mime || 'text/markdown').slice(0, 120)
+  db.prepare(
+    `INSERT INTO files (id, title, body, mime)
+     VALUES (?, ?, ?, ?)
+     ON CONFLICT(id) DO UPDATE SET
+       title = excluded.title,
+       body = excluded.body,
+       mime = excluded.mime,
+       updated_at = datetime('now')`,
+  ).run(fid, t, b, m)
+  return getFile(fid)
+}
+
+export function deleteFile(id) {
+  const db = getStore()
+  const info = db.prepare(`DELETE FROM files WHERE id = ?`).run(String(id))
+  return info.changes > 0
 }

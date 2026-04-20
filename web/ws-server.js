@@ -144,6 +144,12 @@ const ALLOWED_COMMAND_TYPES = new Set([
   // Vision §3.3: scheduler primitive (cron / schedule / loop)
   'schedule.create', 'schedule.list', 'schedule.get',
   'schedule.delete', 'schedule.set_enabled',
+  // /files page — pasted text documents, cross-device
+  'files.list', 'files.get', 'files.put', 'files.delete',
+  // Path B: persistent claude-code session per daemon thread.
+  // Spawns local `claude --session-id <thread_id>` on the device,
+  // uses Max subscription (no API key), streams events back.
+  'claude.send',
 ])
 const MAX_COMMAND_LENGTH = 10_000  // 10K chars
 const MAX_FILE_SIZE = 10 * 1024 * 1024  // 10MB
@@ -161,6 +167,12 @@ function validateCommand(command) {
     // Base64 is ~33% overhead, so raw size ~ dataSize * 0.75
     if (dataSize * 0.75 > MAX_FILE_SIZE) {
       return `File too large (estimated ${Math.round(dataSize * 0.75 / 1024 / 1024)}MB, max 10MB)`
+    }
+  } else if (command.type === 'files.put') {
+    // /files page documents can be large (pasted specs, transcripts). Cap at 2MB.
+    const size = (command.body ? String(command.body).length : 0) + (command.title ? String(command.title).length : 0)
+    if (size > 2 * 1024 * 1024) {
+      return `File body too large (${size} chars, max 2MB)`
     }
   } else {
     // Non-file commands: check overall size
@@ -901,39 +913,25 @@ wss.on('connection', (ws, req) => {
     isAlive = true
   })
 
-  // App-level heartbeat. Standard ws.ping() rides at the protocol level
-  // and many mobile clients (Android in Doze, iOS suspended) keep
-  // responding to it via the OS even though the app process has stopped
-  // dispatching messages. So a "pong" back doesn't actually prove the
-  // app is alive. We send a JSON app_ping that the device daemon must
-  // reply to with app_pong inside the message handler. If app_pong is
-  // missed twice in a row, the connection is a zombie — terminate it
-  // so the client reconnects cleanly.
+  // App-level heartbeat (B6) — DISABLED until the Android client side
+  // is wired to reply with {type:"app_pong"}. Currently no client
+  // implements it, so enabling this only kills good connections. The
+  // server-side code is preserved here for when the firmware/pendant
+  // agent ships the Android reply; un-comment to enable.
   let appPongMissed = 0
-  const appPingInterval = setInterval(() => {
-    if (ws.readyState !== WebSocket.OPEN) {
-      clearInterval(appPingInterval)
-      return
-    }
-    if (appPongMissed >= 2) {
-      console.log(`[ws] app-level zombie detected for ${deviceId} (${appPongMissed} missed), terminating`)
-      clearInterval(appPingInterval)
-      ws.terminate()
-      return
-    }
-    try {
-      ws.send(JSON.stringify({ type: 'app_ping', t: Date.now() }))
-      appPongMissed++
-    } catch (_) {
-      clearInterval(appPingInterval)
-    }
-  }, 10_000)
-  ws.on('message', (raw) => {
-    try {
-      const m = JSON.parse(raw.toString())
-      if (m && m.type === 'app_pong') appPongMissed = 0
-    } catch {}
-  })
+  const appPingInterval = null
+  // const appPingInterval = setInterval(() => {
+  //   if (ws.readyState !== WebSocket.OPEN) return clearInterval(appPingInterval)
+  //   if (appPongMissed >= 2) {
+  //     console.log(`[ws] app-level zombie detected for ${deviceId} (${appPongMissed} missed), terminating`)
+  //     clearInterval(appPingInterval); ws.terminate(); return
+  //   }
+  //   try { ws.send(JSON.stringify({ type: 'app_ping', t: Date.now() })); appPongMissed++ } catch (_) { clearInterval(appPingInterval) }
+  // }, 10_000)
+  // ws.on('message', (raw) => {
+  //   try { const m = JSON.parse(raw.toString()); if (m && m.type === 'app_pong') appPongMissed = 0 } catch {}
+  // })
+  void appPongMissed; void appPingInterval
 
   // Server-side ping — detect dead connections (kernel-level only;
   // the app_ping above catches the higher-level zombies)

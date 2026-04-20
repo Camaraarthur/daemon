@@ -235,6 +235,18 @@ const TOOLS = [
     },
   },
   {
+    name: 'page_set_html',
+    description:
+      "Replace the user's entire daemon page with arbitrary HTML. Wipes title/sections/gallery — agent has full canvas. Use when the user wants a fresh look or a single visual ('show only the weather', 'just a big number', 'a tweet-style card'). Sanitized server-side: <script>, <iframe>, on* handlers stripped. To go back to the section template use page_reset (still wired via the older host helpers).",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        html: { type: 'string', description: 'Full HTML body. Inline styles welcome. Wrapped in the dark daemon shell.' },
+      },
+      required: ['html'],
+    },
+  },
+  {
     name: 'phone_open_app',
     description:
       "Launch an app on the user's primary phone by Android package name. Examples: com.spotify.music (Spotify), com.google.android.GoogleCamera (Camera), com.whatsapp (WhatsApp), com.android.chrome (Chrome), com.google.android.apps.maps (Maps). Returns ok/error from the device.",
@@ -257,6 +269,20 @@ const TOOLS = [
         message: { type: 'string', description: 'Pre-filled message body. User taps Send.' },
       },
       required: ['phone', 'message'],
+    },
+  },
+  {
+    name: 'phone_notify_open',
+    description:
+      "Send a notification on the user's phone that, when tapped, opens a URL or app. Use this whenever you need to launch something on the phone — Android blocks direct activity launches from background services, but a user-tapped notification gets through. Ideal for: opening WhatsApp drafts (tap_url=https://wa.me/<phone>?text=<urlenc>), Spotify songs (tap_url=https://open.spotify.com/search/<query>), Maps (https://maps.google.com/?q=<addr>), Chrome to a URL, or any custom deep link. Title + body show in the notification panel.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        title: { type: 'string', description: 'Notification title (e.g. "Open Spotify").' },
+        body: { type: 'string', description: 'Notification body (e.g. "Tap to play Blinding Lights").' },
+        tap_url: { type: 'string', description: 'URL launched when notification is tapped. Universal Android intent: https://, spotify:, mailto:, geo:, intent://...' },
+      },
+      required: ['title', 'body', 'tap_url'],
     },
   },
 ]
@@ -333,6 +359,18 @@ async function callTool(name, args) {
         return [{ type: 'text', text: `Wrote "${heading}". ${canvasNote}; ${pageNote}.` }]
       }
 
+      case 'page_set_html': {
+        const html = String(args.html ?? '')
+        if (!html.trim()) return [{ type: 'text', text: 'Error: html required' }]
+        let pageNote = 'page: ok'
+        try {
+          await callPageUpdate('page_set_html', { html })
+        } catch (e) {
+          pageNote = `page: ${e.message}`
+        }
+        return [{ type: 'text', text: `Replaced page with ${html.length} chars of HTML. ${pageNote}` }]
+      }
+
       case 'phone_open_app': {
         const pkg = String(args.package_name ?? '').trim()
         if (!pkg) return [{ type: 'text', text: 'Error: package_name is required' }]
@@ -353,19 +391,58 @@ async function callTool(name, args) {
         const phone = String(args.phone ?? '').replace(/[^\d]/g, '')
         const message = String(args.message ?? '').trim()
         if (!phone || !message) return [{ type: 'text', text: 'Error: phone and message are required' }]
-        const skillResp = await invokeSkill('send_whatsapp', { phone, message })
+        // Use a notification with tap_url. Android blocks startActivity()
+        // from background services (B5), so the direct send_whatsapp
+        // Intent silently does nothing. A notification + user-tap counts
+        // as user interaction → activity launch is allowed → WhatsApp
+        // opens with the prefilled message. User then taps Send.
+        //
+        // https://wa.me/... is the format that worked end-to-end
+        // earlier today (verified: notification tap → WhatsApp opened
+        // with prefilled draft). The whatsapp:// scheme is more "pure"
+        // but in practice Pixel's WhatsApp app links handler resolves
+        // wa.me directly without a Chrome bounce — keep it.
+        const waUrl = `https://wa.me/${phone}?text=${encodeURIComponent(message)}`
+        const skillResp = await invokeSkill('send_notification', {
+          title: 'WhatsApp draft',
+          body: `Tap to open. To +${phone}: ${message.slice(0, 80)}${message.length > 80 ? '…' : ''}`,
+          tap_url: waUrl,
+        })
         let canvasNote = 'canvas: ok'
         try {
           await pushToCanvas('card', {
             title: 'WhatsApp drafted',
-            body: `to: +${phone}\n${message.slice(0, 140)}`,
+            body: `to: +${phone}\n${message.slice(0, 140)}\n\nTap the notification on your phone to open WhatsApp.`,
           })
         } catch (e) {
           canvasNote = `canvas: ${e.message}`
         }
         return [{
           type: 'text',
-          text: `WhatsApp opened on phone with prefilled message. User taps Send. ${canvasNote}.`,
+          text: `Notification posted on phone — tap it to open WhatsApp with the prefilled draft. (${JSON.stringify(skillResp).slice(0, 160)}; ${canvasNote})`,
+        }]
+      }
+
+      case 'phone_notify_open': {
+        const title = String(args.title ?? '').trim()
+        const body = String(args.body ?? '').trim()
+        const tap_url = String(args.tap_url ?? '').trim()
+        if (!title || !body || !tap_url) {
+          return [{ type: 'text', text: 'Error: title, body, and tap_url are required' }]
+        }
+        const skillResp = await invokeSkill('send_notification', { title, body, tap_url })
+        let canvasNote = 'canvas: ok'
+        try {
+          await pushToCanvas('card', {
+            title: title,
+            body: `${body}\n\n→ ${tap_url}`,
+          })
+        } catch (e) {
+          canvasNote = `canvas: ${e.message}`
+        }
+        return [{
+          type: 'text',
+          text: `Notification posted on phone — tap it to open ${tap_url}. (${JSON.stringify(skillResp).slice(0, 160)}; ${canvasNote})`,
         }]
       }
 

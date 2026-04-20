@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useRef, useEffect, useCallback, useMemo } from 'react'
+import { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo } from 'react'
 import { useChatStore, Message } from '@/store/chat'
 import { useProjectsStore } from '@/store/projects'
 import { MessageBubble } from '@/components/chat/MessageBubble'
@@ -184,12 +184,32 @@ function AuthedChat({ user }: { user: any }) {
   const endRef = useRef<HTMLDivElement>(null)
   const scrollContainerRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
+  // Autosize input: grow up to 500px, shrink back to 36px (one line) when cleared.
+  // useLayoutEffect so DOM measurement happens synchronously after commit — avoids
+  // stale scrollHeight reads when inputDraft is cleared in the same batch as other
+  // state updates (e.g. after send: setInputDraft('') + setProcessing(true) together).
+  // Also: when cleared, skip the scrollHeight dance and force the floor directly.
+  useLayoutEffect(() => {
+    const ta = inputRef.current
+    if (!ta) return
+    if (inputDraft === '') {
+      ta.style.height = '36px'
+      return
+    }
+    ta.style.height = 'auto'
+    ta.style.height = Math.min(Math.max(ta.scrollHeight, 36), 500) + 'px'
+  }, [inputDraft])
   const [statusText, setStatusText] = useState('')
   // Default open on desktop, closed on mobile (set in effect after mount to avoid hydration mismatch)
   const [showSidebar, setShowSidebar] = useState(true)
   const [initialScrollDone, setInitialScrollDone] = useState(false)
   const [showModelPicker, setShowModelPicker] = useState(false)
-  const [currentModel, setCurrentModel] = useState('qwen3-coder')
+  // Default to claude-opus — premium tier routes to local `claude` CLI
+  // using the Max subscription (no API key, no per-call billing). Qwen
+  // was the old default but it ran via OpenRouter and confused users
+  // who thought daemon was using their Claude subscription. Persisted
+  // user preference (loaded from /api/settings below) overrides this.
+  const [currentModel, setCurrentModel] = useState('claude-opus')
   // Show tool call details (bash commands, file edits, line counts, output).
   // Persisted in localStorage. Default ON — devs need to see what the agent is doing.
   const [showToolDetails, setShowToolDetails] = useState(true)
@@ -431,8 +451,14 @@ function AuthedChat({ user }: { user: any }) {
       if (!tid) tid = createChatThread()
     }
 
+    // Generate the user-message id client-side and pass it to the API so the
+    // server's broadcast (`message.created` via WS) is idempotent with the
+    // local row we just added. Without this, every sent message shows twice
+    // — the local one (client UUID) and the WS one (server UUID). Very
+    // obvious with long pasted text.
+    const userMsgId = crypto.randomUUID()
     addMessage(tid!, {
-      id: crypto.randomUUID(),
+      id: userMsgId,
       role: 'user',
       content: text,
       timestamp: new Date().toISOString(),
@@ -459,7 +485,7 @@ function AuthedChat({ user }: { user: any }) {
         const res = await fetch('/api/chat', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ message: actualMessage, threadId: tid, projectId: activeProjectId, stream: true }),
+          body: JSON.stringify({ message: actualMessage, threadId: tid, projectId: activeProjectId, stream: true, userMessageId: userMsgId }),
         })
 
         // Auth expiry — redirect to login
@@ -781,24 +807,18 @@ function AuthedChat({ user }: { user: any }) {
               <textarea
                 ref={inputRef}
                 value={inputDraft}
-                onChange={(e) => {
-                  setInputDraft(e.target.value)
-                  // Auto-grow up to ~25 lines (500px)
-                  const ta = e.target
-                  ta.style.height = 'auto'
-                  ta.style.height = Math.min(Math.max(ta.scrollHeight, 110), 500) + 'px'
-                }}
+                onChange={(e) => setInputDraft(e.target.value)}
                 onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send() } }}
                 placeholder="Message your daemon... (type / for commands)"
-                rows={5}
-                className="flex-1 resize-none rounded-2xl border border-[#282828] bg-[#161616] px-4 py-2.5 text-sm text-white placeholder-[#666] focus:outline-none focus:border-[#ff0505]/40"
-                style={{ minHeight: 110, maxHeight: 500, overflowY: 'auto', lineHeight: '1.5' }}
+                rows={1}
+                className="flex-1 resize-none rounded-2xl border border-[#282828] bg-[#161616] px-4 py-1.5 text-sm text-white placeholder-[#666] focus:outline-none focus:border-[#ff0505]/40"
+                style={{ minHeight: 36, maxHeight: 500, overflowY: 'auto', lineHeight: '1.4' }}
               />
               <MicButton onTranscript={(text) => setInputDraft(inputDraft + (inputDraft ? ' ' : '') + text)} />
               <button
                 onClick={send}
                 disabled={!inputDraft.trim()}
-                className="p-2.5 min-w-[44px] min-h-[44px] flex items-center justify-center rounded-full bg-[#ff0505] text-white disabled:opacity-40 hover:bg-[#dd0404] transition-colors shrink-0"
+                className="p-2 min-w-[36px] min-h-[36px] flex items-center justify-center rounded-full bg-[#ff0505] text-white disabled:opacity-40 hover:bg-[#dd0404] transition-colors shrink-0"
               >
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="m5 12 7-7 7 7"/><path d="M12 19V5"/></svg>
               </button>

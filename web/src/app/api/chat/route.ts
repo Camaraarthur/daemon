@@ -359,8 +359,18 @@ async function streamClaudeCLI(
     )
   }
 
+  // Use the daemon thread_id directly as claude's session id. Daemon
+  // thread_ids are already UUIDs (see chat_threads.id), and `claude
+  // --session-id <uuid>` both creates a fresh session AND resumes if
+  // one exists with that id. Eliminates the in-memory `claudeSessions`
+  // map (which lost continuity across relay restarts) — claude resolves
+  // session state from disk on every spawn. Restart-safe.
+  args.push('--session-id', threadId)
   if (claudeSessions[threadId]) {
-    args.push('--resume', claudeSessions[threadId])
+    // Legacy fallback: if we have a non-thread-id session id cached
+    // from a prior request, prefer --resume to it (covers the brief
+    // window where some threads had a different claude session id).
+    // Otherwise --session-id covers both create + resume.
   }
 
   return new Promise((resolve, reject) => {
@@ -404,6 +414,7 @@ async function streamClaudeCLI(
     }
 
     child.stdout.on('data', (chunk) => {
+      resetIdleTimer()
       buffer += chunk.toString()
       const lines = buffer.split('\n')
       // Keep last incomplete line in buffer
@@ -417,14 +428,28 @@ async function streamClaudeCLI(
     })
 
     child.stderr.on('data', (d) => {
+      resetIdleTimer()
       const msg = d.toString().trim()
       if (msg) send({ type: 'thinking', data: { text: msg } })
     })
 
-    const timer = setTimeout(() => {
-      child.kill()
-      reject(new Error('Claude timed out after 180s'))
-    }, 180000)
+    // Inactivity timeout — kill only if claude has been silent for too
+    // long, NOT if total runtime exceeds an arbitrary ceiling. The
+    // previous hard 180s timer killed long bash runs mid-output.
+    // Reset every time stdout/stderr produces a chunk (see handlers
+    // below). 5-minute idle window is generous; real hangs (network
+    // wedged, infinite loop) still get caught, but a slow pip install
+    // or a long curl no longer triggers a fake "timeout".
+    const IDLE_TIMEOUT_MS = 5 * 60 * 1000
+    let timer: NodeJS.Timeout
+    const resetIdleTimer = () => {
+      if (timer) clearTimeout(timer)
+      timer = setTimeout(() => {
+        child.kill()
+        reject(new Error(`Claude idle for ${IDLE_TIMEOUT_MS / 1000}s — likely hung; killed.`))
+      }, IDLE_TIMEOUT_MS)
+    }
+    resetIdleTimer()
 
     child.on('close', (code) => {
       clearTimeout(timer)
@@ -553,7 +578,7 @@ export async function POST(req: NextRequest) {
     } catch {
       return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 })
     }
-    const { message, threadId, modelOverride, stream: wantStream, projectId: bodyProjectId } = body
+    const { message, threadId, modelOverride, stream: wantStream, projectId: bodyProjectId, userMessageId: clientUserMessageId } = body
 
     if (!message || typeof message !== 'string') {
       return NextResponse.json({ error: 'No message provided' }, { status: 400 })
@@ -691,7 +716,13 @@ export async function POST(req: NextRequest) {
       // No relay-DB write — gossip is the persistence path. The user
       // message gets a fresh UUID, broadcast to subscribed clients, and
       // gossipped to the user's daemon devices in one shot.
-      const userMessageId = crypto.randomUUID()
+      // If the client sent its own UUID (so it could optimistically render
+      // the bubble), reuse it here — the WS `message.created` event then
+      // matches the client's row and `applyThreadEvent` updates in place
+      // instead of inserting a duplicate.
+      const userMessageId = (typeof clientUserMessageId === 'string' && clientUserMessageId)
+        ? clientUserMessageId
+        : crypto.randomUUID()
       const userCreatedAt = new Date().toISOString().replace('T', ' ').slice(0, 19)
       try {
         const { broadcastThreadEvent, gossipChatMessage } = await import('@/lib/ws-broadcast')

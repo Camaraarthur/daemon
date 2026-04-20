@@ -36,6 +36,10 @@ import {
   upsertMemoryBlock,
   appendMemoryBlock,
   recallMemory,
+  listFiles as listUserFiles,
+  getFile as getUserFile,
+  putFile as putUserFile,
+  deleteFile as deleteUserFile,
 } from './store.mjs'
 import {
   setSecret,
@@ -1278,6 +1282,51 @@ async function handleCommand(msg) {
       break
     }
 
+    case 'files.list': {
+      try {
+        const files = listUserFiles(msg.limit || 200)
+        result = { ok: true, files }
+      } catch (e) {
+        result = { ok: false, error: e.message }
+      }
+      break
+    }
+
+    case 'files.get': {
+      try {
+        const file = getUserFile(msg.id || '')
+        result = file ? { ok: true, file } : { ok: false, error: 'not found' }
+      } catch (e) {
+        result = { ok: false, error: e.message }
+      }
+      break
+    }
+
+    case 'files.put': {
+      try {
+        const file = putUserFile({
+          id: msg.id,
+          title: msg.title,
+          body: msg.body,
+          mime: msg.mime,
+        })
+        result = { ok: true, file }
+      } catch (e) {
+        result = { ok: false, error: e.message }
+      }
+      break
+    }
+
+    case 'files.delete': {
+      try {
+        const removed = deleteUserFile(msg.id || '')
+        result = removed ? { ok: true } : { ok: false, error: 'not found' }
+      } catch (e) {
+        result = { ok: false, error: e.message }
+      }
+      break
+    }
+
     // ── Secrets vault (encrypted at rest with AES-256-GCM) ─────
     // The agent's get_secret() / set_secret() agent tools route here.
     // Per vision.md §3.2 and the API broker layer, the relay-side
@@ -1419,6 +1468,116 @@ async function handleCommand(msg) {
       }
       break
     }
+
+    // ── Path B (deferred): persistent claude-code session ──
+    //
+    // The relay-side `streamClaudeCLI` in api/chat/route.ts already
+    // covers this for the arturito-as-device case (relay and device
+    // are the same Linux box). This handler is left in place for the
+    // future case where claude runs on a NON-arturito device (e.g.
+    // MSI daemon) — the relay would dispatch via /skill/invoke and
+    // the device would spawn its own claude. Not wired in chat/route
+    // yet. Leave the handler so the WS whitelist + dispatch are ready.
+    case 'claude.send': {
+      const prompt = String(msg.prompt || '').trim()
+      const threadId = String(msg.thread_id || '').trim()
+      const isFirstTurn = !!msg.is_first_turn
+      const cwd = String(msg.cwd || process.env.HOME || '/').trim()
+      if (!prompt || !threadId) {
+        result = { ok: false, error: 'prompt and thread_id required' }
+        break
+      }
+      try {
+        const { spawn } = await import('node:child_process')
+        // Strip ANTHROPIC_API_KEY → use Max subscription auth.
+        const spawnEnv = { ...process.env }
+        delete spawnEnv.ANTHROPIC_API_KEY
+        const args = [
+          '-p', prompt,
+          '--output-format', 'stream-json',
+          '--verbose',
+          '--allow-dangerously-skip-permissions',
+        ]
+        if (isFirstTurn) {
+          args.push('--session-id', threadId)
+        } else {
+          args.push('--resume', threadId)
+        }
+        const child = spawn('claude', args, {
+          cwd,
+          env: spawnEnv,
+          stdio: ['ignore', 'pipe', 'pipe'],
+        })
+        let buf = ''
+        let finalText = ''
+        let stderr = ''
+        const events = []
+        child.stdout.on('data', (chunk) => {
+          buf += chunk.toString()
+          let nl
+          while ((nl = buf.indexOf('\n')) >= 0) {
+            const line = buf.slice(0, nl).trim()
+            buf = buf.slice(nl + 1)
+            if (!line) continue
+            try {
+              const ev = JSON.parse(line)
+              events.push(ev)
+              // Stream progress events back to the relay so the browser SSE
+              // can render tool calls + text deltas in realtime. Best-effort —
+              // the WS may have closed mid-stream; skill.result is still
+              // returned at exit.
+              try {
+                ws.send(JSON.stringify({
+                  type: 'claude.event',
+                  request_id: requestId,
+                  event: ev,
+                }))
+              } catch {}
+              // Capture the final assistant text. claude emits a
+              // {type:'result', subtype:'success', result:'<text>'} event
+              // at the end of a successful run.
+              if (ev?.type === 'result' && typeof ev.result === 'string') {
+                finalText = ev.result
+              }
+              // Also accumulate text deltas as fallback.
+              if (ev?.type === 'assistant' && ev.message?.content) {
+                for (const block of ev.message.content) {
+                  if (block.type === 'text' && typeof block.text === 'string' && !finalText) {
+                    finalText += block.text
+                  }
+                }
+              }
+            } catch {
+              // Not JSON — ignore.
+            }
+          }
+        })
+        child.stderr.on('data', (c) => { stderr += c.toString() })
+        const code = await new Promise((resolve) =>
+          child.on('close', (c) => resolve(c)),
+        )
+        if (code !== 0 && !finalText) {
+          result = {
+            ok: false,
+            error: `claude exited ${code}`,
+            stderr: stderr.slice(0, 800),
+            events_count: events.length,
+          }
+        } else {
+          result = {
+            ok: true,
+            text: finalText.slice(0, 80_000),
+            session_id: threadId,
+            events_count: events.length,
+            stderr_preview: stderr ? stderr.slice(0, 200) : undefined,
+          }
+        }
+      } catch (e) {
+        result = { ok: false, error: e.message || String(e) }
+      }
+      break
+    }
+
     default:
       result = { error: `Unknown command: ${type}` }
   }

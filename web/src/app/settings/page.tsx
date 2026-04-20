@@ -324,7 +324,7 @@ export default function SettingsPage() {
   }
 
   return (
-    <div className="min-h-[100dvh] bg-[#0a0a0a] text-[#bfbfbf]">
+    <div className="h-[100dvh] bg-[#0a0a0a] text-[#bfbfbf] overflow-y-auto">
       {/* Header */}
       <div className="h-12 border-b border-[#222] flex items-center justify-between px-4 bg-[#111] sticky top-0 z-10">
         <div className="flex items-center gap-3">
