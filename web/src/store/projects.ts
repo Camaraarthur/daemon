@@ -91,11 +91,23 @@ export const useProjectsStore = create<ProjectsState>((set, get) => ({
   fetchThreads: async (projectId: number) => {
     set({ loadingThreads: true })
     try {
-      const res = await fetch(`/api/threads?projectId=${projectId}`)
+      // New merged endpoint: DB threads + claude-code JSONL sessions,
+      // normalized and sorted by updated_at. Gives the sidebar every
+      // conversation under a project in one call.
+      const res = await fetch(`/api/projects/${projectId}/sessions`)
       const data = await res.json()
-      if (data.threads) {
-        set((s) => ({
-          threads: { ...s.threads, [projectId]: data.threads },
+      if (Array.isArray(data?.sessions)) {
+        // Translate SessionItem → Thread shape expected by the sidebar
+        const threads = data.sessions.map((s: any) => ({
+          id: s.id,
+          title: s.title,
+          project_id: projectId,
+          last_message_at: s.updated_at,
+          created_at: s.updated_at,
+          message_count: s.message_count,
+        }))
+        set((state) => ({
+          threads: { ...state.threads, [projectId]: threads },
         }))
       }
     } catch (e) {

@@ -283,7 +283,7 @@ function ProjectGroup({
                 setEditName(current === 'Untitled' ? '' : current)
                 setEditing(true)
               }}
-              className="opacity-0 group-hover:opacity-100 text-[#444] hover:text-[#888] transition-all shrink-0"
+              className="opacity-40 hover:opacity-100 text-[#555] hover:text-[#aaa] transition-all shrink-0"
               title="Rename"
             >
               <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -300,7 +300,7 @@ function ProjectGroup({
                 e.stopPropagation()
                 setPickingParent(true)
               }}
-              className="opacity-0 group-hover:opacity-100 text-[#444] hover:text-[#888] transition-all shrink-0"
+              className="opacity-40 hover:opacity-100 text-[#555] hover:text-[#aaa] transition-all shrink-0"
               title={project.parent_id ? 'Change / remove parent' : 'Move under a project'}
             >
               <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -319,7 +319,7 @@ function ProjectGroup({
                   onArchive(project.id)
                 }
               }}
-              className="opacity-0 group-hover:opacity-100 text-[#444] hover:text-[#ff0505] transition-all shrink-0"
+              className="opacity-40 hover:opacity-100 text-[#555] hover:text-[#ff0505] transition-all shrink-0"
               title="Archive (hide from sidebar)"
             >
               <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -378,13 +378,36 @@ function ProjectGroup({
             </div>
           )}
 
-          {/* Thread history — collapsed by default */}
-          <HistoryExpander
-            threads={threads}
-            projectId={project.id}
-            activeThreadId={activeThreadId}
-            onSelectThread={onSelectThread}
-          />
+          {/* Threads under this project — always visible, no click to expand.
+               Source: /api/projects/[id]/sessions which merges DB threads
+               + claude-code JSONL sessions + auto-derived titles. */}
+          {threads && threads.length > 0 && (
+            <div className="mt-0.5">
+              {threads.slice(0, 30).map((t) => (
+                <button
+                  key={t.id}
+                  onClick={() => onSelectThread(t.id, project.id)}
+                  className={`w-full text-left px-2 py-1 text-[10.5px] truncate rounded transition-colors flex items-center gap-1 ${
+                    activeThreadId === t.id
+                      ? 'bg-[#ff0505]/10 text-[#ff0505]'
+                      : 'text-[#888] hover:bg-[#1a1a1a] hover:text-[#bbb]'
+                  }`}
+                  title={t.title}
+                >
+                  <span className="text-[#333] font-mono shrink-0">└</span>
+                  <span className="truncate flex-1">{t.title || 'Untitled'}</span>
+                  {t.last_message_at && (
+                    <span className="text-[9px] text-[#333] shrink-0">{timeAgo(t.last_message_at)}</span>
+                  )}
+                </button>
+              ))}
+              {threads.length > 30 && (
+                <div className="text-[9px] text-[#555] px-2 py-1">
+                  + {threads.length - 30} older
+                </div>
+              )}
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -580,6 +603,28 @@ export default function ProjectSidebar({
   useEffect(() => {
     fetchProjects()
   }, [fetchProjects])
+
+  // Auto-expand every project + fetch its threads once they load, so the
+  // user sees every conversation under every project at a glance — no
+  // clicks required. The user's mental model is "each project contains
+  // its chat threads"; hiding them behind an expand-toggle was the
+  // original friction complaint. (fetchThreads is already destructured
+  // above in the main useProjectsStore() call.)
+  useEffect(() => {
+    if (!projects.length) return
+    const { expandedProjects, threads: threadsMap } = useProjectsStore.getState()
+    for (const p of projects) {
+      if (!expandedProjects.includes(p.id)) {
+        useProjectsStore.setState((s) => ({
+          expandedProjects: s.expandedProjects.includes(p.id)
+            ? s.expandedProjects
+            : [...s.expandedProjects, p.id],
+        }))
+      }
+      if (!threadsMap[p.id]) fetchThreads(p.id)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projects.length])
 
   // Tree by parent_id. Projects with parent_id are nested under their
   // parent; everything else is top-level.
