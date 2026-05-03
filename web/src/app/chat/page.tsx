@@ -173,6 +173,8 @@ function AuthedChat({ user }: { user: any }) {
     isProcessing, setProcessing, createThread: createChatThread, activeThreadId: chatActiveThreadId,
     setActiveThread: setChatActiveThread,
     loadProjectThread, loadingHistory, applyThreadEvent,
+    // SLICE-A: queued-followup slot for "Enter while streaming"
+    queuedFollowup, setQueuedFollowup,
   } = useChatStore()
 
   const {
@@ -410,6 +412,15 @@ function AuthedChat({ user }: { user: any }) {
     const text = inputDraft.trim()
     if (!text) return
 
+    // SLICE-A: if a stream is in flight, queue the followup instead of firing a parallel POST.
+    // Auto-fires ~200ms after the current stream finalizes (see effect below).
+    // Last-write-wins: a second Enter while queued replaces the queued text.
+    if (isProcessing) {
+      setQueuedFollowup(text)
+      setInputDraft('')
+      return
+    }
+
     // User just sent a message — they want to see the response
     userScrolledUp.current = false
 
@@ -424,6 +435,25 @@ function AuthedChat({ user }: { user: any }) {
       // Handle action commands client-side
       if (slashMatch.command.actionId === 'open_settings') window.location.href = '/settings'
       if (slashMatch.command.actionId === 'clear_chat') { setChatActiveThread(''); setInputDraft('') }
+      // SLICE-A: /restart prints the systemctl command into the chat as a local-only daemon msg.
+      // No API call — auto-restart is deferred (DOGFOOD_BUILD_PLAN.md §7).
+      if (slashMatch.command.actionId === 'print_restart_command') {
+        let tid = chatActiveThreadId
+        if (!tid) tid = createChatThread()
+        addMessage(tid!, {
+          id: crypto.randomUUID(),
+          role: 'user',
+          content: text,
+          timestamp: new Date().toISOString(),
+        })
+        addMessage(tid!, {
+          id: crypto.randomUUID(),
+          role: 'daemon',
+          content: 'To restart the relay, run from your terminal: `sudo systemctl restart daemon-web.service`. (Auto-restart deferred — see DOGFOOD_BUILD_PLAN.md §7.)',
+          timestamp: new Date().toISOString(),
+        })
+        setInputDraft('')
+      }
       return
     }
 
@@ -485,7 +515,7 @@ function AuthedChat({ user }: { user: any }) {
         const res = await fetch('/api/chat', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ message: actualMessage, threadId: tid, projectId: activeProjectId, stream: true, userMessageId: userMsgId }),
+          body: JSON.stringify({ message: actualMessage, threadId: tid, projectId: activeProjectId, stream: true, userMessageId: userMsgId, daemonMessageId: daemonMsgId }),
         })
 
         // Auth expiry — redirect to login
@@ -610,7 +640,30 @@ function AuthedChat({ user }: { user: any }) {
       setStatusText('')
       inputRef.current?.focus()
     }
-  }, [inputDraft, isProcessing, chatActiveThreadId, createChatThread, addMessage, appendToLastDaemon, addToolCallToLastDaemon, updateToolCallResult, updateLastDaemon, setInputDraft, setProcessing])
+  }, [inputDraft, isProcessing, chatActiveThreadId, createChatThread, addMessage, appendToLastDaemon, addToolCallToLastDaemon, updateToolCallResult, updateLastDaemon, setInputDraft, setProcessing, setQueuedFollowup, activeProjectId, setChatActiveThread])
+
+  // SLICE-A: ref to latest send() so the auto-fire effect doesn't capture a stale closure.
+  const sendRef = useRef(send)
+  useEffect(() => { sendRef.current = send }, [send])
+
+  // SLICE-A: when the in-flight stream finalizes and we have a queued followup,
+  // hydrate the input with it and auto-fire ~200ms later. The 200ms beat is
+  // perceptible to Arthur ("yes, my queued message is going") without lagging.
+  useEffect(() => {
+    if (isProcessing) return
+    if (!queuedFollowup) return
+    const queued = queuedFollowup
+    setQueuedFollowup(null)
+    setInputDraft(queued)
+    const t = setTimeout(() => {
+      // Re-check: if user typed over it or we're streaming again, skip.
+      const state = useChatStore.getState()
+      if (state.isProcessing) return
+      if (state.inputDraft.trim() !== queued.trim()) return
+      sendRef.current()
+    }, 200)
+    return () => clearTimeout(t)
+  }, [isProcessing, queuedFollowup, setQueuedFollowup, setInputDraft])
 
   return (
     <div className="flex bg-[#0a0a0a] text-[#bfbfbf] chat-container overflow-hidden" style={{ height: '100dvh', minHeight: '-webkit-fill-available', maxWidth: '100vw' }}>
@@ -801,6 +854,18 @@ function AuthedChat({ user }: { user: any }) {
                     <div className="px-3 py-2 text-[10px] text-[#555]">no matching commands</div>
                   )}
                 </div>
+              </div>
+            )}
+            {/* SLICE-A: queued-followup badge — visible when user pressed Enter while streaming. */}
+            {queuedFollowup && (
+              <div className="max-w-2xl mx-auto mb-1 flex items-center gap-2 px-3 py-1 rounded-lg bg-[#161616] border border-[#282828]">
+                <span className="text-[10px] font-mono uppercase tracking-wider text-[#ff0505]">queued</span>
+                <span className="text-xs text-[#888] truncate flex-1">{queuedFollowup}</span>
+                <button
+                  onClick={() => setQueuedFollowup(null)}
+                  className="text-[10px] text-[#666] hover:text-white"
+                  title="Cancel queued followup"
+                >cancel</button>
               </div>
             )}
             <div className="flex items-end gap-2 max-w-2xl mx-auto">

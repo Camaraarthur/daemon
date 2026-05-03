@@ -51,6 +51,9 @@ interface ChatState {
   inputDraft: string
   isProcessing: boolean
   loadingHistory: boolean
+  // SLICE-A: queued followup — text typed while a stream is in flight.
+  // Auto-fires ~200ms after isProcessing flips false. See chat/page.tsx send().
+  queuedFollowup: string | null
 
   // Actions
   setActiveThread: (id: string) => void
@@ -62,6 +65,8 @@ interface ChatState {
   updateToolCallResult: (threadId: string, toolCallId: string, output: string) => void
   setInputDraft: (text: string) => void
   setProcessing: (processing: boolean) => void
+  // SLICE-A: setter for the queued-followup slot.
+  setQueuedFollowup: (text: string | null) => void
   getActiveThread: () => ChatThread | null
   loadThreadFromDB: (threadId: string, messages: Message[]) => void
   loadProjectThread: (projectId: number) => Promise<string | null>
@@ -77,6 +82,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
   inputDraft: '',
   isProcessing: false,
   loadingHistory: false,
+  // SLICE-A: queued followup default null
+  queuedFollowup: null,
 
   setActiveThread: (id) => set({ activeThreadId: id }),
 
@@ -280,6 +287,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
     try { localStorage.setItem('daemon_draft', text) } catch {}
   },
   setProcessing: (processing) => set({ isProcessing: processing }),
+  // SLICE-A: setter
+  setQueuedFollowup: (text) => set({ queuedFollowup: text }),
 
   getActiveThread: () => {
     const { threads, activeThreadId } = get()

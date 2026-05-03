@@ -72,6 +72,39 @@ Show the diff of what you'd change before making changes.`,
     allowedTools: ['bash'],
   },
 
+  // ── Build / Restart / Diff / Branch (Slice A — dogfood essentials) ──
+  {
+    name: 'build',
+    description: 'Run the web build and report errors verbatim',
+    type: 'prompt',
+    icon: '🔨',
+    promptTemplate: `Run \`cd web && npm run build\` and report errors verbatim. Don't summarize, paste the actual stderr.`,
+    allowedTools: ['bash'],
+  },
+  {
+    name: 'restart',
+    description: 'Print the relay restart command (run it from your terminal)',
+    type: 'action',
+    icon: '🔁',
+    actionId: 'print_restart_command',
+  },
+  {
+    name: 'diff',
+    description: 'Show unstaged changes via git diff',
+    type: 'prompt',
+    icon: '📝',
+    promptTemplate: `Run \`git diff\` in the project root and show me the unstaged changes. Use the \`bash\` tool, not paraphrase.`,
+    allowedTools: ['bash'],
+  },
+  {
+    name: 'branch',
+    description: 'Show current branch (or switch with /branch <name>)',
+    type: 'prompt',
+    icon: '🌿',
+    promptTemplate: `What branch is the current project on? Run \`git branch --show-current\`. If I follow up with \`/branch <name>\`, switch to that branch (creating if needed).`,
+    allowedTools: ['bash'],
+  },
+
   // ── Daemon Native ───────────────────────────────────────
   {
     name: 'resume',
