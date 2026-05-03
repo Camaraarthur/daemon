@@ -7,6 +7,8 @@ import { MessageBubble } from '@/components/chat/MessageBubble'
 import { ActivityIndicator } from '@/components/chat/ActivityIndicator'
 import ProjectSidebar from '@/components/ProjectSidebar'
 import { filterCommands, matchSlashCommand, type SlashCommand } from '@/lib/slash-commands'
+// SLICE-B: @-mention popover
+import { AtMentionMenu } from '@/components/chat/AtMentionMenu'
 import Image from 'next/image'
 
 function MicButton({ onTranscript }: { onTranscript: (text: string) => void }) {
@@ -202,6 +204,14 @@ function AuthedChat({ user }: { user: any }) {
     ta.style.height = Math.min(Math.max(ta.scrollHeight, 36), 500) + 'px'
   }, [inputDraft])
   const [statusText, setStatusText] = useState('')
+  // SLICE-B: @-mention popover state. `atQuery` is the token after `@` at the
+  // textarea caret (null when no active mention). `atMatches` is the cached
+  // file-tree filtered to the query. `atSelected` is the keyboard-highlighted
+  // index. Project-tree fetch is debounced via projectTreeCache.
+  const [atQuery, setAtQuery] = useState<string | null>(null)
+  const [atMatches, setAtMatches] = useState<string[]>([])
+  const [atSelected, setAtSelected] = useState(0)
+  const projectTreeCache = useRef<{ projectId: number | null; paths: string[]; fetchedAt: number }>({ projectId: null, paths: [], fetchedAt: 0 })
   // Default open on desktop, closed on mobile (set in effect after mount to avoid hydration mismatch)
   const [showSidebar, setShowSidebar] = useState(true)
   const [initialScrollDone, setInitialScrollDone] = useState(false)
@@ -408,6 +418,122 @@ function AuthedChat({ user }: { user: any }) {
     userScrolledUp.current = distFromBottom > 150
   }, [])
 
+  // SLICE-B: parse the `@<token>` immediately to the left of the caret.
+  // Returns the token (without `@`) and the start index of the `@`,
+  // or null if no active mention. Word-boundary so emails like
+  // "user@host.com" don't trigger the menu.
+  const parseAtMentionAtCaret = useCallback((value: string, caret: number): { token: string; start: number } | null => {
+    if (caret <= 0) return null
+    // Walk back from caret looking for `@` preceded by start-of-string or whitespace.
+    let i = caret - 1
+    while (i >= 0) {
+      const ch = value[i]
+      if (ch === '@') {
+        const prev = i > 0 ? value[i - 1] : ' '
+        if (i === 0 || /\s/.test(prev)) {
+          const token = value.slice(i + 1, caret)
+          // Stop if the token contains a space — that means the mention ended
+          if (/\s/.test(token)) return null
+          return { token, start: i }
+        }
+        return null
+      }
+      if (/\s/.test(ch)) return null
+      i--
+    }
+    return null
+  }, [])
+
+  // SLICE-B: fetch the active project's file tree (with 30s in-memory cache
+  // mirroring the server cache so a busy `@` typer doesn't even hit the API).
+  const fetchProjectTree = useCallback(async (projectId: number): Promise<string[]> => {
+    const now = Date.now()
+    const cache = projectTreeCache.current
+    if (cache.projectId === projectId && now - cache.fetchedAt < 30_000) {
+      return cache.paths
+    }
+    try {
+      const res = await fetch(`/api/files/tree?project_id=${projectId}`)
+      if (!res.ok) return []
+      const data = await res.json()
+      const paths: string[] = Array.isArray(data?.paths) ? data.paths : []
+      projectTreeCache.current = { projectId, paths, fetchedAt: now }
+      return paths
+    } catch {
+      return []
+    }
+  }, [])
+
+  // SLICE-B: when input or caret changes, recompute @-mention state.
+  // Caret tracking via onSelect on the textarea (wired below).
+  const updateAtMention = useCallback(async (value: string, caret: number) => {
+    const m = parseAtMentionAtCaret(value, caret)
+    if (!m) {
+      setAtQuery(null)
+      setAtMatches([])
+      setAtSelected(0)
+      return
+    }
+    setAtQuery(m.token)
+    setAtSelected(0)
+    if (!activeProjectId) {
+      setAtMatches([])
+      return
+    }
+    const paths = await fetchProjectTree(activeProjectId)
+    const q = m.token.toLowerCase()
+    // Match by basename startsWith first, then full-path contains
+    const lower = paths.map((p) => p.toLowerCase())
+    const startsWith: string[] = []
+    const contains: string[] = []
+    for (let i = 0; i < paths.length; i++) {
+      const lp = lower[i]
+      const slash = lp.lastIndexOf('/')
+      const base = slash >= 0 ? lp.slice(slash + 1) : lp
+      if (q === '' || base.startsWith(q)) startsWith.push(paths[i])
+      else if (lp.includes(q)) contains.push(paths[i])
+    }
+    setAtMatches([...startsWith, ...contains].slice(0, 8))
+  }, [activeProjectId, fetchProjectTree, parseAtMentionAtCaret])
+
+  // SLICE-B: insert the chosen filename into the input where the @-token started.
+  const insertMention = useCallback((path: string) => {
+    const ta = inputRef.current
+    if (!ta) return
+    const caret = ta.selectionStart ?? inputDraft.length
+    const m = parseAtMentionAtCaret(inputDraft, caret)
+    if (!m) return
+    // Replace `@<token>` with `@<path> ` (trailing space for ergonomics)
+    const before = inputDraft.slice(0, m.start)
+    const after = inputDraft.slice(caret)
+    const next = `${before}@${path} ${after}`
+    setInputDraft(next)
+    setAtQuery(null)
+    setAtMatches([])
+    setAtSelected(0)
+    // Restore caret after the inserted token
+    requestAnimationFrame(() => {
+      const newCaret = before.length + 1 + path.length + 1
+      try { ta.setSelectionRange(newCaret, newCaret); ta.focus() } catch {}
+    })
+  }, [inputDraft, parseAtMentionAtCaret, setInputDraft])
+
+  // SLICE-B: extract every `@<path>` mention from a message body. Same
+  // word-boundary rule as parseAtMentionAtCaret. Used by send() to populate
+  // mentionedFiles in the API request.
+  const extractMentions = useCallback((text: string): string[] => {
+    const matches: string[] = []
+    const re = /(^|\s)@([^\s@]+)/g
+    let m: RegExpExecArray | null
+    while ((m = re.exec(text)) !== null) {
+      const path = m[2]
+      // Strip trailing punctuation that's almost certainly not part of a path
+      const cleaned = path.replace(/[.,;:!?)]+$/, '')
+      if (cleaned && !matches.includes(cleaned)) matches.push(cleaned)
+    }
+    return matches
+  }, [])
+
   const send = useCallback(async () => {
     const text = inputDraft.trim()
     if (!text) return
@@ -515,7 +641,10 @@ function AuthedChat({ user }: { user: any }) {
         const res = await fetch('/api/chat', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ message: actualMessage, threadId: tid, projectId: activeProjectId, stream: true, userMessageId: userMsgId, daemonMessageId: daemonMsgId }),
+          // SLICE-B: extract `@<path>` mentions from the original (untrimmed-of-mentions)
+          // user text and include in the body so the relay can pre-fetch their content
+          // and inject as system context (saves the agent a round-trip read_file).
+          body: JSON.stringify({ message: actualMessage, threadId: tid, projectId: activeProjectId, stream: true, userMessageId: userMsgId, daemonMessageId: daemonMsgId, mentionedFiles: extractMentions(text) }),
         })
 
         // Auth expiry — redirect to login
@@ -640,7 +769,8 @@ function AuthedChat({ user }: { user: any }) {
       setStatusText('')
       inputRef.current?.focus()
     }
-  }, [inputDraft, isProcessing, chatActiveThreadId, createChatThread, addMessage, appendToLastDaemon, addToolCallToLastDaemon, updateToolCallResult, updateLastDaemon, setInputDraft, setProcessing, setQueuedFollowup, activeProjectId, setChatActiveThread])
+  // SLICE-B: extractMentions added to deps for mentionedFiles POST
+  }, [inputDraft, isProcessing, chatActiveThreadId, createChatThread, addMessage, appendToLastDaemon, addToolCallToLastDaemon, updateToolCallResult, updateLastDaemon, setInputDraft, setProcessing, setQueuedFollowup, activeProjectId, setChatActiveThread, extractMentions])
 
   // SLICE-A: ref to latest send() so the auto-fire effect doesn't capture a stale closure.
   const sendRef = useRef(send)
@@ -868,13 +998,60 @@ function AuthedChat({ user }: { user: any }) {
                 >cancel</button>
               </div>
             )}
+            {/* SLICE-B: @-mention popover. Shown only when there's an active @<token>
+                at the caret AND the input doesn't start with `/` (slash menu wins). */}
+            {atQuery !== null && !inputDraft.startsWith('/') && (
+              <AtMentionMenu
+                matches={atMatches}
+                selectedIndex={atSelected}
+                onSelect={(p) => insertMention(p)}
+                onHover={(i) => setAtSelected(i)}
+              />
+            )}
             <div className="flex items-end gap-2 max-w-2xl mx-auto">
               <textarea
                 ref={inputRef}
                 value={inputDraft}
-                onChange={(e) => setInputDraft(e.target.value)}
-                onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send() } }}
-                placeholder="Message your daemon... (type / for commands)"
+                onChange={(e) => {
+                  setInputDraft(e.target.value)
+                  // SLICE-B: refresh @-mention state on every change
+                  const c = e.target.selectionStart ?? e.target.value.length
+                  updateAtMention(e.target.value, c)
+                }}
+                onSelect={(e) => {
+                  // SLICE-B: caret moved (click / arrow) — re-evaluate @-mention.
+                  const t = e.currentTarget
+                  updateAtMention(t.value, t.selectionStart ?? t.value.length)
+                }}
+                onKeyDown={(e) => {
+                  // SLICE-B: when the @-mention popover is open with matches,
+                  // intercept ArrowUp/Down/Enter/Escape/Tab.
+                  if (atQuery !== null && atMatches.length > 0 && !inputDraft.startsWith('/')) {
+                    if (e.key === 'ArrowDown') {
+                      e.preventDefault()
+                      setAtSelected((i) => (i + 1) % atMatches.length)
+                      return
+                    }
+                    if (e.key === 'ArrowUp') {
+                      e.preventDefault()
+                      setAtSelected((i) => (i - 1 + atMatches.length) % atMatches.length)
+                      return
+                    }
+                    if (e.key === 'Enter' || e.key === 'Tab') {
+                      e.preventDefault()
+                      insertMention(atMatches[atSelected])
+                      return
+                    }
+                    if (e.key === 'Escape') {
+                      e.preventDefault()
+                      setAtQuery(null)
+                      setAtMatches([])
+                      return
+                    }
+                  }
+                  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send() }
+                }}
+                placeholder="Message your daemon... (type / for commands, @ for files)"
                 rows={1}
                 className="flex-1 resize-none rounded-2xl border border-[#282828] bg-[#161616] px-4 py-1.5 text-sm text-white placeholder-[#666] focus:outline-none focus:border-[#ff0505]/40"
                 style={{ minHeight: 36, maxHeight: 500, overflowY: 'auto', lineHeight: '1.4' }}

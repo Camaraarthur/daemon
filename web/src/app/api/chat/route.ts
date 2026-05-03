@@ -7,6 +7,8 @@ import { randomUUID } from 'crypto'
 import { routeChat, type ModelTier, PROVIDERS } from '@/lib/model-router'
 import { createSSEStream, parseClaudeStreamLine, type SSEEvent } from '@/lib/streaming'
 import { runAgentLoopStreaming } from '@/lib/agent-loop-streaming'
+// SLICE-B: invokeDeviceTool for resolving @-mentioned files via the user's device
+import { invokeDeviceTool } from '@/lib/agent-loop'
 import { matchSlashCommand } from '@/lib/slash-commands'
 import * as db from '@/lib/db'
 import { buildProjectContext, appendSessionSummary } from '@/lib/context'
@@ -578,7 +580,8 @@ export async function POST(req: NextRequest) {
     } catch {
       return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 })
     }
-    const { message, threadId, modelOverride, stream: wantStream, projectId: bodyProjectId, userMessageId: clientUserMessageId } = body
+    // SLICE-B: added `mentionedFiles` to destructured body (rest is unchanged from HEAD)
+    const { message, threadId, modelOverride, stream: wantStream, projectId: bodyProjectId, userMessageId: clientUserMessageId, mentionedFiles: bodyMentionedFiles } = body
 
     if (!message || typeof message !== 'string') {
       return NextResponse.json({ error: 'No message provided' }, { status: 400 })
@@ -646,6 +649,78 @@ export async function POST(req: NextRequest) {
       }
     } catch (e) {
       console.warn('[chat] Rich context loading failed:', e)
+    }
+
+    // SLICE-B: resolve `mentionedFiles` to a `<mentioned-files>` bundle and
+    // prepend to systemPrompt so the agent sees the file content up-front
+    // (no need for a round-trip read_file). 8 KiB cap per file. Unknown
+    // mentions are silently dropped.
+    if (Array.isArray(bodyMentionedFiles) && bodyMentionedFiles.length > 0) {
+      try {
+        const userIdNum = parseInt(userId) || 0
+        // Find the user's primary Linux/macOS daemon device.
+        const dbInner = (await import('@/lib/db')).default
+        const devRows = dbInner()
+          .prepare(
+            `SELECT device_id, platform, last_seen FROM device_tokens
+             WHERE user_id = ? AND revoked = 0
+             ORDER BY last_seen DESC`,
+          )
+          .all(userIdNum) as Array<{ device_id: string; platform: string | null }>
+        let deviceId: string | null = null
+        for (const r of devRows) {
+          const plat = (r.platform || '').toLowerCase()
+          if (plat === 'linux' || plat === 'macos' || plat === 'darwin') { deviceId = r.device_id; break }
+        }
+        if (!deviceId && devRows.length > 0) deviceId = devRows[0].device_id
+
+        if (deviceId) {
+          // Resolve project root so relative paths (e.g. "CLAUDE.md") work.
+          let projectRoot: string | null = null
+          if (resolvedProjectId) {
+            const proj = db.getProject(userIdNum, resolvedProjectId)
+            projectRoot = proj?.local_path || null
+          }
+
+          const PER_FILE_BYTES = 8 * 1024
+          const fileBlocks: string[] = []
+          // Cap mentions per request — defensive against absurd payloads
+          const mentions = bodyMentionedFiles
+            .filter((p: any) => typeof p === 'string' && p.length > 0 && p.length < 500)
+            .slice(0, 16)
+          for (const rawPath of mentions) {
+            // If relative, resolve against project root; else use as-is
+            const isAbs = rawPath.startsWith('/') || /^[a-zA-Z]:[\\/]/.test(rawPath)
+            const resolved = isAbs ? rawPath : (projectRoot ? `${projectRoot.replace(/\/$/, '')}/${rawPath}` : rawPath)
+            try {
+              const raw = await invokeDeviceTool(deviceId, 'read_file', { path: resolved }, userId)
+              const parsed = (() => { try { return JSON.parse(raw) } catch { return null } })()
+              if (!parsed || parsed.ok === false || typeof parsed.content !== 'string') {
+                // Silently drop unresolved mentions
+                continue
+              }
+              let content: string = parsed.content
+              if (Buffer.byteLength(content, 'utf-8') > PER_FILE_BYTES) {
+                // Naive char-truncate (UTF-8 might cut a multi-byte char, but
+                // worst case is one mangled char; we mark explicitly).
+                content = content.slice(0, PER_FILE_BYTES) + '\n[truncated]'
+              }
+              const safePath = String(resolved).replace(/"/g, '&quot;')
+              fileBlocks.push(`<file path="${safePath}">\n${content}\n</file>`)
+            } catch {
+              // ignore single-file failure; keep going
+            }
+          }
+          if (fileBlocks.length > 0) {
+            const bundle = `<mentioned-files>\n${fileBlocks.join('\n')}\n</mentioned-files>`
+            // Prepend BEFORE the existing systemPrompt body so the agent sees
+            // mentioned files as up-front context.
+            systemPrompt = `${bundle}\n\n${systemPrompt}`
+          }
+        }
+      } catch (e) {
+        console.warn('[chat] mentionedFiles injection failed:', e)
+      }
     }
 
     const knowledgeContext = await getKnowledgeContext(effectiveMessage)
