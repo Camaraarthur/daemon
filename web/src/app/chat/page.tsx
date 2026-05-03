@@ -212,6 +212,14 @@ function AuthedChat({ user }: { user: any }) {
   const [atMatches, setAtMatches] = useState<string[]>([])
   const [atSelected, setAtSelected] = useState(0)
   const projectTreeCache = useRef<{ projectId: number | null; paths: string[]; fetchedAt: number }>({ projectId: null, paths: [], fetchedAt: 0 })
+  // SLICE-D: live WebSocket connection-state for the chat header badge.
+  // 'connecting' on first mount, 'online' once /ws/client opens,
+  // 'reconnecting' during backoff, 'offline' after 3 missed heartbeats.
+  const [wsState, setWsState] = useState<'connecting' | 'online' | 'reconnecting' | 'offline'>('connecting')
+  const [wsLastSeen, setWsLastSeen] = useState<number | null>(null)
+  // SLICE-D: tick once a minute so the "last seen Xm ago" string stays fresh
+  // without re-rendering the whole tree on every event.
+  const [wsNowTick, setWsNowTick] = useState<number>(() => Date.now())
   // Default open on desktop, closed on mobile (set in effect after mount to avoid hydration mismatch)
   const [showSidebar, setShowSidebar] = useState(true)
   const [initialScrollDone, setInitialScrollDone] = useState(false)
@@ -351,6 +359,35 @@ function AuthedChat({ user }: { user: any }) {
       if (unsub) unsub()
     }
   }, [chatActiveThreadId, applyThreadEvent])
+
+  // SLICE-D: subscribe to the WS client's connection-state observable so the
+  // header badge always reflects truth. Independent of thread subscription —
+  // even with no active thread we want to show "agent home offline" if the
+  // relay's WS is unreachable.
+  useEffect(() => {
+    let cancelled = false
+    let unsub: (() => void) | null = null
+    import('@/lib/thread-ws').then(({ getThreadWS }) => {
+      if (cancelled) return
+      const ws = getThreadWS()
+      unsub = ws.onConnectionState((state, lastSeenAt) => {
+        setWsState(state)
+        setWsLastSeen(lastSeenAt)
+      })
+    })
+    return () => {
+      cancelled = true
+      if (unsub) unsub()
+    }
+  }, [])
+
+  // SLICE-D: re-render the badge once a minute so the "last seen Xm ago"
+  // label stays fresh without coupling to message events.
+  useEffect(() => {
+    if (wsState !== 'offline') return
+    const t = setInterval(() => setWsNowTick(Date.now()), 30_000)
+    return () => clearInterval(t)
+  }, [wsState])
 
   // When the active project changes, kick the JSONL sync once via the
   // messages GET. This is a one-time pull-on-open; live updates after that
@@ -834,6 +871,54 @@ function AuthedChat({ user }: { user: any }) {
             )}
           </div>
           <div className="flex items-center gap-2">
+            {/* SLICE-D: WS health badge. Shows online (muted dot), reconnecting
+                (yellow + label), or offline (red + relative-last-seen).
+                Truth-on-disconnect per project_daemon_web_ux.md invariant 1. */}
+            {(() => {
+              // SLICE-D: render-time format helper. Inline so it doesn't
+              // collide with anything else in chat/page.tsx.
+              const ago = (() => {
+                if (!wsLastSeen) return null
+                const ms = Math.max(0, wsNowTick - wsLastSeen)
+                if (ms < 60_000) return `${Math.floor(ms / 1000)}s ago`
+                if (ms < 3_600_000) return `${Math.floor(ms / 60_000)}m ago`
+                return `${Math.floor(ms / 3_600_000)}h ago`
+              })()
+              if (wsState === 'online') {
+                return (
+                  <div
+                    className="hidden sm:flex items-center gap-1.5 px-2 py-1 rounded-full bg-[#1a1a1a] border border-[#282828]"
+                    title="Relay WebSocket online"
+                  >
+                    <span className="inline-block w-2 h-2 rounded-full bg-emerald-500" />
+                    <span className="text-[10px] text-[#666]">online</span>
+                  </div>
+                )
+              }
+              if (wsState === 'connecting' || wsState === 'reconnecting') {
+                return (
+                  <div
+                    className="flex items-center gap-1.5 px-2 py-1 rounded-full bg-[#1a1a1a] border border-yellow-500/40"
+                    title={wsState === 'connecting' ? 'Connecting to relay...' : 'Reconnecting to relay...'}
+                  >
+                    <span className="inline-block w-2 h-2 rounded-full bg-yellow-500 animate-pulse" />
+                    <span className="text-[10px] text-yellow-400">{wsState === 'connecting' ? 'connecting...' : 'reconnecting...'}</span>
+                  </div>
+                )
+              }
+              // offline
+              return (
+                <div
+                  className="flex items-center gap-1.5 px-2 py-1 rounded-full bg-[#1a1a1a] border border-red-500/50"
+                  title="Daemon relay unreachable. Heartbeat watchdog tripped."
+                >
+                  <span className="inline-block w-2 h-2 rounded-full bg-red-500" />
+                  <span className="text-[10px] text-red-400">
+                    agent home offline{ago ? ` (last seen ${ago})` : ''}
+                  </span>
+                </div>
+              )
+            })()}
             {/* Connect Device button */}
             <a
               href="/download"
