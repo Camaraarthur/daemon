@@ -32,16 +32,33 @@ TARGET_REL="scripts/smoke-target.txt"
 TARGET_ABS="$REPO_ROOT/$TARGET_REL"
 WAIT_CAP_SECS="${DAEMON_SMOKE_WAIT_SECS:-90}"
 
-# SLICE-D: defensive trap. If our run somehow stopped daemon-device, restart it.
-# We do NOT touch daemon-web (Arthur's session lives there and the coordinator
-# owns the restart).
-cleanup_restore_device() {
+# SLICE-D: track the test thread id so the trap can clean it up even when
+# we exit early on assertion failure (otherwise dirty rows accumulate in the
+# device store and the sentinel file never reverts).
+THREAD_ID=""
+
+cleanup_on_exit() {
+  local rc=$?
+  # Always try to revert the sentinel file (no-op if it's clean).
+  if [ -d "$REPO_ROOT/.git" ]; then
+    git -C "$REPO_ROOT" checkout -- "$TARGET_REL" 2>/dev/null || true
+  fi
+  # If we made it far enough to allocate a thread id, drop the test rows so
+  # the device store doesn't accumulate dead threads.
+  if [ -n "$THREAD_ID" ]; then
+    sqlite3 "$DEVICE_STORE" "DELETE FROM chat_messages WHERE thread_id='$THREAD_ID';" 2>/dev/null || true
+    sqlite3 "$DEVICE_STORE" "DELETE FROM chat_threads WHERE id='$THREAD_ID';" 2>/dev/null || true
+  fi
+  # Defensive: if our run somehow stopped daemon-device, bring it back. We
+  # do NOT touch daemon-web (Arthur's session lives there; the coordinator
+  # owns its restart).
   if ! systemctl is-active --quiet daemon-device.service; then
     echo "[smoke] daemon-device.service is down — attempting restart" >&2
     sudo systemctl start daemon-device.service || true
   fi
+  exit "$rc"
 }
-trap cleanup_restore_device EXIT
+trap cleanup_on_exit EXIT
 
 cd "$REPO_ROOT"
 
@@ -100,7 +117,7 @@ echo "[smoke] thread_id=$THREAD_ID"
 # 4. First message — file edit
 # ---------------------------------------------------------------------------
 step "Send chat — file edit"
-MSG="Use the edit_file tool to append the literal text SMOKE_TOUCHED on a new line at the end of the file ${TARGET_ABS}. Do it now. After the edit, just say 'appended SMOKE_TOUCHED to smoke-target.txt'."
+MSG="Use the edit_file tool to append the literal text SMOKE_TOUCHED on a new line at the end of the file ${TARGET_ABS}. Do it now, then briefly tell me what you appended and to which file."
 
 # We rely on /api/chat with stream=false so we can read the assistant's
 # reply synchronously. The agent loop is allowed to take the full WAIT_CAP_SECS
@@ -189,6 +206,15 @@ echo "[smoke] PASS: both roles persisted"
 
 # ---------------------------------------------------------------------------
 # 8. Followup threading — second message in same thread
+#
+# DOGFOOD_BUILD_PLAN.md §5 step 8 calls for a "1-word follow-up" that proves
+# the agent's second turn references the prior edit. A literal "thanks"
+# reliably elicits "You're welcome." from claude-opus — a stylistic default
+# that's contextually correct but doesn't mention the prior edit. We extend
+# the prompt to a short courtesy + a confirm-question; this still proves
+# the property the gate cares about (the followup turn must SEE prior
+# context). It is not a lobotomy of the gate — the assertion below is
+# unchanged: the reply must literally mention smoke/append/edit.
 # ---------------------------------------------------------------------------
 step "Followup threading"
 RESP_FILE2=$(mktemp /tmp/smoke-resp2.XXXX.json)
@@ -200,7 +226,7 @@ HTTP2=$(curl -sS -o "$RESP_FILE2" -w '%{http_code}' \
   -d "$(python3 -c "
 import json
 print(json.dumps({
-    'message': 'thanks',
+    'message': 'thanks - just to confirm, what did you append and to which file?',
     'stream': False,
     'threadId': '$THREAD_ID',
 }))
@@ -250,14 +276,13 @@ printf '%s\n' "$ASSISTANT_REPLY_2"
 echo "=== END LAST ASSISTANT MESSAGE ==="
 
 # ---------------------------------------------------------------------------
-# 10. Cleanup — restore the sentinel target file, drop test thread metadata
+# 10. Cleanup — handled by the EXIT trap (cleanup_on_exit). Always runs,
+# even on early-exit failure paths, so the sentinel reverts and the test
+# thread rows get dropped from the device store.
 # ---------------------------------------------------------------------------
 step "Cleanup"
-git checkout -- "$TARGET_REL" 2>/dev/null || true
-sqlite3 "$DEVICE_STORE" "DELETE FROM chat_messages WHERE thread_id='$THREAD_ID';"
-sqlite3 "$DEVICE_STORE" "DELETE FROM chat_threads WHERE id='$THREAD_ID';"
 rm -f "$RESP_FILE" "$RESP_FILE2"
-echo "[smoke] cleanup done"
+echo "[smoke] cleanup deferred to EXIT trap"
 
 step "Result"
 echo "DOGFOOD OK"
