@@ -1,6 +1,7 @@
 'use client'
 
 import { useState } from 'react'
+import { DiffView } from './DiffView'
 
 export interface ToolCall {
   id?: string
@@ -115,6 +116,28 @@ function getToolSummary(tc: ToolCall): string {
   return label
 }
 
+/** True for edit_file / write_file (and their Claude Code Edit/Write aliases). */
+function isFileMutation(name: string): 'edit' | 'write' | null {
+  if (name === 'edit_file' || name === 'Edit') return 'edit'
+  if (name === 'write_file' || name === 'Write') return 'write'
+  return null
+}
+
+/** Best-effort: did the tool result indicate success?
+ *  daemon.mjs returns {ok: true|false, ...}; the agent loop usually JSON-stringifies it. */
+function resultLooksOk(output: string | undefined): boolean {
+  if (!output) return true // mid-stream — assume ok
+  if (/^\s*Error[: ]/i.test(output)) return false
+  // Try to parse JSON; fall back to true if it doesn't parse.
+  try {
+    const parsed = JSON.parse(output)
+    if (parsed && typeof parsed === 'object' && 'ok' in parsed) return parsed.ok !== false
+  } catch {
+    // not JSON, leave as ok
+  }
+  return true
+}
+
 function inferStatus(tc: ToolCall): 'running' | 'done' | 'error' {
   if (tc.status) return tc.status
   if (!tc.output) return 'running'
@@ -134,6 +157,27 @@ export function ToolCallBlock({ toolCall }: { toolCall: ToolCall }) {
   const status = inferStatus(toolCall)
   const hasOutput = !!toolCall.output
   const icon = TOOL_ICONS[toolCall.name] || '•'
+
+  // Detect file-mutation tools and prep the before/after for DiffView.
+  const mutation = isFileMutation(toolCall.name)
+  const mutationOk = mutation ? resultLooksOk(toolCall.output) : false
+  let diff: { before: string; after: string; path?: string; isNewFile: boolean } | null = null
+  if (mutation && mutationOk) {
+    if (mutation === 'edit') {
+      // edit_file args carry the exact replaced spans — diff those directly.
+      const before = String(toolCall.args?.old_string ?? '')
+      const after = String(toolCall.args?.new_string ?? '')
+      const path = String(toolCall.args?.path || toolCall.args?.file_path || '')
+      if (before || after) diff = { before, after, path, isNewFile: false }
+    } else if (mutation === 'write') {
+      // write_file always sends the full content. Treat as "(new file)" — we don't
+      // have the prior content here, and even when overwriting an existing file
+      // showing the new content as additions is the most truthful render.
+      const after = String(toolCall.args?.content ?? '')
+      const path = String(toolCall.args?.path || toolCall.args?.file_path || '')
+      if (after) diff = { before: '', after, path, isNewFile: true }
+    }
+  }
 
   return (
     <div className={`my-1.5 rounded-lg border overflow-hidden text-xs ${
@@ -203,6 +247,19 @@ export function ToolCallBlock({ toolCall }: { toolCall: ToolCall }) {
                   return `${k}: ${display}`
                 }).join('\n')}
               </pre>
+            </div>
+          )}
+
+          {/* Inline diff for edit_file / write_file */}
+          {diff && (
+            <div className="px-3 py-2 border-b border-[#1a1a1a]">
+              <div className="text-[10px] text-[#555] mb-1 uppercase tracking-wider">Diff</div>
+              <DiffView
+                before={diff.before}
+                after={diff.after}
+                path={diff.path}
+                isNewFile={diff.isNewFile}
+              />
             </div>
           )}
 
