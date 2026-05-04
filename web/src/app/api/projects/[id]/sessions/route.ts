@@ -41,14 +41,20 @@ function extractTitleFromJsonl(path: string): { title: string; userMsgs: number;
     t.startsWith('<command-message>') ||
     t.startsWith('<command-name>') ||
     t.startsWith('<user-prompt') ||
-    t.startsWith('You are a chat classifier') ||
-    t.startsWith('You are the pendant agent') ||
-    t.startsWith('You are the daemon') ||
+    t.startsWith('You are ') ||         // any "You are X" persona/system prompt
+    t.startsWith('You classify') ||
+    t.startsWith('Classify ') ||
+    t.startsWith('Below is') ||         // "Below is the start of a conversation..."
+    t.startsWith('Given the following') ||
     t.startsWith('Recent voice conversation') ||
+    t.startsWith('Return ONLY JSON') ||
     t.startsWith('[Pasted text') ||
     t.startsWith('Unknown skill') ||
     t.startsWith('<system-reminder>') ||
     t.startsWith('/') ||
+    // Substring catch: titler/classifier prompts always demand JSON output.
+    // No human types this phrase in chat. Catches "Given X, return ONLY JSON {…}".
+    t.includes('Return ONLY JSON') ||
     t.trim().length < 8
   )
   try {
@@ -119,10 +125,12 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
         let mtime = ''
         try { mtime = statSync(full).mtime.toISOString() } catch {}
         const { title, userMsgs, count } = extractTitleFromJsonl(full)
-        // Filter: sessions with <2 real user messages are typically headless
-        // agent-spawn invocations (claude -p for indexer, pendant, voice
-        // command), not real conversations. Don't pollute the sidebar.
-        if (userMsgs < 2) continue
+        // Filter purely-empty sessions (no substantive human prompt at all).
+        // Was `< 2` which dropped every single-prompt agentic session: most
+        // real coding sessions are 1 human prompt + 40+ turns of agent work,
+        // and the strict "substantive user msg" filter inside extract counts
+        // only ONE for them. `< 2` emptied the sidebar.
+        if (userMsgs < 1) continue
         const sessionId = f.replace(/\.jsonl$/, '')
         if (items.find((i) => i.id === sessionId)) continue
         items.push({

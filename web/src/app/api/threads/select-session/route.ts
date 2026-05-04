@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { requireAuth, getUserId } from '@/lib/auth'
 import getDb, {
   getProject,
+  getClaudeCodeLink,
   upsertClaudeCodeLink,
   createThread,
 } from '@/lib/db'
@@ -45,9 +46,25 @@ export async function POST(req: NextRequest) {
     .get(userId, projectId) as { id: string } | undefined
   const threadId = existing?.id ?? createThread(userId, projectId, project.name).id
 
-  // upsert handles both new + existing via ON CONFLICT — replaces
-  // active_session_id when a row exists, inserts when it doesn't.
-  upsertClaudeCodeLink(projectId, project.local_path || '', sessionId)
+  // CRITICAL: claude_project_dir is the path to the JSONL files on disk
+  // (~/.claude/projects/-encoded-path), NOT project.local_path (the source
+  // tree). Earlier version of this route passed local_path into upsert and
+  // ON CONFLICT silently overwrote the correct dir → sessions endpoint
+  // scanned the wrong place → JSONL list went empty. Now: only update the
+  // active_session_id, preserve claude_project_dir if a link already exists.
+  const existingLink = getClaudeCodeLink(projectId)
+  if (existingLink) {
+    getDb().prepare(
+      'UPDATE claude_code_links SET active_session_id = ? WHERE project_id = ?'
+    ).run(sessionId, projectId)
+  } else {
+    // No link yet — synthesize the canonical Claude Code projects dir from
+    // the source tree path. CC encodes paths by replacing '/' with '-'.
+    const dir = project.local_path
+      ? `${process.env.HOME || '/home/arthur'}/.claude/projects/-${project.local_path.replace(/^\//, '').replace(/\//g, '-')}`
+      : ''
+    upsertClaudeCodeLink(projectId, dir, sessionId)
+  }
 
   return NextResponse.json({ threadId, sessionId, projectId })
 }
