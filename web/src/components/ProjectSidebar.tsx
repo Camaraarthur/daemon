@@ -675,10 +675,32 @@ export default function ProjectSidebar({
     // narrow windows. Only thread-select closes the sidebar.
   }
 
-  const handleSelectThread = (threadId: string, projectId: number) => {
+  const handleSelectThread = async (threadId: string, projectId: number) => {
     setActiveProject(projectId)
-    setActiveThread(threadId)
-    fetchMessages(threadId)
+    // If this is a JSONL Claude-Code session, bind it to a chat_thread first
+    // so the messages endpoint (which only knows DB thread ids) resolves it
+    // via claude_code_links.active_session_id. Without this every JSONL click
+    // 404'd → fell back to the project's singular default thread.
+    const projectThreads = useProjectsStore.getState().threads[projectId] || []
+    const clicked = projectThreads.find((t) => t.id === threadId)
+    let resolvedThreadId = threadId
+    if (clicked?.source === 'jsonl') {
+      try {
+        const res = await fetch('/api/threads/select-session', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ projectId, sessionId: threadId }),
+        })
+        if (res.ok) {
+          const data = await res.json()
+          if (data?.threadId) resolvedThreadId = data.threadId
+        }
+      } catch (e) {
+        console.warn('select-session failed, falling back to direct id:', e)
+      }
+    }
+    setActiveThread(resolvedThreadId)
+    fetchMessages(resolvedThreadId)
     onClose?.()
   }
 
