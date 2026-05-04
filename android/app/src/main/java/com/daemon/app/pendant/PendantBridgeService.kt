@@ -182,6 +182,21 @@ class PendantBridgeService(
                     "lastSeen=${nowSinceLastSeen}s mac=$mac " +
                     "backoff=${watchdogBackoffMs}ms lastStatus=${gattStatusName(lastDisconnectStatus)}")
 
+                // Heartbeat: re-emit pendant.connection so the relay's
+                // per-user cache stays warm even if the edge-trigger event
+                // was dropped (typically when the WS-to-relay socket isn't
+                // up yet at the moment a fresh BLE link comes in). Cheap
+                // and idempotent.
+                try {
+                    sendWsMessage(JSONObject().apply {
+                        put("type", "pendant.connection")
+                        put("connected", isConnected)
+                        put("status", lastDisconnectStatus)
+                        put("status_name", gattStatusName(lastDisconnectStatus))
+                        put("source", "watchdog_heartbeat")
+                    })
+                } catch (_: Exception) {}
+
                 if (isConnected) {
                     watchdogBackoffMs = 5_000L
                     consecutiveConnectFailures = 0
@@ -510,10 +525,19 @@ class PendantBridgeService(
                                 "status=${gattStatusName(event.status)} " +
                                 "fails=$consecutiveConnectFailures " +
                                 "lastSeen=${if (lastSeenMs == 0L) "n/a" else "${(System.currentTimeMillis() - lastSeenMs)/1000}s"}")
-                            if (consecutiveConnectFailures >= MAX_CONSECUTIVE_FAILURES_BEFORE_RESCAN) {
+                            // Only force a SharedPrefs clear if we've NEVER
+                            // successfully connected. After a successful
+                            // connect, transient disconnects (out of range,
+                            // pendant sleep, BT stack hiccup) are normal —
+                            // let the watchdog reconnect with backoff. The
+                            // null-MAC reconnect storm came from clearing
+                            // here on every disconnect burst.
+                            if (lastSeenMs == 0L &&
+                                consecutiveConnectFailures >= MAX_CONSECUTIVE_FAILURES_BEFORE_RESCAN
+                            ) {
                                 val stale = getBondedAddress()
                                 Log.w(TAG, "[connection] $consecutiveConnectFailures consecutive failures " +
-                                    "with bonded=$stale — clearing SharedPrefs to force rescan")
+                                    "without ever connecting (bonded=$stale) — clearing SharedPrefs to force rescan")
                                 context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
                                     .edit().remove(KEY_BONDED_ADDRESS).apply()
                                 consecutiveConnectFailures = 0

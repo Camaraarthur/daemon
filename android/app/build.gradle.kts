@@ -12,8 +12,8 @@ android {
         applicationId = "com.daemon.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 6
-        versionName = "0.1.6-pendant-osbond"
+        versionCode = 8
+        versionName = "0.1.8-pendant-heartbeat"
 
         buildConfigField("String", "API_BASE_URL", "\"https://my.daemon.page/\"")
         buildConfigField("String", "DAEMON_WS_URL", "\"wss://my.daemon.page/ws/device\"")
