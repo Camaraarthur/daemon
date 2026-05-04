@@ -257,6 +257,18 @@ const server = http.createServer((req, res) => {
     return
   }
 
+  // GET /pendant-state/:userId — internal-only read of the latest
+  // pendant.connection / pendant.battery cached per-user. Next.js API
+  // route /api/pendant/state proxies to this. No secret because the
+  // payload is just connectivity boolean + battery int — no content.
+  if (req.url && req.url.startsWith('/pendant-state/') && req.method === 'GET') {
+    const userId = parseInt(req.url.slice('/pendant-state/'.length), 10) || 0
+    const state = (global.__pendantState && global.__pendantState.get(userId)) || null
+    res.writeHead(200, { 'Content-Type': 'application/json' })
+    res.end(JSON.stringify(state || {}))
+    return
+  }
+
   if (req.url === '/health') {
     // Health endpoint shows all devices across all users (admin/debug)
     res.writeHead(200, { 'Content-Type': 'application/json' })
@@ -875,6 +887,23 @@ wss.on('connection', (ws, req) => {
           ws.send(JSON.stringify({ type: 'heartbeat_ack', server_time: Date.now() }))
           break
 
+        case 'pendant.connection':
+        case 'pendant.battery': {
+          // Latest-wins per-user cache so /api/pendant/state can render
+          // a connection badge in the chat header without polling devices.
+          const u = deviceUserId || 0
+          if (!global.__pendantState) global.__pendantState = new Map()
+          const prev = global.__pendantState.get(u) || {}
+          const next = { ...prev, updatedAt: Date.now(), updatedBy: deviceId }
+          if (msg.type === 'pendant.connection') {
+            next.connected = !!msg.connected
+            next.status = msg.status_name || msg.status || null
+          } else {
+            next.batteryPercent = typeof msg.percent === 'number' ? msg.percent : null
+          }
+          global.__pendantState.set(u, next)
+          break
+        }
         default:
           console.log(`[ws] Unknown message type from ${deviceId}:`, msg.type)
       }
