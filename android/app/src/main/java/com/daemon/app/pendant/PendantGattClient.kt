@@ -27,7 +27,7 @@ class PendantGattClient(private val context: Context) {
         data class ButtonEvent(val code: Int) : PendantEvent()
         data class AudioChunk(val data: ByteArray) : PendantEvent()
         data class BatteryLevel(val percent: Int) : PendantEvent()
-        data class ConnectionState(val connected: Boolean) : PendantEvent()
+        data class ConnectionState(val connected: Boolean, val status: Int = 0) : PendantEvent()
     }
 
     private val _events = MutableSharedFlow<PendantEvent>(extraBufferCapacity = 64)
@@ -60,7 +60,7 @@ class PendantGattClient(private val context: Context) {
             if (newState == BluetoothProfile.STATE_CONNECTED) {
                 Log.d(TAG, "Connected to pendant (status=$status)")
                 isConnected = true
-                _events.tryEmit(PendantEvent.ConnectionState(true))
+                _events.tryEmit(PendantEvent.ConnectionState(true, status))
                 // Refresh GATT cache on first connect to drop phantom chars from
                 // stale firmware generations (e.g. leftover 4f7e1f04 audio_stream).
                 // Android's auto-read of cached characteristics triggers auth
@@ -80,7 +80,7 @@ class PendantGattClient(private val context: Context) {
             } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
                 Log.d(TAG, "Disconnected from pendant (status=$status)")
                 isConnected = false
-                _events.tryEmit(PendantEvent.ConnectionState(false))
+                _events.tryEmit(PendantEvent.ConnectionState(false, status))
                 // Pendant reboots after OTA — service handles shift. Reset
                 // cacheRefreshed so the next connect re-refreshes and rediscovers.
                 cacheRefreshed = false

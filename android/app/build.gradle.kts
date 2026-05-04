@@ -12,11 +12,18 @@ android {
         applicationId = "com.daemon.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 2
-        versionName = "0.1.2"
+        versionCode = 6
+        versionName = "0.1.6-pendant-osbond"
 
         buildConfigField("String", "API_BASE_URL", "\"https://my.daemon.page/\"")
         buildConfigField("String", "DAEMON_WS_URL", "\"wss://my.daemon.page/ws/device\"")
+        // slice-e: empty seed → forces scan on first run so we bond whichever
+        // DaemonPendant-* is actually nearby. Hard-coding a single MAC was a
+        // landmine: stale bond from a previous board (4A:D1) blocked the live
+        // pendant (4A:D2) from ever connecting. The watchdog now clears stale
+        // bonds after N consecutive GATT_FAILURE disconnects (see
+        // PendantBridgeService.startReconnectWatchdog).
+        buildConfigField("String", "PENDANT_DEFAULT_MAC", "\"\"")
     }
 
     signingConfigs {

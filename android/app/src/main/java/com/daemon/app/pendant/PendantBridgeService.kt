@@ -1,5 +1,7 @@
 package com.daemon.app.pendant
 
+import android.annotation.SuppressLint
+import android.bluetooth.BluetoothManager
 import android.content.Context
 import android.util.Log
 import kotlinx.coroutines.*
@@ -31,7 +33,26 @@ class PendantBridgeService(
 
     val gattClient = PendantGattClient(context)
     private val audioRecorder = PendantAudioRecorder(context, httpClient)
-    private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+    // serviceScope is the long-lived scope tied to this bridge's lifetime.
+    // Created in constructor, cancelled only in destroy(). The watchdog runs
+    // here so it survives transient GATT churn.
+    private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    // scope is kept as an alias for I/O-bound work (HTTP, file I/O) — same
+    // lifetime, different dispatcher. Both cancelled in destroy().
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    // Watchdog state (slice-e).
+    @Volatile private var lastSeenMs: Long = 0
+    @Volatile private var lastDisconnectStatus: Int = -1
+    @Volatile private var watchdogBackoffMs: Long = 5_000L
+    private var watchdogJob: Job? = null
+    // slice-e fix: stale-bond self-heal. If connect fails this many times in a
+    // row (status=257 GATT_FAILURE etc.), the stored MAC is wrong/dead and we
+    // clear it so the watchdog falls into the scan branch and discovers the
+    // pendant that's actually nearby. Was burned hard by a stale 4A:D1 bond
+    // blocking the live 4A:D2 pendant from connecting.
+    @Volatile private var consecutiveConnectFailures: Int = 0
+    private val MAX_CONSECUTIVE_FAILURES_BEFORE_RESCAN = 3
 
     @Volatile var isRecording = false
         private set
@@ -85,6 +106,10 @@ class PendantBridgeService(
     }
 
     private fun startInternal() {
+        // slice-e: scan for orphan recordings BEFORE any BLE work so we never
+        // lose data if connection takes time or fails.
+        reUploadOrphans()
+        startReconnectWatchdog()
         val address = getBondedAddress()
         if (address != null) {
             debugLog("Auto-connecting to bonded pendant: $address")
@@ -115,6 +140,119 @@ class PendantBridgeService(
         }
     }
 
+    // ── Reconnect watchdog (slice-e) ────────────────────────────────
+    //
+    // Tied to serviceScope (cancelled only in destroy()). Heartbeat-logs every
+    // tick so adb logcat shows the watchdog firing even when nothing is wrong.
+    // Uses exponential backoff: 5s → 10s → 20s → 45s capped, reset to 5s on
+    // any successful connect.
+    //
+    // Does NOT replace the in-flow auto-reconnect inside collectEvents() (that
+    // fires on disconnect-edge, this is the periodic safety net for cases
+    // where the disconnect event was missed or the connect attempt silently
+    // failed — common after Android process restart or BT stack hiccup).
+    /**
+     * slice-e stub: log any leftover .wav files in the recordings dir so we
+     * have visibility on local archive growth. Full re-upload pipeline is the
+     * next iteration — for now we ONLY want to confirm files are landing on
+     * disk and surviving across service restarts.
+     */
+    private fun reUploadOrphans() {
+        try {
+            val dir = context.getExternalFilesDir("recordings") ?: return
+            val wavs = dir.listFiles { f -> f.isFile && f.name.endsWith(".wav") } ?: emptyArray()
+            Log.i(TAG, "[orphan] found ${wavs.size} local recordings in ${dir.absolutePath}")
+            wavs.sortedByDescending { it.lastModified() }.take(5).forEach { f ->
+                Log.i(TAG, "[orphan]   ${f.name} ${f.length()}B mtime=${f.lastModified()}")
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "[orphan] scan failed: ${e.message}")
+        }
+    }
+
+    private fun startReconnectWatchdog() {
+        watchdogJob?.cancel()
+        watchdogJob = serviceScope.launch {
+            while (isActive) {
+                val isConnected = gattClient.isConnected
+                val mac = getBondedAddress() ?: "<none>"
+                val nowSinceLastSeen = if (lastSeenMs == 0L) -1
+                    else (System.currentTimeMillis() - lastSeenMs) / 1000
+                Log.i(TAG, "[watchdog] tick connected=$isConnected " +
+                    "lastSeen=${nowSinceLastSeen}s mac=$mac " +
+                    "backoff=${watchdogBackoffMs}ms lastStatus=${gattStatusName(lastDisconnectStatus)}")
+
+                if (isConnected) {
+                    watchdogBackoffMs = 5_000L
+                    consecutiveConnectFailures = 0
+                    delay(45_000)
+                    continue
+                }
+
+                // slice-e fix: belt-and-braces watchdog-side counter. The
+                // collectEvents() flow uses collectLatest which can drop rapid
+                // ConnectionState events, so we ALSO count tick-while-offline
+                // here. Whichever path hits the threshold first triggers the
+                // stale-bond clear.
+                if (lastSeenMs == 0L && mac != "<none>") {
+                    consecutiveConnectFailures++
+                    if (consecutiveConnectFailures >= MAX_CONSECUTIVE_FAILURES_BEFORE_RESCAN) {
+                        Log.w(TAG, "[watchdog] $consecutiveConnectFailures " +
+                            "ticks without ever connecting to $mac — clearing " +
+                            "SharedPrefs to force rescan")
+                        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                            .edit().remove(KEY_BONDED_ADDRESS).apply()
+                        consecutiveConnectFailures = 0
+                        watchdogBackoffMs = 5_000L
+                        continue
+                    }
+                }
+
+                // Disconnected — try to (re)connect.
+                if (mac != "<none>") {
+                    Log.i(TAG, "[watchdog] re-kicking connect to $mac")
+                    try {
+                        gattClient.connect(mac)
+                    } catch (e: Exception) {
+                        Log.w(TAG, "[watchdog] connect threw: ${e.message}")
+                    }
+                } else {
+                    // No bonded address — try a short scan.
+                    try {
+                        val devs = PendantScanner.scan(context, 8_000)
+                        if (devs.isNotEmpty()) {
+                            val dev = devs.first()
+                            Log.i(TAG, "[watchdog] scan found ${dev.name} (${dev.address})")
+                            saveBondedAddress(dev.address)
+                            gattClient.connect(dev.address)
+                        } else {
+                            Log.i(TAG, "[watchdog] scan empty")
+                        }
+                    } catch (e: Exception) {
+                        Log.w(TAG, "[watchdog] scan threw: ${e.message}")
+                    }
+                }
+
+                delay(watchdogBackoffMs)
+                watchdogBackoffMs = (watchdogBackoffMs * 2).coerceAtMost(45_000L)
+            }
+        }
+    }
+
+    /** Map common GATT status ints → readable names for logcat. */
+    private fun gattStatusName(status: Int): String = when (status) {
+        -1 -> "n/a"
+        0x00 -> "GATT_SUCCESS(0)"
+        0x05 -> "GATT_INSUFFICIENT_AUTHENTICATION(5)"
+        0x08 -> "GATT_CONN_TIMEOUT(8)"
+        0x13 -> "GATT_CONN_TERMINATE_PEER_USER(19)"
+        0x16 -> "GATT_CONN_TERMINATE_LOCAL_HOST(22)"
+        0x22 -> "GATT_CONN_LMP_TIMEOUT(34)"
+        0x3E -> "GATT_CONN_FAIL_ESTABLISH(62)"
+        0x85 -> "GATT_ERROR(133)"
+        else -> "status=$status(0x${Integer.toHexString(status)})"
+    }
+
     private fun debugLog(msg: String) {
         Log.d(TAG, msg)
         try {
@@ -133,7 +271,10 @@ class PendantBridgeService(
     fun destroy() {
         gattClient.disconnect()
         audioRecorder.destroy()
+        watchdogJob?.cancel()
+        watchdogJob = null
         scope.cancel()
+        serviceScope.cancel()
     }
 
     // ── Scan + Connect ──────────────────────────────────────────────
@@ -262,6 +403,10 @@ class PendantBridgeService(
 
     // ── Recording ───────────────────────────────────────────────────
 
+    // slice-e: track which audio path was used for THIS recording session so
+    // stopRecording() can call the matching stop method.
+    @Volatile private var sessionUsedPendantStream: Boolean = false
+
     private fun startRecording(mode: String = "command") {
         if (isRecording) return
         isRecording = true
@@ -275,18 +420,31 @@ class PendantBridgeService(
         } else {
             audioRecorder.setConversationChunking(flushMs = 0, capMs = 0)
         }
-        // Skip pendant setMic() — we're using the PHONE mic for capture. The
-        // pendant mic isn't streaming audio yet, and setMic(true) causes the
-        // pendant to emit a spurious 0x04 DOUBLE event that confuses routing.
-        // Revisit when firmware v0.9 streams audio on AUDIO_STREAM char.
-        audioRecorder.startPhoneMicRecording()
+        // slice-e: prefer pendant audio stream when GATT is up. Falls back
+        // to phone mic only when the pendant isn't reachable. The chunking
+        // setting above only applies to phone-mic mode (rolling-flush);
+        // pendant stream uses crash-safe progressive WAV with 30-min rotate.
+        if (gattClient.isConnected) {
+            Log.i(TAG, "[record] using pendant audio (gatt connected) mode=$mode")
+            sessionUsedPendantStream = true
+            // Tell pendant to enable mic so it streams chunks over BLE.
+            try { gattClient.setMic(true) } catch (e: Exception) {
+                Log.w(TAG, "[record] setMic(true) failed: ${e.message}")
+            }
+            audioRecorder.startPendantStreamRecording(sessionStartMs)
+        } else {
+            Log.w(TAG, "[record] gatt offline, falling back to phone mic mode=$mode")
+            sessionUsedPendantStream = false
+            audioRecorder.startPhoneMicRecording()
+        }
         sendWsMessage(JSONObject().apply {
             put("type", "pendant.recording_state")
             put("recording", true)
             put("mode", mode)
+            put("source", if (sessionUsedPendantStream) "pendant_ble" else "phone_mic")
         })
         canvasText(if (mode == "conversation") "🟢 conversation recording" else "🎤 listening…")
-        debugLog("recording start mode=$mode at $sessionStartMs")
+        debugLog("recording start mode=$mode source=${if (sessionUsedPendantStream) "pendant_ble" else "phone_mic"} at $sessionStartMs")
     }
 
     private fun stopRecording() {
@@ -294,16 +452,24 @@ class PendantBridgeService(
         isRecording = false
         holdActive = false
         sessionEndMs = System.currentTimeMillis()
-        // Matching startRecording — not touching pendant mic.
-        audioRecorder.stopPhoneMicRecording()
+        // slice-e: stop the matching audio path.
+        if (sessionUsedPendantStream) {
+            try { gattClient.setMic(false) } catch (e: Exception) {
+                Log.w(TAG, "[record] setMic(false) failed: ${e.message}")
+            }
+            audioRecorder.stopPendantStreamRecording()
+        } else {
+            audioRecorder.stopPhoneMicRecording()
+        }
         sendWsMessage(JSONObject().apply {
             put("type", "pendant.recording_state")
             put("recording", false)
             put("mode", sessionMode ?: "unknown")
             put("duration_ms", sessionEndMs - sessionStartMs)
+            put("source", if (sessionUsedPendantStream) "pendant_ble" else "phone_mic")
         })
         canvasText("⏸ transcribing…")
-        debugLog("recording stop mode=${sessionMode} duration=${sessionEndMs - sessionStartMs}ms")
+        debugLog("recording stop mode=${sessionMode} source=${if (sessionUsedPendantStream) "pendant_ble" else "phone_mic"} duration=${sessionEndMs - sessionStartMs}ms")
     }
 
     // ── Event Collection ────────────────────────────────────────────
@@ -330,9 +496,34 @@ class PendantBridgeService(
                         })
                     }
                     is PendantGattClient.PendantEvent.ConnectionState -> {
+                        // slice-e: track lastSeen + last disconnect status for the watchdog.
+                        if (event.connected) {
+                            lastSeenMs = System.currentTimeMillis()
+                            watchdogBackoffMs = 5_000L
+                            consecutiveConnectFailures = 0
+                            Log.i(TAG, "[connection] connected mac=${getBondedAddress()} " +
+                                "status=${gattStatusName(event.status)}")
+                        } else {
+                            lastDisconnectStatus = event.status
+                            consecutiveConnectFailures++
+                            Log.i(TAG, "[connection] disconnected mac=${getBondedAddress()} " +
+                                "status=${gattStatusName(event.status)} " +
+                                "fails=$consecutiveConnectFailures " +
+                                "lastSeen=${if (lastSeenMs == 0L) "n/a" else "${(System.currentTimeMillis() - lastSeenMs)/1000}s"}")
+                            if (consecutiveConnectFailures >= MAX_CONSECUTIVE_FAILURES_BEFORE_RESCAN) {
+                                val stale = getBondedAddress()
+                                Log.w(TAG, "[connection] $consecutiveConnectFailures consecutive failures " +
+                                    "with bonded=$stale — clearing SharedPrefs to force rescan")
+                                context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                                    .edit().remove(KEY_BONDED_ADDRESS).apply()
+                                consecutiveConnectFailures = 0
+                            }
+                        }
                         sendWsMessage(JSONObject().apply {
                             put("type", "pendant.connection")
                             put("connected", event.connected)
+                            put("status", event.status)
+                            put("status_name", gattStatusName(event.status))
                         })
                         // Visible state card on /canvas.
                         val cardData = JSONObject().apply {
@@ -340,7 +531,8 @@ class PendantBridgeService(
                             put("body", if (event.connected) "✅ connected" else "⚠️ disconnected — reconnecting…")
                         }
                         pushCanvas("card", cardData)
-                        // Auto-reconnect on unexpected disconnect
+                        // Auto-reconnect on unexpected disconnect (edge-trigger).
+                        // Watchdog also runs as a periodic safety net.
                         if (!event.connected) {
                             val addr = getBondedAddress()
                             if (addr != null) {
@@ -547,8 +739,47 @@ class PendantBridgeService(
     }
 
     fun getBondedAddress(): String? {
-        return context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        val persisted = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
             .getString(KEY_BONDED_ADDRESS, null)
+        if (persisted != null) {
+            Log.i(TAG, "[mac] using SharedPrefs persisted: $persisted")
+            return persisted
+        }
+        // slice-e fix: OS bonded-list fallback. Even when SharedPrefs is empty
+        // (post-reinstall, post-self-heal), Android's system Bluetooth bond
+        // list still has the pendant from a prior pairing — use it directly
+        // so we don't depend on the pendant being actively advertising RIGHT
+        // NOW for connect to work. autoConnect=true on a known MAC reconnects
+        // when the pendant next advertises, no scan required.
+        osBondedPendant()?.let { (mac, name) ->
+            Log.i(TAG, "[mac] using OS bond list: $mac ($name)")
+            saveBondedAddress(mac)
+            return mac
+        }
+        // slice-e: post-reinstall fallback. SharedPrefs is wiped when the
+        // APK is reinstalled (new UID); without this seed, getBondedAddress()
+        // returns null and PendantScanner.scan() needs BLUETOOTH_SCAN — which
+        // is also wiped on reinstall. The default MAC unblocks auto-connect
+        // because Android can connectGatt(autoConnect=true) on a known MAC
+        // using only BLUETOOTH_CONNECT (which is auto-granted when scan was
+        // previously granted, in many install flows).
+        val seed = com.daemon.app.BuildConfig.PENDANT_DEFAULT_MAC
+        if (seed.isNullOrBlank() || !seed.matches(Regex("^[0-9A-Fa-f:]{17}$"))) {
+            return null
+        }
+        Log.i(TAG, "[mac] using default seed (post-reinstall path): $seed")
+        return seed
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun osBondedPendant(): Pair<String, String>? = try {
+        val mgr = context.getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager
+        mgr?.adapter?.bondedDevices
+            ?.firstOrNull { it.name?.startsWith("DaemonPendant") == true }
+            ?.let { it.address to (it.name ?: "DaemonPendant") }
+    } catch (e: Exception) {
+        Log.w(TAG, "[mac] osBondedPendant lookup failed: ${e.message}")
+        null
     }
 
     private fun buttonName(code: Int): String = when (code) {
