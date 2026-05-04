@@ -220,6 +220,32 @@ function AuthedChat({ user }: { user: any }) {
   // SLICE-D: tick once a minute so the "last seen Xm ago" string stays fresh
   // without re-rendering the whole tree on every event.
   const [wsNowTick, setWsNowTick] = useState<number>(() => Date.now())
+  // Pendant connection state — populated by polling /api/pendant/state every
+  // 10s. Latest-wins from ws-server's per-user cache. `null` = unknown
+  // (no device has reported yet, or last report >90s old).
+  const [pendant, setPendant] = useState<{
+    connected: boolean | null
+    batteryPercent: number | null
+    stale: boolean
+  } | null>(null)
+  useEffect(() => {
+    let cancelled = false
+    const tick = async () => {
+      try {
+        const r = await fetch('/api/pendant/state', { cache: 'no-store' })
+        if (!r.ok) return
+        const data = await r.json()
+        if (!cancelled) setPendant({
+          connected: data?.stale ? null : data?.connected,
+          batteryPercent: data?.batteryPercent ?? null,
+          stale: !!data?.stale,
+        })
+      } catch {}
+    }
+    tick()
+    const id = setInterval(tick, 10_000)
+    return () => { cancelled = true; clearInterval(id) }
+  }, [])
   // Default open on desktop, closed on mobile (set in effect after mount to avoid hydration mismatch)
   const [showSidebar, setShowSidebar] = useState(true)
   const [initialScrollDone, setInitialScrollDone] = useState(false)
@@ -919,6 +945,28 @@ function AuthedChat({ user }: { user: any }) {
                 </div>
               )
             })()}
+            {/* Pendant badge — connection + battery, polled every 10s.
+                Hidden when state is unknown (no device has reported yet)
+                so it doesn't render a misleading dot pre-pairing. */}
+            {pendant && pendant.connected !== null && (
+              <div
+                className="hidden sm:flex items-center gap-1.5 px-2 py-1 rounded-full bg-[#1a1a1a] border border-[#282828]"
+                title={pendant.connected
+                  ? `Pendant connected${pendant.batteryPercent != null ? ` · ${pendant.batteryPercent}%` : ''}`
+                  : 'Pendant disconnected'}
+              >
+                <span
+                  className={`inline-block w-2 h-2 rounded-full ${
+                    pendant.stale ? 'bg-zinc-500'
+                      : pendant.connected ? 'bg-emerald-500'
+                      : 'bg-red-500'
+                  }`}
+                />
+                <span className="text-[10px] text-[#666]">
+                  pendant{pendant.batteryPercent != null ? ` ${pendant.batteryPercent}%` : ''}
+                </span>
+              </div>
+            )}
             {/* Connect Device button */}
             <a
               href="/download"

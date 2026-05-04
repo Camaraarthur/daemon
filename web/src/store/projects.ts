@@ -19,6 +19,11 @@ export interface Thread {
   created_at: string
   last_message_at: string | null
   message_count?: number
+  // Sessions endpoint returns 'db' for chat_threads rows and 'jsonl' for
+  // Claude-Code session files. The sidebar click handler routes 'jsonl'
+  // through /api/threads/select-session to bind it to a chat_thread before
+  // loading messages — the messages endpoint only knows DB thread ids.
+  source?: 'db' | 'jsonl'
 }
 
 export interface ThreadMessage {
@@ -105,6 +110,7 @@ export const useProjectsStore = create<ProjectsState>((set, get) => ({
           last_message_at: s.updated_at,
           created_at: s.updated_at,
           message_count: s.message_count,
+          source: s.source,
         }))
         set((state) => ({
           threads: { ...state.threads, [projectId]: threads },
