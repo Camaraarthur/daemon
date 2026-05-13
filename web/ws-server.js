@@ -129,6 +129,11 @@ const PONG_TIMEOUT = 10_000
 const ALLOWED_COMMAND_TYPES = new Set([
   'run_command', 'get_device_info', 'list_files', 'read_file',
   'receive_file', 'ping', 'clipboard_update',
+  // Push a system-notification through the device daemon. The phone-side
+  // handler is CommandExecutor.sendNotification (registered in
+  // DaemonService.handleCommand). Voice replies fire this so the user
+  // gets a visible "Daemon: <reply>" notification without opening chat.
+  'send_notification',
   'skill.list', 'skill.invoke',
   // Step 7: chat message gossip and local store inspection
   'chat.message_imported', 'store.stats',

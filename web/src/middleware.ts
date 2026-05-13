@@ -27,6 +27,7 @@ const PUBLIC_API_ROUTES = [
   '/api/health',     // Health check — public
   '/api/stream',     // SSE stream (canvas reads this, public)
   '/api/hosted/',    // Hosted static sites — public (served at subdomains)
+  '/api/waitlist',   // Waitlist signup — public on root daemon.page
   '/ws/',            // WebSocket device connections (proxied to WS server)
 ]
 
@@ -134,8 +135,24 @@ export function middleware(request: NextRequest) {
     return NextResponse.redirect(url)
   }
 
-  // Has token — let through
-  return NextResponse.next()
+  // Has token — let through.
+  // For SPA-shell pages (the ones whose HTML references content-hashed
+  // /_next/static/chunks/* JS), force no-store so Android WebView / Tauri
+  // can't keep cached HTML that points at chunk hashes the server has
+  // already evicted. Without this, every rebuild risks black-screening
+  // existing app installs until they manually clear cache.
+  const res = NextResponse.next()
+  if (
+    path === '/chat' || path.startsWith('/chat/') ||
+    path === '/canvas' ||
+    path === '/settings' || path.startsWith('/settings/') ||
+    path === '/files'
+  ) {
+    res.headers.set('Cache-Control', 'no-store, must-revalidate')
+    res.headers.set('Pragma', 'no-cache')
+    res.headers.set('Expires', '0')
+  }
+  return res
 }
 
 export const config = {

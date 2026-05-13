@@ -1,4 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">Daemon</string>
+    <string name="daemon_a11y_description">Lets Daemon tap, type, and read what\'s on the screen so the agent can drive any app on the phone for you. Dormant until you opt in; revoke any time in Settings → Accessibility.</string>
 </resources>

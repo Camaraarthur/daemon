@@ -35,6 +35,10 @@
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.CHANGE_NETWORK_STATE" />
 
+    <!-- Hover-mic overlay: floating mic button drawn above other apps.
+         Runtime-gated via Settings.canDrawOverlays one-time prompt. -->
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+
     <!-- Sensors (no permission needed for most) -->
 
     <application
@@ -79,6 +83,27 @@
             android:name=".service.DaemonService"
             android:exported="false"
             android:foregroundServiceType="microphone|camera|connectedDevice" />
+
+        <service
+            android:name=".overlay.HoverMicService"
+            android:exported="false" />
+
+        <!-- AccessibilityService. Declared but DORMANT by default — only
+             active once the user goes to Settings → Accessibility →
+             Downloaded apps → Daemon → Allow. Restored from stash; the
+             service implementation lives at .accessibility.DaemonAccessibilityService. -->
+        <service
+            android:name=".accessibility.DaemonAccessibilityService"
+            android:exported="true"
+            android:label="Daemon"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/daemon_accessibility_service_config" />
+        </service>
 
         <receiver
             android:name=".service.BootReceiver"

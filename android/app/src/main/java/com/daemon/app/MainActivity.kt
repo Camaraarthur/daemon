@@ -62,12 +62,50 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    override fun onResume() {
+        super.onResume()
+        // If the user just granted SYSTEM_ALERT_WINDOW in Settings and
+        // tabbed back to us, kick the hover-mic. DaemonService.startHoverMicIfAllowed
+        // is idempotent — starting an already-running service is a no-op.
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M &&
+            android.provider.Settings.canDrawOverlays(this)
+        ) {
+            try {
+                val intent = android.content.Intent(this, com.daemon.app.overlay.HoverMicService::class.java)
+                    .apply { action = com.daemon.app.overlay.HoverMicService.ACTION_START }
+                startService(intent)
+            } catch (_: Exception) {}
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
 
         // Request battery optimization exemption so the service stays alive
         requestBatteryOptimizationExemption()
+
+        // Hover-mic overlay perm: one-time grant. SYSTEM_ALERT_WINDOW is
+        // a special-access permission that must be approved via Settings,
+        // not the runtime permission dialog. If the user hasn't granted
+        // it yet, send them straight to the Settings screen for our app.
+        // After they toggle it on and come back, DaemonService.onCreate
+        // auto-starts HoverMicService.
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M &&
+            !android.provider.Settings.canDrawOverlays(this)) {
+            val prefs = getSharedPreferences("daemon", MODE_PRIVATE)
+            val prompted = prefs.getBoolean("hover_mic_prompted", false)
+            if (!prompted) {
+                prefs.edit().putBoolean("hover_mic_prompted", true).apply()
+                try {
+                    val intent = android.content.Intent(
+                        android.provider.Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                        android.net.Uri.parse("package:$packageName")
+                    )
+                    startActivity(intent)
+                } catch (_: Exception) {}
+            }
+        }
 
         // Auto-start DaemonService when perms already granted (returning user).
         // The service carries the pendant bridge + OTA broadcast receiver.
@@ -463,6 +501,13 @@ fun DaemonWebView(token: String?, onConnectDevice: () -> Unit = {}, onTokenRecei
                 // Dark background to prevent white flash
                 setBackgroundColor(android.graphics.Color.parseColor("#0a0a0a"))
 
+                // Wipe the WebView's HTTP cache + DOM storage on creation
+                // (= app launch). Existing installs with a stale chunk
+                // graph self-heal on next open. Cheap; the relay's HTML
+                // is small.
+                clearCache(true)
+                CookieManager.getInstance().flush()
+
                 // Set cookie for auth if we have a token
                 val cookieManager = CookieManager.getInstance()
                 cookieManager.setAcceptCookie(true)
@@ -480,6 +525,14 @@ fun DaemonWebView(token: String?, onConnectDevice: () -> Unit = {}, onTokenRecei
                     mediaPlaybackRequiresUserGesture = false
                     setSupportMultipleWindows(false)
                     mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
+                    // Force a fresh fetch of every navigation. Was burning
+                    // users: rebuilds on the relay produce new content-hashed
+                    // chunk filenames, the WebView's cached HTML keeps
+                    // pointing at chunks that 404, page goes black. The Next
+                    // middleware also sets Cache-Control: no-store on /chat
+                    // and friends, but this is the belt: clears anything
+                    // already cached from older app launches.
+                    cacheMode = WebSettings.LOAD_NO_CACHE
                     // Mark as mobile app so the web UI can detect it
                     userAgentString = settings.userAgentString + " DaemonApp/1.0"
                     // Viewport
@@ -498,7 +551,11 @@ fun DaemonWebView(token: String?, onConnectDevice: () -> Unit = {}, onTokenRecei
 
                     @android.webkit.JavascriptInterface
                     fun isDeviceConnected(): Boolean {
-                        return DaemonService.instance != null
+                        // Truth, not vibes: the foreground service is alive
+                        // ~always once the app launches, but that says nothing
+                        // about whether we're talking to the relay. Only return
+                        // true when the WebSocket is open AND registered.
+                        return DaemonService.instance?.isWsConnected == true
                     }
                 }, "DaemonBridge")
 
@@ -586,16 +643,22 @@ fun DaemonWebView(token: String?, onConnectDevice: () -> Unit = {}, onTokenRecei
                             if (window.DaemonBridge && !document.getElementById('daemon-connect-btn')) {
                                 var btn = document.createElement('button');
                                 btn.id = 'daemon-connect-btn';
-                                btn.textContent = window.DaemonBridge.isDeviceConnected() ? '✓ Device connected' : 'Connect device';
+                                function paintBtn(){
+                                    var ok = window.DaemonBridge.isDeviceConnected();
+                                    btn.textContent = ok ? '✓ Device connected' : 'Connect device';
+                                    btn.style.background = ok ? '#1a7f3b' : '#e63946';
+                                }
+                                paintBtn();
                                 btn.style.cssText = 'position:fixed;bottom:80px;right:16px;z-index:9999;background:#e63946;color:#fff;border:none;padding:8px 16px;border-radius:20px;font-size:13px;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,0.3);';
                                 btn.onclick = function() {
                                     window.DaemonBridge.connectDevice();
                                     btn.textContent = 'Connecting...';
-                                    setTimeout(function() {
-                                        btn.textContent = window.DaemonBridge.isDeviceConnected() ? '✓ Device connected' : 'Connect device';
-                                    }, 3000);
+                                    setTimeout(paintBtn, 3000);
                                 };
                                 document.body.appendChild(btn);
+                                // Refresh every 5s so the badge follows truth
+                                // when the WS drops or reconnects.
+                                setInterval(paintBtn, 5000);
                             }
                         """.trimIndent(), null)
                     }

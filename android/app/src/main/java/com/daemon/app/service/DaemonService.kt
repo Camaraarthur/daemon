@@ -16,6 +16,8 @@ import android.os.PowerManager
 import android.util.Log
 import kotlinx.coroutines.*
 import okhttp3.*
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.RequestBody.Companion.asRequestBody
 import org.json.JSONObject
 import android.content.BroadcastReceiver
 import android.content.IntentFilter
@@ -81,6 +83,13 @@ class DaemonService : Service() {
     }
 
     private var webSocket: WebSocket? = null
+    // Honest connection state. The old isDeviceConnected() lied: it returned
+    // true whenever this service was instantiated, which is "always" once
+    // the foreground service starts. This flag tracks the actual WS lifecycle
+    // (open vs closing/closed/failed), so the WebView badge can tell the
+    // truth.
+    @Volatile var isWsConnected: Boolean = false
+        private set
     private val client = OkHttpClient.Builder()
         .readTimeout(0, TimeUnit.MILLISECONDS)
         .pingInterval(15, TimeUnit.SECONDS)
@@ -127,6 +136,100 @@ class DaemonService : Service() {
             }
         }
         initPendantBridge()
+        startHoverMicIfAllowed()
+        registerHoverUtteranceReceiver()
+    }
+
+    /** Restored from stash. Hover-mic overlay writes a WAV on release and
+     *  broadcasts ACTION_UTTERANCE_READY with its path. This receiver
+     *  ships the bytes to /api/voice/hover where the relay runs
+     *  Deepgram STT and dispatches to the agent as a voice command. */
+    private fun registerHoverUtteranceReceiver() {
+        val hoverReceiver = object : BroadcastReceiver() {
+            override fun onReceive(c: Context, i: Intent) {
+                val wavPath = i.getStringExtra(com.daemon.app.overlay.HoverMicService.EXTRA_WAV_PATH) ?: return
+                val durMs = i.getLongExtra(com.daemon.app.overlay.HoverMicService.EXTRA_DURATION_MS, 0L)
+                Log.d(TAG, "[hover-mic] utterance ready: $wavPath (${durMs}ms)")
+                Thread({
+                    try {
+                        uploadHoverUtterance(java.io.File(wavPath), durMs)
+                    } catch (e: Exception) {
+                        Log.e(TAG, "[hover-mic] upload failed", e)
+                    } finally {
+                        try { java.io.File(wavPath).delete() } catch (_: Exception) {}
+                    }
+                }, "hover-upload").start()
+            }
+        }
+        val hoverFilter = IntentFilter(com.daemon.app.overlay.HoverMicService.ACTION_UTTERANCE_READY)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(hoverReceiver, hoverFilter, Context.RECEIVER_NOT_EXPORTED)
+        } else {
+            @Suppress("UnspecifiedRegisterReceiverFlag")
+            registerReceiver(hoverReceiver, hoverFilter)
+        }
+    }
+
+    /** Multipart upload of the hover-mic WAV to /api/voice/hover. The
+     *  relay does Deepgram STT + dispatches the transcript via
+     *  /api/voice/command (source="hover"). Reply arrives back on the
+     *  Voice chat thread through the existing WS broadcast flow — and
+     *  postHoverResponseNotification fires a system notification on
+     *  message.completed so the user sees the answer without opening
+     *  the app. */
+    private fun uploadHoverUtterance(wav: java.io.File, durationMs: Long) {
+        if (!wav.exists() || wav.length() < 1024) {
+            Log.w(TAG, "[hover-mic] wav too small or missing (${wav.length()}B) — skipping")
+            return
+        }
+        val session = RelayHttpClient.getOrExchangeSessionToken(this@DaemonService) ?: run {
+            Log.w(TAG, "[hover-mic] no session token — skipping upload")
+            return
+        }
+        val url = RelayHttpClient.relayHttpUrl(this@DaemonService).trimEnd('/') + "/api/voice/hover"
+        val wavMedia = "audio/wav".toMediaType()
+        val body = MultipartBody.Builder()
+            .setType(MultipartBody.FORM)
+            .addFormDataPart("duration_ms", durationMs.toString())
+            .addFormDataPart("source", "hover")
+            .addFormDataPart("device_id", android.os.Build.MODEL ?: "phone")
+            .addFormDataPart("audio", "utterance.wav", wav.asRequestBody(wavMedia))
+            .build()
+        val req = okhttp3.Request.Builder()
+            .url(url)
+            .header("Cookie", "daemon_token=$session")
+            .post(body)
+            .build()
+        okhttp3.OkHttpClient().newCall(req).execute().use { res ->
+            val txt = try { res.body?.string()?.take(400) ?: "" } catch (_: Exception) { "" }
+            Log.d(TAG, "[hover-mic] upload status=${res.code} body=$txt")
+        }
+    }
+
+    /**
+     * Auto-start the hovering mic overlay (restored from stash —
+     * com.daemon.app.overlay.HoverMicService). It's a regular Service
+     * (not foreground) that uses SYSTEM_ALERT_WINDOW to draw the
+     * draggable mic button above other apps. We only attempt to start
+     * it if Settings.canDrawOverlays is true; if not, MainActivity
+     * shows the one-time grant prompt.
+     */
+    private fun startHoverMicIfAllowed() {
+        try {
+            val canDraw = Build.VERSION.SDK_INT < Build.VERSION_CODES.M ||
+                android.provider.Settings.canDrawOverlays(this)
+            if (!canDraw) {
+                Log.i(TAG, "[hover-mic] SYSTEM_ALERT_WINDOW not granted; skipping auto-start")
+                return
+            }
+            val intent = Intent(this, com.daemon.app.overlay.HoverMicService::class.java).apply {
+                action = com.daemon.app.overlay.HoverMicService.ACTION_START
+            }
+            startService(intent)
+            Log.i(TAG, "[hover-mic] started")
+        } catch (e: Exception) {
+            Log.w(TAG, "[hover-mic] start failed: ${e.message}")
+        }
     }
 
     // ── Pendant bridge (BLE) ────────────────────────────────────────
@@ -417,6 +520,7 @@ class DaemonService : Service() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
                 Log.d(TAG, "WebSocket connected to $serverUrl")
                 isConnected = true
+                isWsConnected = true
                 isConnecting = false
                 // Kill any stale reconnect timer that may have been scheduled
                 // by a predecessor's onClosed callback before we opened.
@@ -474,6 +578,7 @@ class DaemonService : Service() {
                     return
                 }
                 isConnected = false
+                isWsConnected = false
                 isConnecting = false
                 stopHeartbeat()
                 updateNotification("Disconnected")
@@ -487,6 +592,7 @@ class DaemonService : Service() {
                     return
                 }
                 isConnected = false
+                isWsConnected = false
                 isConnecting = false
                 stopHeartbeat()
                 updateNotification("Connection failed")

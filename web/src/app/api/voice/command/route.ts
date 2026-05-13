@@ -265,6 +265,32 @@ async function runPendantAgent(opts: {
     console.warn('[pendant] canvas push failed:', e?.message)
   }
 
+  // Phone notification — fan the reply out to every connected Android
+  // device of this user via ws-server's /command endpoint. Without this,
+  // a hover-mic "say hi" produced a reply that landed silently on the
+  // Voice chat thread; the user never saw it unless they had the chat
+  // open. The /command shape matches DaemonService.handleCommand →
+  // CommandExecutor.sendNotification.
+  try {
+    const wsPort = process.env.WS_INTERNAL_PORT || '4801'
+    await fetch(`http://127.0.0.1:${wsPort}/command`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        device_id: opts.primaryDeviceId,
+        user_id: String(opts.userId),
+        command: {
+          type: 'send_notification',
+          title: 'Daemon',
+          body: reply.slice(0, 280),
+        },
+      }),
+      signal: AbortSignal.timeout(3000),
+    })
+  } catch (e: any) {
+    console.warn('[pendant] phone notification dispatch failed:', e?.message)
+  }
+
   rm(workDir, { recursive: true, force: true }).catch(() => {})
 }
 
