@@ -32,35 +32,29 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
 
-            <!-- "Share with daemon" — text (links, snippets). -->
-            <intent-filter>
-                <action android:name="android.intent.action.SEND" />
-                <category android:name="android.intent.category.DEFAULT" />
-                <data android:mimeType="text/plain" />
-            </intent-filter>
+            <!--
+                daemon = data pit. Any mime, no whitelist, no rejection.
 
-            <!-- "Share with daemon" — single image. -->
-            <intent-filter>
+                One catch-all filter per share action with android:order=999
+                so daemon ranks high in the share sheet. Sharing Shortcuts
+                (xml/shortcuts.xml) additionally registers daemon as a
+                direct-share target across all mime types so it can land
+                in the top "direct share" row of the chooser.
+            -->
+            <intent-filter android:order="999">
                 <action android:name="android.intent.action.SEND" />
                 <category android:name="android.intent.category.DEFAULT" />
-                <data android:mimeType="image/*" />
-            </intent-filter>
-
-            <!-- "Share with daemon" — PDFs + everything-else fallback. -->
-            <intent-filter>
-                <action android:name="android.intent.action.SEND" />
-                <category android:name="android.intent.category.DEFAULT" />
-                <data android:mimeType="application/pdf" />
                 <data android:mimeType="*/*" />
             </intent-filter>
-
-            <!-- "Share with daemon" — multiple files/images at once. -->
-            <intent-filter>
+            <intent-filter android:order="999">
                 <action android:name="android.intent.action.SEND_MULTIPLE" />
                 <category android:name="android.intent.category.DEFAULT" />
-                <data android:mimeType="image/*" />
                 <data android:mimeType="*/*" />
             </intent-filter>
+
+            <meta-data
+                android:name="android.app.shortcuts"
+                android:resource="@xml/shortcuts" />
         </activity>
     </application>
 </manifest>
