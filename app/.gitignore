@@ -1,0 +1,20 @@
+# Build outputs
+*.apk
+*.aab
+build/
+.gradle/
+.kotlin/
+.cxx/
+local.properties
+
+# IDE
+.idea/
+*.iml
+.vscode/
+
+# Daemon-internal
+node_modules/
+.DS_Store
+
+# Aquarium experiment + nested heavy repos — excluded from daemon-v0.1
+aquarium/

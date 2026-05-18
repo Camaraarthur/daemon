@@ -1,0 +1,38 @@
+name = "daemon-relay"
+main = "src/index.js"
+compatibility_date = "2026-05-18"
+workers_dev = false
+
+# Route via daemon.page zone (already in Arthur's CF account).
+routes = [
+  { pattern = "relay.daemon.page/*", zone_id = "21abc6a0a464a43b83b1172b55701d70" }
+]
+
+# ─── KV namespace for per-device rate limiting ────────────────────────────
+# Create once with: `npx wrangler kv:namespace create RATE_KV`
+# Then paste the returned id below + redeploy.
+[[kv_namespaces]]
+binding = "RATE_KV"
+id = "05f950536da24820bc531ff4c8685ed9"
+
+# ─── Secrets (set via CLI, not committed) ─────────────────────────────────
+# npx wrangler secret put OPENROUTER_KEY
+#   → paste the value of $OPENROUTER_API_KEY from arturito's ~/.secrets/vault.env
+
+[vars]
+# Daily request cap per device id. Cheap default; bump or drop based on
+# how OpenRouter free-tier credit ($30/mo) is being consumed.
+DAILY_LIMIT = "100"
+# Default model when the phone doesn't send one (shouldn't happen — phone
+# always sends a model). Kept conservative + Pareto-good.
+DEFAULT_MODEL = "anthropic/claude-sonnet-4.6"
+
+# ─── Custom domain (after first deploy maps automatically) ────────────────
+# Add a route in the Cloudflare dashboard:
+#   relay.daemon.page/* → daemon-relay
+# Then the phone calls https://relay.daemon.page/v1/chat/completions.
+
+# ─── Observability (optional, controlled by Worker plan) ──────────────────
+[observability]
+enabled = true
+head_sampling_rate = 1.0

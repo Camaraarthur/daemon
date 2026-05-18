@@ -1,0 +1,14 @@
+{
+  "name": "daemon-relay",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Minimum-trust OpenRouter proxy for daemon's free-tier users. Stateless, open-source, rate-limited per device.",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "tail": "wrangler tail"
+  },
+  "devDependencies": {
+    "wrangler": "^3.0.0"
+  }
+}
