@@ -1,6 +1,6 @@
 # daemon — privacy policy
 
-**v0.1 · effective 2026-05-17**
+**v0.1 · effective 2026-05-18** (revised — daemon-relay tier added)
 
 This is a draft. A real EU privacy lawyer should review before commercial launch. The language below is honest about what daemon is, by design.
 
@@ -8,9 +8,13 @@ This is a draft. A real EU privacy lawyer should review before commercial launch
 
 ## TL;DR
 
-Daemon runs entirely on your phone. We — Daemons, the company — never see, receive, store, or process the content of your chats, your imported data, or your AI-model outputs. There is no Daemons server in the network path of your data. We can't be breached, subpoenaed, or leak — because there's nothing on our side to breach.
+Daemon is designed so we — Daemons, the company — **don't read your prompts, your responses, or your imported data.** Three modes:
 
-That's not a promise we ask you to trust. It's a property of the software you can verify yourself: the code is open-source, the app shows you every byte it sends, our Android builds are reproducible from public source.
+1. **Local** (default) — your prompts run on a model on your phone. Nothing leaves the device.
+2. **BYOK** — your prompts go straight from your phone to a provider (Anthropic, Mistral, OpenRouter, etc.) you've chosen, using your own key. Daemons is not in the network path.
+3. **Daemon free tier (beta)** — your prompts pass through a Daemons-operated Cloudflare Worker at `relay.daemon.page`, which adds Daemons' OpenRouter key (we pay the bill) and forwards to OpenRouter. The Worker is **stateless** (no prompt logging, no body persistence), **rate-limited** per device, and **open source** (`github.com/Camaraarthur/daemon/tree/daemon-v0.1/relay`). This is the only mode where Daemons-operated code touches your prompt in transit — and it doesn't read them.
+
+The code is open-source. The app shows you every byte it sends in **Settings → "What this app sends"**. Our Android builds are reproducibly buildable from public source.
 
 ---
 
@@ -52,6 +56,24 @@ If you paste an API key for a third-party provider (e.g., Claude, Mistral, Googl
 4. **Daemons-the-company is not in the network path.** The HTTPS connection is between your phone and the provider you chose.
 
 When you use BYOK, you are *choosing* to share your (pseudonymized) data with that provider, under their terms. We facilitate the connection; we do not see what passes through it.
+
+### Daemon free tier (beta) — the relay
+
+For users who don't want to manage their own API key, daemon offers a free tier where Daemons-the-company pays the upstream cost (via our OpenRouter account). The path is:
+
+```
+your phone → relay.daemon.page (Cloudflare Worker) → api.openrouter.ai → model provider
+```
+
+The Cloudflare Worker is **in the data plane during transit** — there's no way to avoid that when sharing a single API key across many users. We mitigate honestly:
+
+- **The Worker is stateless.** It receives the request, adds the `Authorization` header, forwards the body to OpenRouter unmodified, and pipes the response back. It does **not** read, parse, log, or persist your prompt or the response. Source: `github.com/Camaraarthur/daemon/blob/daemon-v0.1/relay/src/index.js` (~100 lines).
+- **The only Worker-side state is a per-device daily request counter** (rotates every 24 h via Cloudflare KV TTL). The counter key is a random UUID stored in your app's sandbox; it is not tied to your identity, phone number, IMEI, or any device-derived identifier.
+- **PII is still stripped on-device before the Worker sees the request.** Same pseudonymization as BYOK — `{{PERSON_1}}` etc.
+- **Open-source + reproducibly buildable.** Anyone (you, EU regulators, journalists) can verify the running Worker matches the public source.
+- **Bypassable.** If you want the strict "no Daemons-operated server in the path" guarantee, switch to BYOK — your phone calls the provider directly with your own key.
+
+This is a step down from the strict "Daemons sees nothing in the path of your data" promise. The accurate version for the free tier is: **"Daemons-the-company operates a stateless relay that doesn't read your prompts."** We say it this way so you can decide what level of trust matches the value you're getting.
 
 You can see every host daemon has talked to, with byte counts, in **Settings → "What this app sends"**. In Local mode this list is empty.
 
